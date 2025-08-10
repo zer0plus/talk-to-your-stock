@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradingView Clone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
+            background-color: #131722;
+            color: white;
+            overflow: hidden;
+        }
+        
+        .main-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        .content-container {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+        }
+        
+        .chart-container {
+            flex: 1;
+            position: relative;
+            background-color: #131722;
+        }
+        
+        #chart {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .sidebar {
+            width: 320px;
+            background-color: #1e222d;
+            border-left: 1px solid #363a45;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .watchlist-section {
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .stock-details-section {
+            border-top: 1px solid #363a45;
+            background-color: #1e222d;
+        }
+        
+        .navbar {
+            height: 48px;
+            background-color: #1e222d;
+            border-bottom: 1px solid #363a45;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            flex-shrink: 0;
+        }
+        
+        .price-bar {
+            height: 48px;
+            background-color: #1e222d;
+            border-bottom: 1px solid #363a45;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            flex-shrink: 0;
+        }
+        
+        .footer {
+            height: 48px;
+            background-color: #1e222d;
+            border-top: 1px solid #363a45;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            flex-shrink: 0;
+        }
+        
+        .stock-item {
+            transition: all 0.15s ease;
+            border-bottom: 1px solid #363a45;
+        }
+        
+        .stock-item:hover {
+            background-color: #2a2e39;
+        }
+        
+        .stock-item.active {
+            background-color: #1e222d;
+            border-left: 2px solid #2962ff;
+        }
+        
+        @media (max-width: 1024px) {
+            .sidebar {
+                width: 280px;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .content-container {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+                height: 300px;
+                border-left: none;
+                border-top: 1px solid #363a45;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="navbar">
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center space-x-2">
+                    <div class="w-6 h-6 bg-orange-500 rounded flex items-center justify-center text-xs font-bold">A</div>
+                    <span class="text-white font-medium">AAPL</span>
+                    <span class="text-gray-400 text-sm">Apple Inc.</span>
+                    <button class="text-gray-400 hover:text-white">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="flex items-center space-x-1 ml-8">
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="3m">3m</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="15m">15m</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="1h">1h</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="2h">2h</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="4h">4h</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded bg-blue-600 text-white" data-timeframe="1D">D</button>
+                </div>
+
+                <button class="px-3 py-1 text-sm border border-gray-600 rounded text-gray-300 hover:bg-gray-700 ml-4">
+                    Indicators
+                </button>
+            </div>
+
+            <div class="ml-auto flex items-center space-x-2">
+                <button class="px-3 py-1 text-sm text-gray-300 hover:bg-gray-700 rounded">Alert</button>
+                <button class="px-3 py-1 text-sm text-gray-300 hover:bg-gray-700 rounded">Replay</button>
+                <button class="px-3 py-1 text-sm bg-blue-600 rounded text-white">Publish</button>
+            </div>
+        </div>
+
+        <div class="price-bar">
+            <div class="flex items-center space-x-6">
+                <div class="flex items-center space-x-2">
+                    <span class="text-2xl font-medium" id="current-price">$174.92</span>
+                    <span class="text-red-400 text-sm" id="price-change">-8.43 (-4.60%)</span>
+                </div>
+                <div class="text-sm text-gray-400">
+                    <span>O</span> <span class="text-white" id="open-price">172.06</span>
+                    <span class="ml-3">H</span> <span class="text-white" id="high-price">175.58</span>
+                    <span class="ml-3">L</span> <span class="text-white" id="low-price">170.57</span>
+                    <span class="ml-3">C</span> <span class="text-white" id="close-price">174.92</span>
+                </div>
+                <div class="text-sm text-gray-400">
+                    Vol <span class="text-white">1.14M</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-container">
+            <div class="chart-container">
+                <div id="chart"></div>
+            </div>
+
+            <div class="sidebar">
+                <div class="watchlist-section">
+                    <div class="p-4 border-b border-gray-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-sm font-medium text-gray-300">Red list</h3>
+                            <div class="flex items-center space-x-2">
+                                <button class="text-gray-400 hover:text-white">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                    </svg>
+                                </button>
+                                <button class="text-gray-400 hover:text-white">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1"></path>
+                                    </svg>
+                                </button>
+                                <button class="text-gray-400 hover:text-white">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-4 gap-4 text-xs text-gray-400 mb-2">
+                            <div>Symbol</div>
+                            <div class="text-right">Last</div>
+                            <div class="text-right">Chg</div>
+                            <div class="text-right">Chg%</div>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-y-auto">
+                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="CF">
+                            <div class="grid grid-cols-4 gap-4 items-center">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-5 h-5 bg-blue-500 rounded flex items-center justify-center text-xs font-bold">CF</div>
+                                    <span class="text-sm font-medium">CF</span>
+                                </div>
+                                <div class="text-right text-sm">81.59</div>
+                                <div class="text-right text-sm text-red-400">-1.30</div>
+                                <div class="text-right text-sm text-red-400">-1.57%</div>
+                            </div>
+                        </div>
+
+                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="PYPL">
+                            <div class="grid grid-cols-4 gap-4 items-center">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-5 h-5 bg-blue-600 rounded flex items-center justify-center text-xs font-bold">P</div>
+                                    <span class="text-sm font-medium">PYPL</span>
+                                </div>
+                                <div class="text-right text-sm">67.71</div>
+                                <div class="text-right text-sm text-red-400">-0.52</div>
+                                <div class="text-right text-sm text-red-400">-0.75%</div>
+                            </div>
+                        </div>
+
+                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="SNAP">
+                            <div class="grid grid-cols-4 gap-4 items-center">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-5 h-5 bg-yellow-500 rounded flex items-center justify-center text-xs font-bold">S</div>
+                                    <span class="text-sm font-medium">SNAP</span>
+                                </div>
+                                <div class="text-right text-sm">7.44</div>
+                                <div class="text-right text-sm text-red-400">-0.11</div>
+                                <div class="text-right text-sm text-red-400">-1.39%</div>
+                            </div>
+                        </div>
+
+                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="AMD">
+                            <div class="grid grid-cols-4 gap-4 items-center">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-5 h-5 bg-red-500 rounded flex items-center justify-center text-xs font-bold">A</div>
+                                    <span class="text-sm font-medium">AMD</span>
+                                </div>
+                                <div class="text-right text-sm">171.21</div>
+                                <div class="text-right text-sm text-red-400">-1.19</div>
+                                <div class="text-right text-sm text-red-400">-0.69%</div>
+                            </div>
+                        </div>
+
+                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="NVDA">
+                            <div class="grid grid-cols-4 gap-4 items-center">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-5 h-5 bg-green-500 rounded flex items-center justify-center text-xs font-bold">N</div>
+                                    <span class="text-sm font-medium">NVDA</span>
+                                </div>
+                                <div class="text-right text-sm">182.45</div>
+                                <div class="text-right text-sm text-green-400">1.68</div>
+                                <div class="text-right text-sm text-green-400">0.93%</div>
+                            </div>
+                        </div>
+
+                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-blue-500 active border-b border-gray-700" data-symbol="IONQ">
+                            <div class="grid grid-cols-4 gap-4 items-center">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-5 h-5 bg-purple-500 rounded flex items-center justify-center text-xs font-bold">I</div>
+                                    <span class="text-sm font-medium">IONQ</span>
+                                </div>
+                                <div class="text-right text-sm">42.00</div>
+                                <div class="text-right text-sm text-green-400">1.51</div>
+                                <div class="text-right text-sm text-green-400">3.73%</div>
+                            </div>
+                        </div>
+
+                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500" data-symbol="MSFT">
+                            <div class="grid grid-cols-4 gap-4 items-center">
+                                <div class="flex items-center space-x-2">
+                                    <div class="w-5 h-5 bg-blue-500 rounded flex items-center justify-center text-xs font-bold">M</div>
+                                    <span class="text-sm font-medium">MSFT</span>
+                                </div>
+                                <div class="text-right text-sm">2.88</div>
+                                <div class="text-right text-sm text-green-400">0.17</div>
+                                <div class="text-right text-sm text-green-400">6.48%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stock-details-section">
+                    <div class="p-4">
+                        <div class="flex items-center space-x-3 mb-3">
+                            <div class="w-8 h-8 bg-purple-500 rounded flex items-center justify-center text-sm font-bold">I</div>
+                            <div>
+                                <div class="text-sm font-medium" id="details-symbol">IONQ</div>
+                                <div class="text-xs text-gray-400">IonQ, Inc. • NYSE</div>
+                                <div class="text-xs text-gray-400">Electronic Technology • Computer Processing Hardware</div>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <div class="flex items-baseline space-x-2">
+                                <span class="text-2xl font-bold text-green-400" id="details-price">42.00</span>
+                                <span class="text-sm text-gray-400">USD</span>
+                                <span class="text-sm text-green-400" id="details-change">+1.51 +3.73%</span>
+                            </div>
+                            <div class="flex items-center space-x-1 mt-1">
+                                <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+                                <span class="text-xs text-gray-400">Market open</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="text-sm font-medium mb-3">Key stats</div>
+                            <div class="space-y-2">
+                                <div class="flex justify-between text-sm">
+                                    <span class="text-gray-400">Next earnings report</span>
+                                    <span>In 101 days</span>
+                                </div>
+                                <div class="flex justify-between text-sm">
+                                    <span class="text-gray-400">Volume</span>
+                                    <span>13.55M</span>
+                                </div>
+                                <div class="flex justify-between text-sm">
+                                    <span class="text-gray-400">Average Volume (30D)</span>
+                                    <span>21.28M</span>
+                                </div>
+                                <div class="flex justify-between text-sm">
+                                    <span class="text-gray-400">Market capitalization</span>
+                                    <span>12.46B</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="flex items-center space-x-1">
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="1D">1D</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="5D">5D</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="1M">1M</button>
+                <button class="range-btn px-3 py-1 text-sm rounded bg-blue-600 text-white" data-range="3M">3M</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="6M">6M</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="YTD">YTD</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="1Y">1Y</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="ALL">All</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chart;
+        let candlestickSeries;
+        let volumeSeries;
+        let currentData = [];
+
+        const stocksData = {
+            'AAPL': { name: 'Apple Inc.', sector: 'Technology', price: 174.92, change: -8.43, changePercent: -4.60 },
+            'IONQ': { name: 'IonQ, Inc.', sector: 'Electronic Technology', price: 42.00, change: 1.51, changePercent: 3.73 },
+            'NVDA': { name: 'NVIDIA Corp', sector: 'Technology', price: 182.45, change: 1.68, changePercent: 0.93 },
+            'AMD': { name: 'Advanced Micro Devices', sector: 'Technology', price: 171.21, change: -1.19, changePercent: -0.69 }
+        };
+
+        function generateAppleData() {
+            const data = [];
+            const volumeData = [];
+            const startDate = new Date('2022-08-01');
+            let price = 150;
+
+            for (let i = 0; i < 730; i++) {
+                const date = new Date(startDate);
+                date.setDate(date.getDate() + i);
+                
+                if (date.getDay() === 0 || date.getDay() === 6) continue;
+
+                const open = price + (Math.random() - 0.5) * 4;
+                const close = open + (Math.random() - 0.5) * 6;
+                const high = Math.max(open, close) + Math.random() * 3;
+                const low = Math.min(open, close) - Math.random() * 3;
+                const volume = Math.floor(Math.random() * 100000000) + 50000000;
+
+                const timeString = date.getFullYear() + '-' + 
+                    String(date.getMonth() + 1).padStart(2, '0') + '-' + 
+                    String(date.getDate()).padStart(2, '0');
+
+                const candle = {
+                    time: timeString,
+                    open: parseFloat(open.toFixed(2)),
+                    high: parseFloat(high.toFixed(2)),
+                    low: parseFloat(low.toFixed(2)),
+                    close: parseFloat(close.toFixed(2))
+                };
+
+                const vol = {
+                    time: timeString,
+                    value: volume,
+                    color: close >= open ? 'rgba(38, 166, 154, 0.4)' : 'rgba(239, 83, 80, 0.4)'
+                };
+
+                data.push(candle);
+                volumeData.push(vol);
+                price = close;
+            }
+
+            return { candleData: data, volumeData: volumeData };
+        }
+
+        function initChart() {
+            const container = document.getElementById('chart');
+            
+            chart = LightweightCharts.createChart(container, {
+                width: container.clientWidth,
+                height: container.clientHeight,
+                layout: {
+                    background: { color: '#131722' },
+                    textColor: '#d1d4dc',
+                },
+                grid: {
+                    vertLines: { color: '#2B2B43' },
+                    horzLines: { color: '#2B2B43' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                rightPriceScale: {
+                    borderColor: '#485c7b',
+                },
+                timeScale: {
+                    borderColor: '#485c7b',
+                    timeVisible: true,
+                },
+                watermark: {
+                    visible: false,
+                },
+                attributionLogo: false,
+            });
+
+            candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: false,
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+            });
+
+            volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+                color: '#26a69a',
+                priceFormat: { type: 'volume' },
+                priceScaleId: 'volume',
+                scaleMargins: { top: 0.8, bottom: 0 },
+            });
+            
+            chart.priceScale('volume').applyOptions({
+                scaleMargins: {
+                    top: 0.8,
+                    bottom: 0,
+                },
+            });
+
+            const { candleData, volumeData } = generateAppleData();
+            currentData = candleData;
+            
+            candlestickSeries.setData(candleData);
+            volumeSeries.setData(volumeData);
+
+            chart.timeScale().fitContent();
+            
+            updatePriceDisplay();
+
+            chart.subscribeCrosshairMove(param => {
+                if (param.time) {
+                    const data = param.seriesData.get(candlestickSeries);
+                    if (data) updatePriceDisplay(data);
+                } else {
+                    updatePriceDisplay();
+                }
+            });
+
+            new ResizeObserver(entries => {
+                if (entries.length && entries[0].target === container) {
+                    const { width, height } = entries[0].contentRect;
+                    chart.applyOptions({ width, height });
+                }
+            }).observe(container);
+        }
+
+        function updatePriceDisplay(data = null) {
+            if (!currentData.length) return;
+            
+            const latest = data || currentData[currentData.length - 1];
+            const previous = currentData[currentData.length - 2];
+            
+            if (!latest || !previous) return;
+            
+            const change = latest.close - previous.close;
+            const changePercent = (change / previous.close) * 100;
+            
+            document.getElementById('current-price').textContent = `$${latest.close.toFixed(2)}`;
+            document.getElementById('open-price').textContent = latest.open.toFixed(2);
+            document.getElementById('high-price').textContent = latest.high.toFixed(2);
+            document.getElementById('low-price').textContent = latest.low.toFixed(2);
+            document.getElementById('close-price').textContent = latest.close.toFixed(2);
+            
+            const changeEl = document.getElementById('price-change');
+            const isPositive = change >= 0;
+            changeEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)} (${isPositive ? '+' : ''}${changePercent.toFixed(2)}%)`;
+            changeEl.className = `text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`;
+        }
+
+        function updateStockDetails(symbol) {
+            const stock = stocksData[symbol];
+            if (!stock) return;
+
+            document.getElementById('details-symbol').textContent = symbol;
+            document.getElementById('details-price').innerHTML = `${stock.price.toFixed(2)} <span class="text-sm">USD</span>`;
+            
+            const isPositive = stock.change >= 0;
+            const changeEl = document.getElementById('details-change');
+            changeEl.textContent = `${isPositive ? '+' : ''}${stock.change.toFixed(2)} ${isPositive ? '+' : ''}${stock.changePercent.toFixed(2)}%`;
+            changeEl.className = `text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`;
+        }
+
+        function handleTimeframeClick(timeframe) {
+            document.querySelectorAll('.timeframe-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('text-gray-300');
+            });
+            
+            event.target.classList.add('bg-blue-600', 'text-white');
+            event.target.classList.remove('text-gray-300');
+        }
+
+        function handleRangeClick(range) {
+            document.querySelectorAll('.range-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('text-gray-300');
+            });
+            
+            event.target.classList.add('bg-blue-600', 'text-white');
+            event.target.classList.remove('text-gray-300');
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            
+            document.querySelectorAll('.timeframe-btn').forEach(btn => {
+                btn.addEventListener('click', () => handleTimeframeClick(btn.dataset.timeframe));
+            });
+            
+            document.querySelectorAll('.range-btn').forEach(btn => {
+                btn.addEventListener('click', () => handleRangeClick(btn.dataset.range));
+            });
+            
+            document.querySelectorAll('.stock-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    document.querySelectorAll('.stock-item').forEach(i => {
+                        i.classList.remove('active', 'border-blue-500');
+                        i.classList.add('border-transparent');
+                    });
+                    
+                    item.classList.add('active', 'border-blue-500');
+                    item.classList.remove('border-transparent');
+                    
+                    const symbol = item.dataset.symbol;
+                    if (symbol) {
+                        updateStockDetails(symbol);
+                    }
+                });
+            });
+
+            updateStockDetails('IONQ');
+        });
+    </script>
+</body>
+</html>
