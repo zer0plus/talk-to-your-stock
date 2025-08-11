@@ -216,109 +216,27 @@
                         </div>
                     </div>
                     
-                    <div class="overflow-y-auto">
-                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="CF">
-                            <div class="grid grid-cols-4 gap-4 items-center">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-5 h-5 bg-blue-500 rounded flex items-center justify-center text-xs font-bold">CF</div>
-                                    <span class="text-sm font-medium">CF</span>
-                                </div>
-                                <div class="text-right text-sm">81.59</div>
-                                <div class="text-right text-sm text-red-400">-1.30</div>
-                                <div class="text-right text-sm text-red-400">-1.57%</div>
-                            </div>
-                        </div>
-
-                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="PYPL">
-                            <div class="grid grid-cols-4 gap-4 items-center">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-5 h-5 bg-blue-600 rounded flex items-center justify-center text-xs font-bold">P</div>
-                                    <span class="text-sm font-medium">PYPL</span>
-                                </div>
-                                <div class="text-right text-sm">67.71</div>
-                                <div class="text-right text-sm text-red-400">-0.52</div>
-                                <div class="text-right text-sm text-red-400">-0.75%</div>
-                            </div>
-                        </div>
-
-                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="SNAP">
-                            <div class="grid grid-cols-4 gap-4 items-center">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-5 h-5 bg-yellow-500 rounded flex items-center justify-center text-xs font-bold">S</div>
-                                    <span class="text-sm font-medium">SNAP</span>
-                                </div>
-                                <div class="text-right text-sm">7.44</div>
-                                <div class="text-right text-sm text-red-400">-0.11</div>
-                                <div class="text-right text-sm text-red-400">-1.39%</div>
-                            </div>
-                        </div>
-
-                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="AMD">
-                            <div class="grid grid-cols-4 gap-4 items-center">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-5 h-5 bg-red-500 rounded flex items-center justify-center text-xs font-bold">A</div>
-                                    <span class="text-sm font-medium">AMD</span>
-                                </div>
-                                <div class="text-right text-sm">171.21</div>
-                                <div class="text-right text-sm text-red-400">-1.19</div>
-                                <div class="text-right text-sm text-red-400">-0.69%</div>
-                            </div>
-                        </div>
-
-                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500 border-b border-gray-700" data-symbol="NVDA">
-                            <div class="grid grid-cols-4 gap-4 items-center">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-5 h-5 bg-green-500 rounded flex items-center justify-center text-xs font-bold">N</div>
-                                    <span class="text-sm font-medium">NVDA</span>
-                                </div>
-                                <div class="text-right text-sm">182.45</div>
-                                <div class="text-right text-sm text-green-400">1.68</div>
-                                <div class="text-right text-sm text-green-400">0.93%</div>
-                            </div>
-                        </div>
-
-                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-blue-500 active border-b border-gray-700" data-symbol="IONQ">
-                            <div class="grid grid-cols-4 gap-4 items-center">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-5 h-5 bg-purple-500 rounded flex items-center justify-center text-xs font-bold">I</div>
-                                    <span class="text-sm font-medium">IONQ</span>
-                                </div>
-                                <div class="text-right text-sm">42.00</div>
-                                <div class="text-right text-sm text-green-400">1.51</div>
-                                <div class="text-right text-sm text-green-400">3.73%</div>
-                            </div>
-                        </div>
-
-                        <div class="stock-item px-4 py-2 cursor-pointer border-l-2 border-transparent hover:border-blue-500" data-symbol="MSFT">
-                            <div class="grid grid-cols-4 gap-4 items-center">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-5 h-5 bg-blue-500 rounded flex items-center justify-center text-xs font-bold">M</div>
-                                    <span class="text-sm font-medium">MSFT</span>
-                                </div>
-                                <div class="text-right text-sm">2.88</div>
-                                <div class="text-right text-sm text-green-400">0.17</div>
-                                <div class="text-right text-sm text-green-400">6.48%</div>
-                            </div>
-                        </div>
+                    <div class="overflow-y-auto" id="watchlist-container">
+                        <!-- Watchlist items will be populated here -->
                     </div>
                 </div>
 
                 <div class="stock-details-section">
                     <div class="p-4">
                         <div class="flex items-center space-x-3 mb-3">
-                            <div class="w-8 h-8 bg-purple-500 rounded flex items-center justify-center text-sm font-bold">I</div>
+                            <div class="w-8 h-8 bg-purple-500 rounded flex items-center justify-center text-sm font-bold">A</div>
                             <div>
-                                <div class="text-sm font-medium" id="details-symbol">IONQ</div>
-                                <div class="text-xs text-gray-400">IonQ, Inc. • NYSE</div>
-                                <div class="text-xs text-gray-400">Electronic Technology • Computer Processing Hardware</div>
+                                <div class="text-sm font-medium" id="details-symbol">AAPL</div>
+                                <div class="text-xs text-gray-400">Apple Inc. • NASDAQ</div>
+                                <div class="text-xs text-gray-400">Technology • Consumer Electronics</div>
                             </div>
                         </div>
 
                         <div class="mb-4">
                             <div class="flex items-baseline space-x-2">
-                                <span class="text-2xl font-bold text-green-400" id="details-price">42.00</span>
+                                <span class="text-2xl font-bold text-green-400" id="details-price">174.92</span>
                                 <span class="text-sm text-gray-400">USD</span>
-                                <span class="text-sm text-green-400" id="details-change">+1.51 +3.73%</span>
+                                <span class="text-sm text-red-400" id="details-change">-8.43 -4.60%</span>
                             </div>
                             <div class="flex items-center space-x-1 mt-1">
                                 <div class="w-2 h-2 bg-green-400 rounded-full"></div>
@@ -371,56 +289,99 @@
         let candlestickSeries;
         let volumeSeries;
         let currentData = [];
+        let currentSymbol = 'AAPL';
+        let currentRange = '3M';
 
-        const stocksData = {
-            'AAPL': { name: 'Apple Inc.', sector: 'Technology', price: 174.92, change: -8.43, changePercent: -4.60 },
-            'IONQ': { name: 'IonQ, Inc.', sector: 'Electronic Technology', price: 42.00, change: 1.51, changePercent: 3.73 },
-            'NVDA': { name: 'NVIDIA Corp', sector: 'Technology', price: 182.45, change: 1.68, changePercent: 0.93 },
-            'AMD': { name: 'Advanced Micro Devices', sector: 'Technology', price: 171.21, change: -1.19, changePercent: -0.69 }
+        const cache = {
+            chartData: new Map(), // symbol -> {data, timestamp}
+            quotes: new Map(),
+            watchlistData: null,
+            watchlistTimestamp: 0
         };
 
-        function generateAppleData() {
-            const data = [];
-            const volumeData = [];
-            const startDate = new Date('2022-08-01');
-            let price = 150;
+        const CACHE_DURATION = {
+            CHART: 30 * 60 * 1000, // 30 minutes for complete chart data
+            QUOTE: 30 * 1000,      // 30 seconds for quotes
+            WATCHLIST: 30 * 1000   // 30 seconds for watchlist
+        };
 
-            for (let i = 0; i < 730; i++) {
-                const date = new Date(startDate);
-                date.setDate(date.getDate() + i);
-                
-                if (date.getDay() === 0 || date.getDay() === 6) continue;
+        function isCacheValid(timestamp, duration) {
+            return Date.now() - timestamp < duration;
+        }
 
-                const open = price + (Math.random() - 0.5) * 4;
-                const close = open + (Math.random() - 0.5) * 6;
-                const high = Math.max(open, close) + Math.random() * 3;
-                const low = Math.min(open, close) - Math.random() * 3;
-                const volume = Math.floor(Math.random() * 100000000) + 50000000;
-
-                const timeString = date.getFullYear() + '-' + 
-                    String(date.getMonth() + 1).padStart(2, '0') + '-' + 
-                    String(date.getDate()).padStart(2, '0');
-
-                const candle = {
-                    time: timeString,
-                    open: parseFloat(open.toFixed(2)),
-                    high: parseFloat(high.toFixed(2)),
-                    low: parseFloat(low.toFixed(2)),
-                    close: parseFloat(close.toFixed(2))
-                };
-
-                const vol = {
-                    time: timeString,
-                    value: volume,
-                    color: close >= open ? 'rgba(38, 166, 154, 0.4)' : 'rgba(239, 83, 80, 0.4)'
-                };
-
-                data.push(candle);
-                volumeData.push(vol);
-                price = close;
+        async function fetchStockData(symbol) {
+            const cached = cache.chartData.get(symbol);
+            
+            if (cached && isCacheValid(cached.timestamp, CACHE_DURATION.CHART)) {
+                console.log(`Using cached complete chart data for ${symbol}`);
+                return cached.data;
             }
 
-            return { candleData: data, volumeData: volumeData };
+            try {
+                const response = await fetch(`http://localhost:8000/api/stock/${symbol}/chart`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                cache.chartData.set(symbol, {
+                    data: data,
+                    timestamp: Date.now()
+                });
+                
+                return data;
+            } catch (error) {
+                console.error('Error fetching chart data:', error);
+                throw error;
+            }
+        }
+
+        async function fetchStockQuote(symbol) {
+            const cached = cache.quotes.get(symbol);
+            
+            if (cached && isCacheValid(cached.timestamp, CACHE_DURATION.QUOTE)) {
+                console.log(`Using cached quote for ${symbol}`);
+                return cached.data;
+            }
+
+            try {
+                const response = await fetch(`http://localhost:8000/api/stock/${symbol}/quote`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                cache.quotes.set(symbol, {
+                    data: data,
+                    timestamp: Date.now()
+                });
+                
+                return data;
+            } catch (error) {
+                console.error('Error fetching quote:', error);
+                throw error;
+            }
+        }
+
+        async function fetchWatchlistData() {
+            if (cache.watchlistData && isCacheValid(cache.watchlistTimestamp, CACHE_DURATION.WATCHLIST)) {
+                console.log('Using cached watchlist data');
+                return cache.watchlistData;
+            }
+
+            try {
+                const symbols = ['AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META'].join(',');
+                const response = await fetch(`http://localhost:8000/api/stocks/quotes?symbols=${symbols}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                
+                cache.watchlistData = data.quotes;
+                cache.watchlistTimestamp = Date.now();
+                
+                return data.quotes;
+            } catch (error) {
+                console.error('Error fetching watchlist data:', error);
+                throw error;
+            }
         }
 
         function initChart() {
@@ -475,15 +436,415 @@
                 },
             });
 
-            const { candleData, volumeData } = generateAppleData();
-            currentData = candleData;
-            
-            candlestickSeries.setData(candleData);
-            volumeSeries.setData(volumeData);
+            chart.subscribeCrosshairMove(param => {
+                if (param.time) {
+                    const data = param.seriesData.get(candlestickSeries);
+                    if (data) updatePriceDisplay(data);
+                } else {
+                    updatePriceDisplay();
+                }
+            });
 
-            chart.timeScale().fitContent();
+            new ResizeObserver(entries => {
+                if (entries.length && entries[0].target === container) {
+                    const { width, height } = entries[0].contentRect;
+                    chart.applyOptions({ width, height });
+                }
+            }).observe(container);
+        }
+
+        async function loadChart(symbol, period) {
+            const data = await fetchStockData(symbol, period);
+            if (data && data.candleData) {
+                currentData = data.candleData;
+                candlestickSeries.setData(data.candleData);
+                volumeSeries.setData(data.volumeData);
+                chart.timeScale().fitContent();
+                updatePriceDisplay();
+            }
+        }
+
+        function updatePriceDisplay(data = null) {
+            if (!currentData.length) return;
             
-            updatePriceDisplay();
+            const latest = data || currentData[currentData.length - 1];
+            const previous = currentData[currentData.length - 2];
+            
+            if (!latest || !previous) return;
+            
+            const change = latest.close - previous.close;
+            const changePercent = (change / previous.close) * 100;
+            
+            document.getElementById('current-price').textContent = `${latest.close.toFixed(2)}`;
+            document.getElementById('open-price').textContent = latest.open.toFixed(2);
+            document.getElementById('high-price').textContent = latest.high.toFixed(2);
+            document.getElementById('low-price').textContent = latest.low.toFixed(2);
+            document.getElementById('close-price').textContent = latest.close.toFixed(2);
+            
+            const changeEl = document.getElementById('price-change');
+            const isPositive = change >= 0;
+            changeEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)} (${isPositive ? '+' : ''}${changePercent.toFixed(2)}%)`;
+            changeEl.className = `text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`;
+        }
+
+        async function updateStockDetails(symbol) {
+            const quote = await fetchStockQuote(symbol);
+            if (quote) {
+                document.getElementById('details-symbol').textContent = quote.symbol;
+                document.getElementById('details-price').textContent = quote.price.toFixed(2);
+                
+                const isPositive = quote.change >= 0;
+                const changeEl = document.getElementById('details-change');
+                changeEl.textContent = `${isPositive ? '+' : ''}${quote.change.toFixed(2)} ${isPositive ? '+' : ''}${quote.changePercent.toFixed(2)}%`;
+                changeEl.className = `text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`;
+            }
+        }
+
+        async function loadWatchlist() {
+            const quotes = await fetchWatchlistData();
+            renderWatchlist(quotes);
+        }
+
+        function renderWatchlist(quotes) {
+            const container = document.getElementById('watchlist-container');
+            const colors = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-purple-500', 'bg-yellow-500', 'bg-red-500', 'bg-pink-500'];
+            
+            container.innerHTML = quotes.map((quote, index) => {
+                const isPositive = quote.change >= 0;
+                const isActive = quote.symbol === currentSymbol;
+                
+                return `
+                    <div class="stock-item px-4 py-2 cursor-pointer border-l-2 ${isActive ? 'border-blue-500 active' : 'border-transparent hover:border-blue-500'} border-b border-gray-700" data-symbol="${quote.symbol}">
+                        <div class="grid grid-cols-4 gap-4 items-center">
+                            <div class="flex items-center space-x-2">
+                                <div class="w-5 h-5 ${colors[index % colors.length]} rounded flex items-center justify-center text-xs font-bold">${quote.symbol.charAt(0)}</div>
+                                <span class="text-sm font-medium">${quote.symbol}</span>
+                            </div>
+                            <div class="text-right text-sm">${quote.price.toFixed(2)}</div>
+                            <div class="text-right text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}">${isPositive ? '+' : ''}${quote.change.toFixed(2)}</div>
+                            <div class="text-right text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}">${isPositive ? '+' : ''}${quote.changePercent.toFixed(2)}%</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.querySelectorAll('.stock-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const symbol = item.dataset.symbol;
+                    if (symbol && symbol !== currentSymbol) {
+                        selectStock(symbol);
+                    }
+                });
+            });
+        }
+
+        async function selectStock(symbol) {
+            currentSymbol = symbol;
+            
+            document.querySelectorAll('.stock-item').forEach(item => {
+                item.classList.remove('active', 'border-blue-500');
+                item.classList.add('border-transparent');
+            });
+            
+            const activeItem = document.querySelector(`[data-symbol="${symbol}"]`);
+            if (activeItem) {
+                activeItem.classList.add('active', 'border-blue-500');
+                activeItem.classList.remove('border-transparent');
+            }
+            
+            await loadChart(symbol, currentRange);
+            await updateStockDetails(symbol);
+        }
+
+        function handleTimeframeClick(timeframe) {
+            document.querySelectorAll('.timeframe-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('text-gray-300');
+            });
+            
+            event.target.classList.add('bg-blue-600', 'text-white');
+            event.target.classList.remove('text-gray-300');
+        }
+
+        function handleRangeClick(range) {
+            document.querySelectorAll('.range-btn').forEach(btn => {
+                btn.classList.remove('bg-blue-600', 'text-white');
+                btn.classList.add('text-gray-300');
+            });
+            
+            event.target.classList.add('bg-blue-600', 'text-white');
+            event.target.classList.remove('text-gray-300');
+            
+            currentRange = range;
+            setChartVisibleRange(range);
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            initChart();
+            
+            await loadChart(currentSymbol, currentRange);
+            await updateStockDetails(currentSymbol);
+            await loadWatchlist();
+            
+            document.querySelectorAll('.timeframe-btn').forEach(btn => {
+                btn.addEventListener('click', () => handleTimeframeClick(btn.dataset.timeframe));
+            });
+            
+            document.querySelectorAll('.range-btn').forEach(btn => {
+                btn.addEventListener('click', () => handleRangeClick(btn.dataset.range));
+            });
+        });
+    </script>
+</body>
+</html>
+<body>
+    <div class="main-container">
+        <div class="navbar">
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center space-x-2">
+                    <div class="w-6 h-6 bg-orange-500 rounded flex items-center justify-center text-xs font-bold">A</div>
+                    <span class="text-white font-medium" id="nav-symbol">AAPL</span>
+                    <span class="text-gray-400 text-sm" id="nav-name">Apple Inc.</span>
+                    <button class="text-gray-400 hover:text-white">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="flex items-center space-x-1 ml-8">
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="3m">3m</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="15m">15m</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="1h">1h</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="2h">2h</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-timeframe="4h">4h</button>
+                    <button class="timeframe-btn px-2 py-1 text-sm rounded bg-blue-600 text-white" data-timeframe="1D">D</button>
+                </div>
+
+                <button class="px-3 py-1 text-sm border border-gray-600 rounded text-gray-300 hover:bg-gray-700 ml-4">
+                    Indicators
+                </button>
+            </div>
+
+            <div class="ml-auto flex items-center space-x-2">
+                <button class="px-3 py-1 text-sm text-gray-300 hover:bg-gray-700 rounded">Alert</button>
+                <button class="px-3 py-1 text-sm text-gray-300 hover:bg-gray-700 rounded">Replay</button>
+                <button class="px-3 py-1 text-sm bg-blue-600 rounded text-white">Publish</button>
+            </div>
+        </div>
+
+        <div class="price-bar">
+            <div class="flex items-center space-x-6">
+                <div class="flex items-center space-x-2">
+                    <span class="text-2xl font-medium" id="current-price">Loading...</span>
+                    <span class="text-gray-400 text-sm" id="price-change">Loading...</span>
+                </div>
+                <div class="text-sm text-gray-400">
+                    <span>O</span> <span class="text-white" id="open-price">--</span>
+                    <span class="ml-3">H</span> <span class="text-white" id="high-price">--</span>
+                    <span class="ml-3">L</span> <span class="text-white" id="low-price">--</span>
+                    <span class="ml-3">C</span> <span class="text-white" id="close-price">--</span>
+                </div>
+                <div class="text-sm text-gray-400">
+                    Vol <span class="text-white" id="volume">--</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-container">
+            <div class="chart-container">
+                <div id="chart"></div>
+            </div>
+
+            <div class="sidebar">
+                <div class="watchlist-section">
+                    <div class="p-4 border-b border-gray-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-sm font-medium text-gray-300">Watchlist</h3>
+                            <div class="flex items-center space-x-2">
+                                <button class="text-gray-400 hover:text-white">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                    </svg>
+                                </button>
+                                <button class="text-gray-400 hover:text-white">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1"></path>
+                                    </svg>
+                                </button>
+                                <button class="text-gray-400 hover:text-white">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-4 gap-4 text-xs text-gray-400 mb-2">
+                            <div>Symbol</div>
+                            <div class="text-right">Last</div>
+                            <div class="text-right">Chg</div>
+                            <div class="text-right">Chg%</div>
+                        </div>
+                    </div>
+                    
+                    <div class="overflow-y-auto" id="watchlist-items">
+                        <!-- Watchlist items will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <div class="stock-details-section">
+                    <div class="p-4">
+                        <div class="flex items-center space-x-3 mb-3">
+                            <div class="w-8 h-8 bg-orange-500 rounded flex items-center justify-center text-sm font-bold" id="details-icon">A</div>
+                            <div>
+                                <div class="text-sm font-medium" id="details-symbol">AAPL</div>
+                                <div class="text-xs text-gray-400" id="details-name">Apple Inc.</div>
+                                <div class="text-xs text-gray-400" id="details-sector">Technology</div>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <div class="flex items-baseline space-x-2">
+                                <span class="text-2xl font-bold" id="details-price">Loading...</span>
+                                <span class="text-sm text-gray-400">USD</span>
+                                <span class="text-sm" id="details-change">Loading...</span>
+                            </div>
+                            <div class="flex items-center space-x-1 mt-1">
+                                <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+                                <span class="text-xs text-gray-400">Market data</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="text-sm font-medium mb-3">Key stats</div>
+                            <div class="space-y-2">
+                                <div class="flex justify-between text-sm">
+                                    <span class="text-gray-400">Volume</span>
+                                    <span id="details-volume">--</span>
+                                </div>
+                                <div class="flex justify-between text-sm">
+                                    <span class="text-gray-400">Market capitalization</span>
+                                    <span id="details-market-cap">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="flex items-center space-x-1">
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="1D">1D</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="5D">5D</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="1M">1M</button>
+                <button class="range-btn px-3 py-1 text-sm rounded bg-blue-600 text-white" data-range="3M">3M</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="6M">6M</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="YTD">YTD</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="1Y">1Y</button>
+                <button class="range-btn px-3 py-1 text-sm rounded text-gray-300 hover:bg-gray-700" data-range="ALL">All</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chart;
+        let candlestickSeries;
+        let volumeSeries;
+        let currentData = [];
+        let currentSymbol = 'AAPL';
+        let currentRange = '3M';
+
+        const API_BASE = 'http://localhost:8000/api';
+        
+        const watchlistSymbols = ['AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META'];
+
+        async function fetchStockChart(symbol, period = '3M') {
+            try {
+                const response = await fetch(`${API_BASE}/stock/${symbol}/chart?period=${period}`);
+                if (!response.ok) throw new Error('Failed to fetch chart data');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching chart data:', error);
+                return null;
+            }
+        }
+
+        async function fetchStockQuote(symbol) {
+            try {
+                const response = await fetch(`${API_BASE}/stock/${symbol}/quote`);
+                if (!response.ok) throw new Error('Failed to fetch quote');
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching quote:', error);
+                return null;
+            }
+        }
+
+        async function fetchMultipleQuotes(symbols) {
+            try {
+                const response = await fetch(`${API_BASE}/stocks/quotes?symbols=${symbols.join(',')}`);
+                if (!response.ok) throw new Error('Failed to fetch quotes');
+                const data = await response.json();
+                return data.quotes;
+            } catch (error) {
+                console.error('Error fetching multiple quotes:', error);
+                return [];
+            }
+        }
+
+        function initChart() {
+            const container = document.getElementById('chart');
+            
+            chart = LightweightCharts.createChart(container, {
+                width: container.clientWidth,
+                height: container.clientHeight,
+                layout: {
+                    background: { color: '#131722' },
+                    textColor: '#d1d4dc',
+                },
+                grid: {
+                    vertLines: { color: '#2B2B43' },
+                    horzLines: { color: '#2B2B43' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                rightPriceScale: {
+                    borderColor: '#485c7b',
+                },
+                timeScale: {
+                    borderColor: '#485c7b',
+                    timeVisible: true,
+                },
+                watermark: {
+                    visible: false,
+                },
+                attributionLogo: false,
+            });
+
+            candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: false,
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+            });
+
+            volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+                color: '#26a69a',
+                priceFormat: { type: 'volume' },
+                priceScaleId: 'volume',
+                scaleMargins: { top: 0.8, bottom: 0 },
+            });
+            
+            chart.priceScale('volume').applyOptions({
+                scaleMargins: {
+                    top: 0.8,
+                    bottom: 0,
+                },
+            });
 
             chart.subscribeCrosshairMove(param => {
                 if (param.time) {
@@ -500,6 +861,29 @@
                     chart.applyOptions({ width, height });
                 }
             }).observe(container);
+        }
+
+        async function loadChart(symbol, period) {
+            document.querySelector('.chart-container').classList.add('loading');
+            
+            const data = await fetchStockChart(symbol, period);
+            if (data) {
+                currentData = data.candleData;
+                candlestickSeries.setData(data.candleData);
+                volumeSeries.setData(data.volumeData);
+                chart.timeScale().fitContent();
+                updatePriceDisplay();
+            }
+            
+            document.querySelector('.chart-container').classList.remove('loading');
+        }
+
+        async function loadStockQuote(symbol) {
+            const quote = await fetchStockQuote(symbol);
+            if (quote) {
+                updateStockDetails(quote);
+                updateNavbar(quote);
+            }
         }
 
         function updatePriceDisplay(data = null) {
@@ -525,17 +909,88 @@
             changeEl.className = `text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`;
         }
 
-        function updateStockDetails(symbol) {
-            const stock = stocksData[symbol];
-            if (!stock) return;
-
-            document.getElementById('details-symbol').textContent = symbol;
-            document.getElementById('details-price').innerHTML = `${stock.price.toFixed(2)} <span class="text-sm">USD</span>`;
+        function updateStockDetails(quote) {
+            document.getElementById('details-symbol').textContent = quote.symbol;
+            document.getElementById('details-name').textContent = quote.name;
+            document.getElementById('details-sector').textContent = quote.sector;
+            document.getElementById('details-price').textContent = quote.price.toFixed(2);
+            document.getElementById('details-icon').textContent = quote.symbol.charAt(0);
             
-            const isPositive = stock.change >= 0;
+            const isPositive = quote.change >= 0;
             const changeEl = document.getElementById('details-change');
-            changeEl.textContent = `${isPositive ? '+' : ''}${stock.change.toFixed(2)} ${isPositive ? '+' : ''}${stock.changePercent.toFixed(2)}%`;
+            changeEl.textContent = `${isPositive ? '+' : ''}${quote.change.toFixed(2)} ${isPositive ? '+' : ''}${quote.changePercent.toFixed(2)}%`;
             changeEl.className = `text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`;
+            
+            document.getElementById('details-volume').textContent = formatNumber(quote.volume);
+            document.getElementById('details-market-cap').textContent = formatNumber(quote.marketCap);
+            document.getElementById('volume').textContent = formatNumber(quote.volume);
+        }
+
+        function updateNavbar(quote) {
+            document.getElementById('nav-symbol').textContent = quote.symbol;
+            document.getElementById('nav-name').textContent = quote.name;
+        }
+
+        function formatNumber(num) {
+            if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
+            if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+            if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+            if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+            return num.toString();
+        }
+
+        async function loadWatchlist() {
+            const quotes = await fetchMultipleQuotes(watchlistSymbols);
+            const container = document.getElementById('watchlist-items');
+            
+            container.innerHTML = quotes.map((quote, index) => {
+                const isPositive = quote.change >= 0;
+                const colors = ['bg-orange-500', 'bg-green-500', 'bg-blue-500', 'bg-purple-500', 'bg-yellow-500', 'bg-red-500', 'bg-pink-500'];
+                const isActive = quote.symbol === currentSymbol;
+                
+                return `
+                    <div class="stock-item px-4 py-2 cursor-pointer border-l-2 ${isActive ? 'border-blue-500 active' : 'border-transparent hover:border-blue-500'} border-b border-gray-700" data-symbol="${quote.symbol}">
+                        <div class="grid grid-cols-4 gap-4 items-center">
+                            <div class="flex items-center space-x-2">
+                                <div class="w-5 h-5 ${colors[index % colors.length]} rounded flex items-center justify-center text-xs font-bold">${quote.symbol.charAt(0)}</div>
+                                <span class="text-sm font-medium">${quote.symbol}</span>
+                            </div>
+                            <div class="text-right text-sm">${quote.price.toFixed(2)}</div>
+                            <div class="text-right text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}">${isPositive ? '+' : ''}${quote.change.toFixed(2)}</div>
+                            <div class="text-right text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}">${isPositive ? '+' : ''}${quote.changePercent.toFixed(2)}%</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.querySelectorAll('.stock-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const symbol = item.dataset.symbol;
+                    if (symbol && symbol !== currentSymbol) {
+                        selectStock(symbol);
+                    }
+                });
+            });
+        }
+
+        async function selectStock(symbol) {
+            currentSymbol = symbol;
+            
+            document.querySelectorAll('.stock-item').forEach(item => {
+                item.classList.remove('active', 'border-blue-500');
+                item.classList.add('border-transparent');
+            });
+            
+            const activeItem = document.querySelector(`[data-symbol="${symbol}"]`);
+            if (activeItem) {
+                activeItem.classList.add('active', 'border-blue-500');
+                activeItem.classList.remove('border-transparent');
+            }
+            
+            await Promise.all([
+                loadChart(symbol, currentRange),
+                loadStockQuote(symbol)
+            ]);
         }
 
         function handleTimeframeClick(timeframe) {
@@ -556,10 +1011,19 @@
             
             event.target.classList.add('bg-blue-600', 'text-white');
             event.target.classList.remove('text-gray-300');
+            
+            currentRange = range;
+            loadChart(currentSymbol, range);
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             initChart();
+            
+            await Promise.all([
+                loadChart(currentSymbol, currentRange),
+                loadStockQuote(currentSymbol),
+                loadWatchlist()
+            ]);
             
             document.querySelectorAll('.timeframe-btn').forEach(btn => {
                 btn.addEventListener('click', () => handleTimeframeClick(btn.dataset.timeframe));
@@ -568,25 +1032,11 @@
             document.querySelectorAll('.range-btn').forEach(btn => {
                 btn.addEventListener('click', () => handleRangeClick(btn.dataset.range));
             });
-            
-            document.querySelectorAll('.stock-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    document.querySelectorAll('.stock-item').forEach(i => {
-                        i.classList.remove('active', 'border-blue-500');
-                        i.classList.add('border-transparent');
-                    });
-                    
-                    item.classList.add('active', 'border-blue-500');
-                    item.classList.remove('border-transparent');
-                    
-                    const symbol = item.dataset.symbol;
-                    if (symbol) {
-                        updateStockDetails(symbol);
-                    }
-                });
-            });
 
-            updateStockDetails('IONQ');
+            setInterval(() => {
+                loadStockQuote(currentSymbol);
+                loadWatchlist();
+            }, 30000);
         });
     </script>
 </body>
