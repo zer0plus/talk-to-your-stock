@@ -2,10 +2,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import requests
+from typing import Optional
 
 app = FastAPI()
 
-# CORS middleware for local development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,18 +36,27 @@ async def fetch_alpha_vantage_data(function: str, symbol: str, **params):
             **params
         }
         
-        response = requests.get(base_url, params=params_dict, timeout=10)
+        print(f"Alpha Vantage API call: {function} for {symbol} with params: {params}")
+        
+        response = requests.get(base_url, params=params_dict, timeout=15)
         data = response.json()
         
-        # Check for API errors
+        print(f"Alpha Vantage response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+        
         if "Error Message" in data:
+            print(f"Alpha Vantage Error: {data['Error Message']}")
             raise HTTPException(status_code=404, detail=f"Stock symbol {symbol} not found")
         if "Note" in data:
+            print(f"Alpha Vantage Note: {data['Note']}")
             raise HTTPException(status_code=429, detail="API rate limit exceeded")
+        if "Information" in data:
+            print(f"Alpha Vantage Information: {data['Information']}")
+            raise HTTPException(status_code=429, detail="API call frequency limit reached")
             
         return data
         
     except requests.RequestException as e:
+        print(f"Request error: {e}")
         raise HTTPException(status_code=503, detail="External API service unavailable")
 
 @app.get("/")
@@ -55,16 +64,19 @@ async def read_root():
     return {"message": "Stock API Server with Alpha Vantage"}
 
 @app.get("/api/stock/{symbol}/chart")
-async def get_stock_chart(symbol: str, period: str = "ALL"):
-    """Get historical stock data for charting - always returns ALL available split-adjusted data"""
-    print(f"Fetching complete adjusted chart data for {symbol}")
+async def get_stock_chart(symbol: str, range_period: Optional[str] = None):
+    """Get historical stock data for charting with range support"""
+    print(f"\n=== CHART REQUEST ===")
+    print(f"Symbol: {symbol}, Range: {range_period}")
     
+    print("Using daily data...")
     data = await fetch_alpha_vantage_data("TIME_SERIES_DAILY_ADJUSTED", symbol.upper(), outputsize="full")
     
     if not data or "Time Series (Daily)" not in data:
         raise HTTPException(status_code=404, detail=f"No chart data found for {symbol}")
     
     time_series = data["Time Series (Daily)"]
+    print(f"Daily data points: {len(time_series)}")
     
     candle_data = []
     volume_data = []
@@ -88,7 +100,7 @@ async def get_stock_chart(symbol: str, period: str = "ALL"):
             "open": round(float(row['1. open']) * adjustment_factor, 2),
             "high": round(float(row['2. high']) * adjustment_factor, 2),
             "low": round(float(row['3. low']) * adjustment_factor, 2),
-            "close": round(adjusted_close, 2)  # Use adjusted close
+            "close": round(adjusted_close, 2)
         }
         
         volume = {
@@ -100,7 +112,15 @@ async def get_stock_chart(symbol: str, period: str = "ALL"):
         candle_data.append(candle)
         volume_data.append(volume)
     
-    return {"candleData": candle_data, "volumeData": volume_data}
+    print(f"Final data: {len(candle_data)} candles, {len(volume_data)} volume points")
+    
+    return {
+        "candleData": candle_data, 
+        "volumeData": volume_data,
+        "requestedRange": range_period,
+        "dataType": "daily"
+    }
+
 
 @app.get("/api/stock/{symbol}/quote")
 async def get_stock_quote(symbol: str):
