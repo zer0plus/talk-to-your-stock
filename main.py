@@ -2,10 +2,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import requests
+from datetime import datetime, timedelta
 from typing import Optional
 
 app = FastAPI()
 
+# CORS middleware for local development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,6 +60,7 @@ async def fetch_alpha_vantage_data(function: str, symbol: str, **params):
     except requests.RequestException as e:
         print(f"Request error: {e}")
         raise HTTPException(status_code=503, detail="External API service unavailable")
+
 
 @app.get("/")
 async def read_root():

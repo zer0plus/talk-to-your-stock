@@ -105,6 +105,15 @@
             background-color: #1e222d;
             border-left: 2px solid #2962ff;
         }
+
+        .rectangle-tool-btn {
+            transition: all 0.15s ease;
+        }
+
+        .rectangle-tool-btn.active {
+            background-color: #2962ff !important;
+            color: white !important;
+        }
         
         @media (max-width: 1024px) {
             .sidebar {
@@ -141,7 +150,12 @@
                 </div>
 
                 <div class="flex items-center space-x-1 ml-8">
-                    <!-- Removed all timeframe buttons - only using daily candlesticks now -->
+                    <button id="rectangle-tool-btn" class="rectangle-tool-btn px-3 py-1 text-sm border border-gray-600 rounded text-gray-300 hover:bg-gray-700" title="Rectangle Selection Tool">
+                        <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V6a2 2 0 012-2h8a2 2 0 012 2v2m0 0v8a2 2 0 01-2 2H6a2 2 0 01-2-2V8m0 0h12"></path>
+                        </svg>
+                        Rectangle
+                    </button>
                 </div>
 
                 <button class="px-3 py-1 text-sm border border-gray-600 rounded text-gray-300 hover:bg-gray-700 ml-4">
@@ -186,7 +200,6 @@
             </div>
 
             <div class="sidebar">
-                <!-- Normal Mode: Watchlist + Stock Details -->
                 <div id="normal-sidebar" class="flex flex-col h-full">
                     <div class="watchlist-section">
                         <div class="p-4 border-b border-gray-700">
@@ -220,7 +233,6 @@
                         </div>
                         
                         <div class="overflow-y-auto" id="watchlist-items">
-                            <!-- Watchlist items will be populated by JavaScript -->
                         </div>
                     </div>
 
@@ -264,9 +276,7 @@
                     </div>
                 </div>
 
-                <!-- Chat Mode: AI Chat Panel -->
                 <div id="chat-sidebar" class="flex flex-col h-full hidden">
-                    <!-- Chat Header -->
                     <div class="p-4 border-b border-gray-700">
                         <div class="flex justify-between items-center">
                             <div class="flex items-center space-x-2">
@@ -283,7 +293,6 @@
                             </button>
                         </div>
                         
-                        <!-- Selection Info -->
                         <div id="selection-info" class="mt-3 p-2 bg-gray-800 rounded text-xs text-gray-300 hidden">
                             <div class="flex items-center space-x-1">
                                 <svg class="w-3 h-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -294,18 +303,16 @@
                         </div>
                     </div>
 
-                    <!-- Chat Messages -->
                     <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
                         <div class="text-center text-gray-500 text-sm py-8">
                             <svg class="w-8 h-8 mx-auto mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10m0 0V6a2 2 0 00-2-2H9a2 2 0 00-2 2v2m0 0v10a2 2 0 002 2h10a2 2 0 002-2V8M9 12h6"></path>
                             </svg>
-                            <p>Select a time period on the chart (drag) and press <kbd class="px-1 py-0.5 bg-gray-700 rounded text-xs">⌘L</kbd> to analyze</p>
+                            <p>Draw a rectangle on the chart and press <kbd class="px-1 py-0.5 bg-gray-700 rounded text-xs">⌘L</kbd> to analyze</p>
                             <p class="text-xs mt-1">Or type a question about <span id="chat-stock-name">Apple</span></p>
                         </div>
                     </div>
 
-                    <!-- Chat Input -->
                     <div class="p-4 border-t border-gray-700">
                         <div class="flex space-x-2">
                             <input 
@@ -337,34 +344,377 @@
     </div>
 
     <script>
+
+        class RectangleRenderer {
+            constructor(data) {
+                this._data = data;
+            }
+
+            draw(target) {
+                if (!this._data || !this._data.startTime || !this._data.endTime || 
+                    this._data.startPrice === null || this._data.endPrice === null) {
+                    return;
+                }
+
+                target.useBitmapCoordinateSpace(scope => {
+                    const ctx = scope.context;
+
+                    const x1 = Math.round(this._data.x1 * scope.horizontalPixelRatio);
+                    const x2 = Math.round(this._data.x2 * scope.horizontalPixelRatio);
+                    const y1 = Math.round(this._data.y1 * scope.verticalPixelRatio);
+                    const y2 = Math.round(this._data.y2 * scope.verticalPixelRatio);
+
+                    const left = Math.min(x1, x2);
+                    const right = Math.max(x1, x2);
+                    const top = Math.min(y1, y2);
+                    const bottom = Math.max(y1, y2);
+
+                    ctx.save();
+
+                    ctx.fillStyle = this._data.fillColor || 'rgba(41, 98, 255, 0.1)';
+                    ctx.fillRect(left, top, right - left, bottom - top);
+
+                    ctx.strokeStyle = this._data.borderColor || '#2962ff';
+                    ctx.lineWidth = (this._data.borderWidth || 2) * scope.horizontalPixelRatio;
+                    ctx.strokeRect(left, top, right - left, bottom - top);
+
+                    ctx.restore();
+                });
+            }
+        }
+
+        class RectanglePaneView {
+            constructor(rectangle) {
+                this._rectangle = rectangle;
+                this._renderer = new RectangleRenderer(rectangle);
+            }
+
+            update() {
+                this._renderer = new RectangleRenderer(this._rectangle);
+            }
+
+            renderer() {
+                return this._renderer;
+            }
+
+            zOrder() {
+                return 'normal';
+            }
+        }
+
+        class RectangleDrawingPrimitive {
+            constructor() {
+                this._rectangles = [];
+                this._isDrawing = false;
+                this._currentRectangle = null;
+                this._startPoint = null;
+                this._enabled = false;
+                this._onRectangleCreated = null;
+                this._chart = null;
+                this._series = null;
+                this._requestUpdate = null;
+                this._paneViews = [];
+            }
+
+            updateAllViews() {
+                this._updatePaneViews();
+            }
+
+            paneViews() {
+                return this._paneViews;
+            }
+
+            attached(param) {
+                this._chart = param.chart;
+                this._series = param.series;
+                this._requestUpdate = param.requestUpdate;
+                this._setupEventHandlers();
+            }
+
+            detached() {
+                this._cleanup();
+                this._chart = null;
+                this._series = null;
+                this._requestUpdate = null;
+            }
+
+            priceAxisViews() {
+                return [];
+            }
+
+            timeAxisViews() {
+                return [];
+            }
+
+
+            _updatePaneViews() {
+                this._paneViews = [];
+
+                this._rectangles.forEach((rect, index) => {
+                    this._updateRectangleCoordinates(rect);
+                    if (rect.visible) {
+                        this._paneViews.push(new RectanglePaneView(rect));
+                    }
+                });
+
+                if (this._isDrawing && this._currentRectangle) {
+                    this._updateRectangleCoordinates(this._currentRectangle);
+                    this._paneViews.push(new RectanglePaneView(this._currentRectangle));
+                }
+            }
+
+            _updateRectangleCoordinates(rect) {
+                if (!this._chart || !this._series || !rect.startTime || !rect.endTime) {
+                    rect.visible = false;
+                    return;
+                }
+
+                const timeScale = this._chart.timeScale();
+                const x1 = timeScale.timeToCoordinate(rect.startTime);
+                const x2 = timeScale.timeToCoordinate(rect.endTime);
+                
+                let y1 = null, y2 = null;
+                try {
+                    y1 = candlestickSeries.priceToCoordinate(rect.startPrice);
+                    y2 = candlestickSeries.priceToCoordinate(rect.endPrice);
+                } catch (error1) {
+                    try {
+                        const priceScale = this._series.priceScale();
+                        y1 = priceScale.priceToCoordinate(rect.startPrice);
+                        y2 = priceScale.priceToCoordinate(rect.endPrice);
+                    } catch (error2) {
+                        try {
+                            y1 = this._chart.priceScale('right').priceToCoordinate(rect.startPrice);
+                            y2 = this._chart.priceScale('right').priceToCoordinate(rect.endPrice);
+                        } catch (error3) {
+                            console.error('ERROR: Price coordinate conversion failed');
+                            rect.visible = false;
+                            return;
+                        }
+                    }
+                }
+
+                if (x1 === null || x2 === null || y1 === null || y2 === null) {
+                    rect.visible = false;
+                    return;
+                }
+
+                rect.x1 = x1;
+                rect.x2 = x2;
+                rect.y1 = y1;
+                rect.y2 = y2;
+                rect.visible = true;
+            }
+
+            _setupEventHandlers() {
+                if (!this._chart) {
+                    console.error('ERROR: No chart available for event handlers');
+                    return;
+                }
+
+                const chartElement = this._chart.chartElement();
+                this._clickHandler = this._onClick.bind(this);
+                this._mouseMoveHandler = this._onMouseMove.bind(this);
+                this._keyHandler = this._onKeyDown.bind(this);
+
+                chartElement.addEventListener('click', this._clickHandler);
+                chartElement.addEventListener('mousemove', this._mouseMoveHandler);
+                document.addEventListener('keydown', this._keyHandler);
+            }
+
+            _cleanup() {
+                if (this._chart) {
+                    const chartElement = this._chart.chartElement();
+                    if (this._clickHandler) {
+                        chartElement.removeEventListener('click', this._clickHandler);
+                    }
+                    if (this._mouseMoveHandler) {
+                        chartElement.removeEventListener('mousemove', this._mouseMoveHandler);
+                    }
+                }
+                if (this._keyHandler) {
+                    document.removeEventListener('keydown', this._keyHandler);
+                }
+            }
+
+            _onClick(event) {
+                
+                if (!this._enabled) {
+                    return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                
+
+                const rect = this._chart.chartElement().getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                
+
+                const time = this._chart.timeScale().coordinateToTime(x);
+                const price = candlestickSeries.coordinateToPrice(y);
+                
+
+                if (time === null || price === null) {
+                    return;
+                }
+
+                
+                if (!this._isDrawing) {
+                    this._startDrawing({ time, price });
+                } else {
+                    this._finishDrawing({ time, price });
+                }
+            }
+
+            _onMouseMove(event) {
+                if (!this._enabled || !this._isDrawing || !this._startPoint) return;
+
+                const rect = this._chart.chartElement().getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+
+                const time = this._chart.timeScale().coordinateToTime(x);
+                
+                let price = null;
+                price = candlestickSeries.coordinateToPrice(y);
+
+                if (time === null || price === null) return;
+
+                if (this._currentRectangle) {
+                    this._currentRectangle.endTime = time;
+                    this._currentRectangle.endPrice = price;
+                    this._requestUpdate();
+                }
+            }
+
+            _onKeyDown(event) {
+                if (event.key === 'Escape' && this._isDrawing) {
+                    this._cancelDrawing();
+                }
+            }
+
+            _startDrawing(point) {
+                this._isDrawing = true;
+                this._startPoint = point;
+
+                this._currentRectangle = {
+                    startTime: point.time,
+                    startPrice: point.price,
+                    endTime: point.time,
+                    endPrice: point.price,
+                    fillColor: 'rgba(41, 98, 255, 0.1)',
+                    borderColor: '#2962ff',
+                    borderWidth: 2,
+                    visible: true
+                };
+
+                this._setCursor('crosshair');
+                
+                if (this._requestUpdate) {
+                    this._requestUpdate();
+                } else {
+                    console.error('ERROR: No _requestUpdate callback available!');
+                }
+            }
+
+            _finishDrawing(endPoint) {
+                if (!this._isDrawing || !this._startPoint || !this._currentRectangle) return;
+
+                this._currentRectangle.endTime = endPoint.time;
+                this._currentRectangle.endPrice = endPoint.price;
+
+                this._rectangles.push({ ...this._currentRectangle });
+
+                if (this._onRectangleCreated) {
+                    const timeRange = {
+                        from: Math.min(this._currentRectangle.startTime, this._currentRectangle.endTime),
+                        to: Math.max(this._currentRectangle.startTime, this._currentRectangle.endTime)
+                    };
+                    const priceRange = {
+                        from: Math.min(this._currentRectangle.startPrice, this._currentRectangle.endPrice),
+                        to: Math.max(this._currentRectangle.startPrice, this._currentRectangle.endPrice)
+                    };
+                    this._onRectangleCreated({ timeRange, priceRange });
+                }
+
+                this._isDrawing = false;
+                this._startPoint = null;
+                this._currentRectangle = null;
+                this._setCursor('default');
+                this._requestUpdate();
+            }
+
+            _cancelDrawing() {
+                this._isDrawing = false;
+                this._startPoint = null;
+                this._currentRectangle = null;
+                this._setCursor('default');
+                this._requestUpdate();
+            }
+
+            _setCursor(cursor) {
+                if (this._chart) {
+                    this._chart.chartElement().style.cursor = cursor;
+                }
+            }
+
+            enable(onRectangleCreated) {
+                this._enabled = true;
+                this._onRectangleCreated = onRectangleCreated;
+                this._setCursor('crosshair');
+            }
+
+            disable() {
+                this._enabled = false;
+                this._onRectangleCreated = null;
+                if (this._isDrawing) {
+                    this._cancelDrawing();
+                }
+                this._setCursor('default');
+            }
+
+            clearRectangles() {
+                this._rectangles = [];
+                if (this._isDrawing) {
+                    this._cancelDrawing();
+                }
+                this._requestUpdate();
+            }
+
+            isEnabled() {
+                return this._enabled;
+            }
+        }
+
         let chart;
         let candlestickSeries;
         let volumeSeries;
+        let rectangleDrawingPrimitive;
         let currentData = [];
         let currentSymbol = 'AAPL';
         let currentRange = null;
 
         let isChatMode = false;
         let selectedTimeRange = null;
-        let isSelectingMode = false;
-        let firstClickPoint = null;
-        let selectionOverlay = null;
+        let rectangleToolEnabled = false;
 
         const API_BASE = 'http://localhost:8000/api';
         
         const watchlistSymbols = ['AAPL', 'NVDA', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META'];
 
         const cache = {
-            chartData: new Map(), // key: symbol -> {data, timestamp}
+            chartData: new Map(),
             quotes: new Map(),
             watchlistData: null,
             watchlistTimestamp: 0
         };
 
         const CACHE_DURATION = {
-            CHART: 30 * 60 * 1000, // 30 minutes for complete chart data
-            QUOTE: 30 * 1000,      // 30 seconds for quotes
-            WATCHLIST: 30 * 1000   // 30 seconds for watchlist
+            CHART: 30 * 60 * 1000,
+            QUOTE: 30 * 1000,
+            WATCHLIST: 30 * 1000
         };
 
         function isCacheValid(timestamp, duration) {
@@ -390,7 +740,6 @@
                     url += `?range_period=${range}`;
                 }
                 
-                console.log(`Fetching chart data: ${url}`);
                 
                 const response = await fetch(url);
                 
@@ -400,7 +749,6 @@
                 
                 const data = await response.json();
                 
-                console.log(`Received ${data.candleData?.length || 0} candles, data type: ${data.dataType || 'unknown'}`);
                 
                 cache.chartData.set(cacheKey, {
                     data: data,
@@ -409,7 +757,7 @@
                 
                 return data;
             } catch (error) {
-                console.error('Error fetching chart data:', error);
+                console.error('ERROR: fetching chart data:', error);
                 showNotification('Failed to load chart data. Please try again.', 'error');
                 return null;
             }
@@ -438,7 +786,6 @@
             const cached = cache.quotes.get(symbol);
             
             if (cached && isCacheValid(cached.timestamp, CACHE_DURATION.QUOTE)) {
-                console.log(`Using cached quote for ${symbol}`);
                 return cached.data;
             }
 
@@ -454,14 +801,13 @@
                 
                 return data;
             } catch (error) {
-                console.error('Error fetching quote:', error);
+                console.error('ERROR: fetching quote:', error);
                 return null;
             }
         }
 
         async function fetchMultipleQuotes(symbols) {
             if (cache.watchlistData && isCacheValid(cache.watchlistTimestamp, CACHE_DURATION.WATCHLIST)) {
-                console.log('Using cached watchlist data');
                 return cache.watchlistData;
             }
 
@@ -475,7 +821,7 @@
                 
                 return data.quotes;
             } catch (error) {
-                console.error('Error fetching multiple quotes:', error);
+                console.error('ERROR: fetching multiple quotes:', error);
                 return [];
             }
         }
@@ -541,6 +887,9 @@
                 }
             });
 
+            rectangleDrawingPrimitive = new RectangleDrawingPrimitive();
+            candlestickSeries.attachPrimitive(rectangleDrawingPrimitive);
+
             new ResizeObserver(entries => {
                 if (entries.length && entries[0].target === container) {
                     const { width, height } = entries[0].contentRect;
@@ -549,9 +898,48 @@
             }).observe(container);
         }
 
-        async function loadChart(symbol, range = null) {
-            console.log(`Loading chart for ${symbol}, range: ${range}`);
+        function onRectangleCreated(rectangleData) {
             
+            selectedTimeRange = {
+                startTime: rectangleData.timeRange.from,
+                endTime: rectangleData.timeRange.to,
+                topPrice: rectangleData.priceRange.to,
+                bottomPrice: rectangleData.priceRange.from
+            };
+            
+            showSelection();
+            showNotification('Time period selected! Press ⌘L or open chat to analyze.', 'success');
+        }
+
+        function toggleRectangleTool() {
+            rectangleToolEnabled = !rectangleToolEnabled;
+            const btn = document.getElementById('rectangle-tool-btn');
+            
+            if (rectangleToolEnabled) {
+                rectangleDrawingPrimitive.enable(onRectangleCreated);
+                btn.classList.add('active');
+                btn.classList.remove('text-gray-300', 'hover:bg-gray-700');
+                showNotification('Rectangle tool enabled. Click and drag to select time periods.', 'info');
+            } else {
+                rectangleDrawingPrimitive.disable();
+                btn.classList.remove('active');
+                btn.classList.add('text-gray-300', 'hover:bg-gray-700');
+                showNotification('Rectangle tool disabled.', 'info');
+            }
+        }
+
+        function clearSelection() {
+            selectedTimeRange = null;
+            if (rectangleDrawingPrimitive) {
+                rectangleDrawingPrimitive.clearRectangles();
+            }
+            
+            const selectionInfo = document.getElementById('selection-info');
+            selectionInfo.classList.add('hidden');
+            updateSendButton();
+        }
+
+        async function loadChart(symbol, range = null) {
             const data = await fetchStockChart(symbol, range);
             if (data) {
                 currentData = data.candleData;
@@ -565,6 +953,7 @@
                 }
                 
                 updatePriceDisplay();
+                clearSelection();
             }
         }
 
@@ -605,7 +994,7 @@
                     to: toTimestamp
                 });
             } catch (error) {
-                console.warn('Could not set visible range, falling back to fit content:', error);
+                console.warn('WARNING: Could not set visible range, falling back to fit content:', error);
                 chart.timeScale().fitContent();
             }
         }
@@ -720,6 +1109,7 @@
             }
             
             showChatButton();
+            clearSelection();
             
             await Promise.all([
                 loadChart(symbol, currentRange),
@@ -740,7 +1130,6 @@
             
             loadChart(currentSymbol, currentRange);
         }
-
 
         function showChatButton() {
             const chatBtn = document.getElementById('chat-btn');
@@ -783,154 +1172,6 @@
             }
         }
 
-        function enableChartSelection() {
-            if (!chart) return;
-            
-            const container = document.getElementById('chart');
-            
-            if (!document.getElementById('selection-styles')) {
-                const style = document.createElement('style');
-                style.id = 'selection-styles';
-                style.textContent = `
-                    .chart-selection-overlay {
-                        position: absolute;
-                        border: 2px solid #2962ff;
-                        background-color: rgba(41, 98, 255, 0.1);
-                        pointer-events: none;
-                        z-index: 1000;
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-            
-            container.addEventListener('click', (e) => {
-                if (!e.shiftKey) return;
-                
-                e.preventDefault();
-                
-                const rect = container.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-                
-                if (!isSelectingMode) {
-                    startRectangleSelection(x, y, container);
-                } else {
-                    completeRectangleSelection(x, y, container);
-                }
-            });
-            
-            container.addEventListener('mousemove', (e) => {
-                if (isSelectingMode && firstClickPoint && selectionOverlay) {
-                    const rect = container.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
-                    updateSelectionOverlay(x, y);
-                }
-            });
-            
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape' && isSelectingMode) {
-                    cancelSelection();
-                }
-            });
-        }
-
-        function startRectangleSelection(x, y, container) {
-            isSelectingMode = true;
-            firstClickPoint = { x, y };
-            
-            selectionOverlay = document.createElement('div');
-            selectionOverlay.className = 'chart-selection-overlay';
-            selectionOverlay.style.left = x + 'px';
-            selectionOverlay.style.top = y + 'px';
-            selectionOverlay.style.width = '0px';
-            selectionOverlay.style.height = '0px';
-            
-            container.style.position = 'relative';
-            container.appendChild(selectionOverlay);
-            
-            container.style.cursor = 'crosshair';
-            
-            showNotification('Selection started. Click again to complete the rectangle.', 'info');
-        }
-
-        function updateSelectionOverlay(currentX, currentY) {
-            if (!selectionOverlay || !firstClickPoint) return;
-            
-            const left = Math.min(firstClickPoint.x, currentX);
-            const top = Math.min(firstClickPoint.y, currentY);
-            const width = Math.abs(currentX - firstClickPoint.x);
-            const height = Math.abs(currentY - firstClickPoint.y);
-            
-            selectionOverlay.style.left = left + 'px';
-            selectionOverlay.style.top = top + 'px';
-            selectionOverlay.style.width = width + 'px';
-            selectionOverlay.style.height = height + 'px';
-        }
-
-        function completeRectangleSelection(x, y, container) {
-            if (!firstClickPoint || !selectionOverlay) return;
-            
-            const left = Math.min(firstClickPoint.x, x);
-            const right = Math.max(firstClickPoint.x, x);
-            const top = Math.min(firstClickPoint.y, y);
-            const bottom = Math.max(firstClickPoint.y, y);
-            
-            const startTime = chart.timeScale().coordinateToTime(left);
-            const endTime = chart.timeScale().coordinateToTime(right);
-            const topPrice = candlestickSeries.coordinateToPrice(top);
-            const bottomPrice = candlestickSeries.coordinateToPrice(bottom);
-            
-            if (Math.abs(right - left) > 50 && Math.abs(bottom - top) > 20 && startTime && endTime) {
-                selectedTimeRange = {
-                    startTime: Math.min(startTime, endTime),
-                    endTime: Math.max(startTime, endTime),
-                    topPrice: Math.max(topPrice, bottomPrice),
-                    bottomPrice: Math.min(topPrice, bottomPrice),
-                    coordinates: { left, right, top, bottom }
-                };
-                
-                selectionOverlay.style.borderColor = '#00ff88';
-                selectionOverlay.style.backgroundColor = 'rgba(0, 255, 136, 0.15)';
-                
-                showSelection();
-                showNotification('Time period selected! Press ⌘L or open chat to analyze.', 'success');
-            } else {
-                showNotification('Selection too small. Try selecting a larger area.', 'warning');
-                removeSelectionOverlay();
-            }
-            
-            isSelectingMode = false;
-            firstClickPoint = null;
-            container.style.cursor = 'default';
-        }
-
-        function cancelSelection() {
-            if (isSelectingMode) {
-                removeSelectionOverlay();
-                isSelectingMode = false;
-                firstClickPoint = null;
-                document.getElementById('chart').style.cursor = 'default';
-                showNotification('Selection cancelled.', 'info');
-            }
-        }
-
-        function removeSelectionOverlay() {
-            if (selectionOverlay) {
-                selectionOverlay.remove();
-                selectionOverlay = null;
-            }
-        }
-
-        function clearSelection() {
-            selectedTimeRange = null;
-            removeSelectionOverlay();
-            
-            const selectionInfo = document.getElementById('selection-info');
-            selectionInfo.classList.add('hidden');
-            updateSendButton();
-        }
-
         function showSelection() {
             if (!selectedTimeRange) return;
             
@@ -953,12 +1194,6 @@
             selectionInfo.classList.remove('hidden');
             
             updateSendButton();
-        }
-
-        function showSelectionInfo() {
-            if (selectedTimeRange && isChatMode) {
-                showNotification('Time period selected! Press ⌘L or type your question.', 'info');
-            }
         }
 
         function updateSendButton() {
@@ -994,7 +1229,6 @@
                 
                 addChatMessage('ai', response);
                 
-                // to be replaced with actual api call
                 setTimeout(() => {
                     addChatMessage('ai', '🚧 TODO! This will analyze price movements, news events, and SEC filings for the selected time period.');
                 }, 1500);
@@ -1037,7 +1271,7 @@
                     
                     sendChatMessage();
                 } else {
-                    showNotification('Select a time period on the chart first (drag to select)', 'warning');
+                    showNotification('Draw a rectangle on the chart first using the Rectangle tool', 'warning');
                 }
             }
         }
@@ -1059,6 +1293,7 @@
 
             document.getElementById('chat-btn').addEventListener('click', toggleChatMode);
             document.getElementById('back-btn').addEventListener('click', toggleChatMode);
+            document.getElementById('rectangle-tool-btn').addEventListener('click', toggleRectangleTool);
             
             const chatInput = document.getElementById('chat-input');
             const sendBtn = document.getElementById('send-btn');
@@ -1073,8 +1308,6 @@
             sendBtn.addEventListener('click', sendChatMessage);
             
             document.addEventListener('keydown', handleKeyboardShortcuts);
-            
-            enableChartSelection();
 
             setInterval(() => {
                 loadStockQuote(currentSymbol);
