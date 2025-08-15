@@ -446,7 +446,6 @@
                 return [];
             }
 
-
             _updatePaneViews() {
                 this._paneViews = [];
 
@@ -538,55 +537,69 @@
             }
 
             _onClick(event) {
-                
                 if (!this._enabled) {
                     return;
                 }
 
                 event.preventDefault();
                 event.stopPropagation();
-                
 
-                const rect = this._chart.chartElement().getBoundingClientRect();
-                const x = event.clientX - rect.left;
-                const y = event.clientY - rect.top;
-                
+                const point = this._getChartPoint(event);
+                if (!point) return;
 
-                const time = this._chart.timeScale().coordinateToTime(x);
-                const price = candlestickSeries.coordinateToPrice(y);
-                
-
-                if (time === null || price === null) {
-                    return;
-                }
-
-                
                 if (!this._isDrawing) {
-                    this._startDrawing({ time, price });
+                    this._startDrawing(point);
                 } else {
-                    this._finishDrawing({ time, price });
+                    this._finishDrawing(point);
                 }
             }
 
             _onMouseMove(event) {
                 if (!this._enabled || !this._isDrawing || !this._startPoint) return;
 
+                const point = this._getChartPoint(event);
+                if (!point) return;
+
+                if (this._currentRectangle) {
+                    this._currentRectangle.endTime = point.time;
+                    this._currentRectangle.endPrice = point.price;
+                    this._requestUpdate();
+                }
+            }
+
+            _getChartPoint(event) {
                 const rect = this._chart.chartElement().getBoundingClientRect();
                 const x = event.clientX - rect.left;
                 const y = event.clientY - rect.top;
 
-                const time = this._chart.timeScale().coordinateToTime(x);
-                
-                let price = null;
-                price = candlestickSeries.coordinateToPrice(y);
-
-                if (time === null || price === null) return;
-
-                if (this._currentRectangle) {
-                    this._currentRectangle.endTime = time;
-                    this._currentRectangle.endPrice = price;
-                    this._requestUpdate();
+                let time = null;
+                try {
+                    time = this._chart.timeScale().coordinateToTime(x);
+                } catch (error) {
+                    console.error('Time coordinate conversion failed:', error);
+                    return null;
                 }
+
+                let price = null;
+                try {
+                    price = candlestickSeries.coordinateToPrice(y);
+                } catch (error) {
+                    console.error('Price coordinate conversion failed:', error);
+                    return null;
+                }
+
+                if (time === null || time === undefined || price === null || price === undefined) {
+                    console.log('Invalid time or price:', { time, price });
+                    return null;
+                }
+
+                if (typeof time === 'number' && isNaN(time)) {
+                    console.log('Time is NaN');
+                    return null;
+                }
+
+                console.log('Valid chart point:', { time, price, x, y });
+                return { time, price };
             }
 
             _onKeyDown(event) {
@@ -629,8 +642,8 @@
 
                 if (this._onRectangleCreated) {
                     const timeRange = {
-                        from: Math.min(this._currentRectangle.startTime, this._currentRectangle.endTime),
-                        to: Math.max(this._currentRectangle.startTime, this._currentRectangle.endTime)
+                        from: this._currentRectangle.startTime,
+                        to: this._currentRectangle.endTime
                     };
                     const priceRange = {
                         from: Math.min(this._currentRectangle.startPrice, this._currentRectangle.endPrice),
@@ -779,7 +792,16 @@
                 if (document.body.contains(notification)) {
                     document.body.removeChild(notification);
                 }
-            }, 5000);
+            }, 2500);
+        }
+
+        function clearNotifications() {
+            const existingNotifications = document.querySelectorAll('.fixed.top-4.right-4');
+            existingNotifications.forEach(notification => {
+                if (document.body.contains(notification)) {
+                    document.body.removeChild(notification);
+                }
+            });
         }
 
         async function fetchStockQuote(symbol) {
@@ -899,6 +921,7 @@
         }
 
         function onRectangleCreated(rectangleData) {
+            console.log('Rectangle created with data:', rectangleData);
             
             selectedTimeRange = {
                 startTime: rectangleData.timeRange.from,
@@ -908,7 +931,12 @@
             };
             
             showSelection();
+            clearNotifications();
             showNotification('Time period selected! Press ⌘L or open chat to analyze.', 'success');
+            
+            if (rectangleToolEnabled) {
+                toggleRectangleTool();
+            }
         }
 
         function toggleRectangleTool() {
@@ -916,14 +944,17 @@
             const btn = document.getElementById('rectangle-tool-btn');
             
             if (rectangleToolEnabled) {
+                clearSelection();
                 rectangleDrawingPrimitive.enable(onRectangleCreated);
                 btn.classList.add('active');
                 btn.classList.remove('text-gray-300', 'hover:bg-gray-700');
+                clearNotifications();
                 showNotification('Rectangle tool enabled. Click and drag to select time periods.', 'info');
             } else {
                 rectangleDrawingPrimitive.disable();
                 btn.classList.remove('active');
                 btn.classList.add('text-gray-300', 'hover:bg-gray-700');
+                clearNotifications();
                 showNotification('Rectangle tool disabled.', 'info');
             }
         }
@@ -1175,25 +1206,164 @@
         function showSelection() {
             if (!selectedTimeRange) return;
             
+            console.log('showSelection called with:', selectedTimeRange);
+            
             const selectionInfo = document.getElementById('selection-info');
             const selectedRange = document.getElementById('selected-range');
             
-            const startDate = new Date(selectedTimeRange.startTime * 1000);
-            const endDate = new Date(selectedTimeRange.endTime * 1000);
+            let startDate, endDate;
             
-            const formatDate = (date) => {
-                return date.toLocaleDateString('en-US', { 
-                    month: 'short', 
-                    day: 'numeric',
-                    year: 'numeric'
-                });
-            };
-            
-            const priceRange = `${selectedTimeRange.bottomPrice.toFixed(2)} - ${selectedTimeRange.topPrice.toFixed(2)}`;
-            selectedRange.textContent = `${formatDate(startDate)} to ${formatDate(endDate)} • ${priceRange}`;
-            selectionInfo.classList.remove('hidden');
+            try {
+                if (typeof selectedTimeRange.startTime === 'string') {
+                    startDate = new Date(selectedTimeRange.startTime + 'T00:00:00');
+                    endDate = new Date(selectedTimeRange.endTime + 'T00:00:00');
+                } else if (typeof selectedTimeRange.startTime === 'number') {
+                    const startTime = selectedTimeRange.startTime > 1e10 ? 
+                        selectedTimeRange.startTime : selectedTimeRange.startTime * 1000;
+                    const endTime = selectedTimeRange.endTime > 1e10 ? 
+                        selectedTimeRange.endTime : selectedTimeRange.endTime * 1000;
+                    startDate = new Date(startTime);
+                    endDate = new Date(endTime);
+                } else {
+                    startDate = new Date(selectedTimeRange.startTime);
+                    endDate = new Date(selectedTimeRange.endTime);
+                }
+                
+                if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                    console.error('Invalid dates after conversion:', { startDate, endDate });
+                    selectedRange.textContent = 'Invalid Date Range Selected';
+                    selectionInfo.classList.remove('hidden');
+                    updateSendButton();
+                    return;
+                }
+                
+                if (startDate > endDate) {
+                    [startDate, endDate] = [endDate, startDate];
+                }
+                
+                const formatDate = (date) => {
+                    return date.toLocaleDateString('en-US', { 
+                        month: 'short', 
+                        day: 'numeric',
+                        year: 'numeric'
+                    });
+                };
+                
+                const priceRange = `${selectedTimeRange.bottomPrice.toFixed(2)} - ${selectedTimeRange.topPrice.toFixed(2)}`;
+                selectedRange.textContent = `${formatDate(startDate)} to ${formatDate(endDate)} • ${priceRange}`;
+                selectionInfo.classList.remove('hidden');
+                
+                console.log('Selection updated:', selectedRange.textContent);
+                
+            } catch (error) {
+                console.error('Error in showSelection:', error);
+                selectedRange.textContent = 'Error Processing Selection';
+                selectionInfo.classList.remove('hidden');
+            }
             
             updateSendButton();
+        }
+
+        function getSelectedPeriodData() {
+            if (!selectedTimeRange || !currentData) return [];
+            
+            const startTime = selectedTimeRange.startTime;
+            const endTime = selectedTimeRange.endTime;
+            
+            return currentData.filter(dataPoint => {
+                const pointTime = dataPoint.time;
+                
+                let pointTimeForComparison, startTimeForComparison, endTimeForComparison;
+                
+                if (typeof pointTime === 'string') {
+                    pointTimeForComparison = pointTime;
+                } else if (typeof pointTime === 'number') {
+                    pointTimeForComparison = new Date(pointTime * 1000).toISOString().split('T')[0];
+                } else {
+                    return false;
+                }
+                
+                if (typeof startTime === 'string') {
+                    startTimeForComparison = startTime;
+                } else if (typeof startTime === 'number') {
+                    startTimeForComparison = new Date(startTime * 1000).toISOString().split('T')[0];
+                } else {
+                    return false;
+                }
+                
+                if (typeof endTime === 'string') {
+                    endTimeForComparison = endTime;
+                } else if (typeof endTime === 'number') {
+                    endTimeForComparison = new Date(endTime * 1000).toISOString().split('T')[0];
+                } else {
+                    return false;
+                }
+                
+                return pointTimeForComparison >= startTimeForComparison && pointTimeForComparison <= endTimeForComparison;
+            });
+        }
+
+        function generateContextTag() {
+            if (!selectedTimeRange) return null;
+            
+            const formatDate = (dateValue) => {
+                let date;
+                
+                if (typeof dateValue === 'string') {
+                    date = new Date(dateValue + 'T00:00:00');
+                } else if (typeof dateValue === 'number') {
+                    date = new Date(dateValue > 1e10 ? dateValue : dateValue * 1000);
+                } else {
+                    return null;
+                }
+                
+                if (isNaN(date.getTime())) return null;
+                
+                const day = date.getDate().toString().padStart(2, '0');
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                const year = date.getFullYear();
+                
+                return `${day}-${month}-${year}`;
+            };
+            
+            const startDate = formatDate(selectedTimeRange.startTime);
+            const endDate = formatDate(selectedTimeRange.endTime);
+            
+            if (!startDate || !endDate) return null;
+            
+            return `@${currentSymbol.toLowerCase()}#${startDate}:${endDate}`;
+        }
+
+        async function analyzeWithLLM(userQuery, contextTag) {
+            try {
+                const selectedData = getSelectedPeriodData();
+                
+                const requestBody = {
+                    symbol: currentSymbol,
+                    userQuery: userQuery,
+                    timeRange: selectedTimeRange,
+                    priceData: selectedData
+                };
+                
+                const response = await fetch(`${API_BASE}/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                return data.analysis;
+                
+            } catch (error) {
+                console.error('Error in analyzeWithLLM:', error);
+                return `Error analyzing data: ${error.message}. Please try again.`;
+            }
         }
 
         function updateSendButton() {
@@ -1206,41 +1376,65 @@
             sendBtn.disabled = !hasText && !hasSelection;
         }
 
-        function sendChatMessage() {
+        async function sendChatMessage() {
             const chatInput = document.getElementById('chat-input');
             const message = chatInput.value.trim();
             
             if (!message && !selectedTimeRange) return;
             
-            addChatMessage('user', message || 'Analyze the selected time period');
+            const contextTag = selectedTimeRange ? generateContextTag() : null;
+            const userMessage = message || 'Analyze the selected time period';
+            
+            addChatMessage('user', userMessage, contextTag);
             
             chatInput.value = '';
             updateSendButton();
             
-            setTimeout(() => {
-                let response = `I'll analyze ${currentSymbol} `;
+            addChatMessage('ai', 'Analyzing the data...');
+            const loadingMessage = document.querySelector('#chat-messages').lastChild;
+            
+            try {
+                let analysis;
+                
                 if (selectedTimeRange) {
-                    const startDate = new Date(selectedTimeRange.startTime * 1000).toLocaleDateString();
-                    const endDate = new Date(selectedTimeRange.endTime * 1000).toLocaleDateString();
-                    const priceRange = `${selectedTimeRange.bottomPrice.toFixed(2)} to ${selectedTimeRange.topPrice.toFixed(2)}`;
-                    response += `during ${startDate} to ${endDate} (price range: ${priceRange}). `;
+                    analysis = await analyzeWithLLM(userMessage, contextTag);
+                } else {
+                    analysis = `I can help analyze ${currentSymbol} stock data. Please select a time period using the Rectangle tool and ask specific questions about price movements, trends, or patterns during that period.`;
                 }
-                response += `Let me gather the relevant news, SEC filings, and price action data for this period...`;
                 
-                addChatMessage('ai', response);
+                if (loadingMessage && loadingMessage.parentNode) {
+                    loadingMessage.remove();
+                }
                 
-                setTimeout(() => {
-                    addChatMessage('ai', '🚧 TODO! This will analyze price movements, news events, and SEC filings for the selected time period.');
-                }, 1500);
-            }, 500);
+                addChatMessage('ai', analysis);
+                
+            } catch (error) {
+                console.error('Error in sendChatMessage:', error);
+                
+                if (loadingMessage && loadingMessage.parentNode) {
+                    loadingMessage.remove();
+                }
+                
+                addChatMessage('ai', 'Sorry, I encountered an error while analyzing the data. Please try again.');
+            }
         }
 
-        function addChatMessage(type, message) {
+        function addChatMessage(type, message, contextTag = null) {
             const chatMessages = document.getElementById('chat-messages');
             
             const emptyState = chatMessages.querySelector('.text-center');
             if (emptyState) {
                 emptyState.remove();
+            }
+            
+            const messageContainer = document.createElement('div');
+            messageContainer.className = `flex flex-col ${type === 'user' ? 'items-end' : 'items-start'}`;
+            
+            if (contextTag && type === 'user') {
+                const contextBadge = document.createElement('div');
+                contextBadge.className = 'px-2 py-1 mb-1 bg-purple-500 text-white text-xs rounded-full font-medium';
+                contextBadge.textContent = contextTag;
+                messageContainer.appendChild(contextBadge);
             }
             
             const messageDiv = document.createElement('div');
@@ -1255,7 +1449,8 @@
             bubble.textContent = message;
             
             messageDiv.appendChild(bubble);
-            chatMessages.appendChild(messageDiv);
+            messageContainer.appendChild(messageDiv);
+            chatMessages.appendChild(messageContainer);
             
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }

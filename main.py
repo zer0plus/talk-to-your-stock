@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import requests
-from datetime import datetime, timedelta
 from typing import Optional
+from pydantic import BaseModel
+from langchain_groq import ChatGroq
 
 app = FastAPI()
 
@@ -26,6 +27,27 @@ load_dotenv()
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_PREM_API_KEY")
 if not ALPHA_VANTAGE_API_KEY:
     raise ValueError("ALPHA_VANTAGE_PREM_API_KEY not found in environment variables")
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY not found in environment variables")
+
+def get_chat_llm():
+    """Initialize and return ChatGroq LLM instance"""
+    return ChatGroq(
+        groq_api_key=GROQ_API_KEY,
+        model_name="llama3-8b-8192",
+        temperature=0.3,
+        max_tokens=300
+    )
+
+llm = get_chat_llm()
+
+class AnalyzeRequest(BaseModel):
+    symbol: str
+    userQuery: str
+    timeRange: dict
+    priceData: list
 
 async def fetch_alpha_vantage_data(function: str, symbol: str, **params):
     """Fetch data from Alpha Vantage API"""
@@ -191,6 +213,53 @@ async def get_multiple_quotes(symbols: str):
         raise HTTPException(status_code=404, detail="No valid quotes found for provided symbols")
     
     return {"quotes": quotes}
+
+@app.post("/api/analyze")
+async def analyze_stock(request: AnalyzeRequest):
+    """Analyze stock data using LLM"""
+    try:
+        symbol = request.symbol.upper()
+        user_query = request.userQuery
+        time_range = request.timeRange
+        price_data = request.priceData
+        
+        start_date = time_range.get('startTime', '')
+        end_date = time_range.get('endTime', '')
+        
+        if price_data:
+            start_price = price_data[0].get('close', 0)
+            end_price = price_data[-1].get('close', 0)
+            prices = [point.get('close', 0) for point in price_data]
+            high_price = max(prices)
+            low_price = min(prices)
+            volatility = round(((high_price - low_price) / low_price) * 100, 2) if low_price > 0 else 0
+        else:
+            start_price = end_price = high_price = low_price = volatility = 0
+        
+        def format_date(date_str):
+            if isinstance(date_str, str) and len(date_str) == 10:
+                parts = date_str.split('-')
+                if len(parts) == 3:
+                    return f"{parts[2]}-{parts[1]}-{parts[0]}"
+            return str(date_str)
+        
+        formatted_start_date = format_date(start_date)
+        formatted_end_date = format_date(end_date)
+        
+        prompt = f"""Analyze {symbol} stock price movement from {formatted_start_date} to {formatted_end_date}. 
+Price range: ${start_price:.2f} to ${end_price:.2f} (volatility: {volatility}%). 
+High: ${high_price:.2f}, Low: ${low_price:.2f}. 
+User question: {user_query}. 
+Provide technical analysis insights in 2-3 sentences focusing on price action and trends."""
+        
+        response = llm.invoke(prompt)
+        analysis = response.content if hasattr(response, 'content') else str(response)
+        
+        return {"analysis": analysis}
+        
+    except Exception as e:
+        print(f"Error in analyze_stock: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

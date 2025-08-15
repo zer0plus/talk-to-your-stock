@@ -4,3 +4,4 @@ yfinance
 pandas
 requests
 dotenv
+langchain_groq
