@@ -923,9 +923,14 @@
         function onRectangleCreated(rectangleData) {
             console.log('Rectangle created with data:', rectangleData);
             
+            const timeFrom = rectangleData.timeRange.from;
+            const timeTo = rectangleData.timeRange.to;
+            const startTime = timeFrom < timeTo ? timeFrom : timeTo;
+            const endTime = timeFrom < timeTo ? timeTo : timeFrom;
+            
             selectedTimeRange = {
-                startTime: rectangleData.timeRange.from,
-                endTime: rectangleData.timeRange.to,
+                startTime: startTime,
+                endTime: endTime,
                 topPrice: rectangleData.priceRange.to,
                 bottomPrice: rectangleData.priceRange.from
             };
@@ -1323,11 +1328,18 @@
                 const month = (date.getMonth() + 1).toString().padStart(2, '0');
                 const year = date.getFullYear();
                 
-                return `${day}-${month}-${year}`;
+                return `${day}.${month}.${year}`;
             };
             
-            const startDate = formatDate(selectedTimeRange.startTime);
-            const endDate = formatDate(selectedTimeRange.endTime);
+            let startTime = selectedTimeRange.startTime;
+            let endTime = selectedTimeRange.endTime;
+            
+            if (startTime > endTime) {
+                [startTime, endTime] = [endTime, startTime];
+            }
+            
+            const startDate = formatDate(startTime);
+            const endDate = formatDate(endTime);
             
             if (!startDate || !endDate) return null;
             
@@ -1430,13 +1442,6 @@
             const messageContainer = document.createElement('div');
             messageContainer.className = `flex flex-col ${type === 'user' ? 'items-end' : 'items-start'}`;
             
-            if (contextTag && type === 'user') {
-                const contextBadge = document.createElement('div');
-                contextBadge.className = 'px-2 py-1 mb-1 bg-purple-500 text-white text-xs rounded-full font-medium';
-                contextBadge.textContent = contextTag;
-                messageContainer.appendChild(contextBadge);
-            }
-            
             const messageDiv = document.createElement('div');
             messageDiv.className = `flex ${type === 'user' ? 'justify-end' : 'justify-start'}`;
             
@@ -1446,7 +1451,13 @@
                     ? 'bg-purple-600 text-white' 
                     : 'bg-gray-700 text-gray-200'
             }`;
-            bubble.textContent = message;
+            
+            let displayMessage = message;
+            if (type === 'user' && contextTag && !message.includes(contextTag)) {
+                displayMessage = `${contextTag} ${message}`;
+            }
+            
+            bubble.textContent = displayMessage;
             
             messageDiv.appendChild(bubble);
             messageContainer.appendChild(messageDiv);
@@ -1464,7 +1475,13 @@
                         toggleChatMode();
                     }
                     
-                    sendChatMessage();
+                    const contextTag = generateContextTag();
+                    if (contextTag) {
+                        const chatInput = document.getElementById('chat-input');
+                        chatInput.value = contextTag + ' ';
+                        chatInput.focus();
+                        updateSendButton();
+                    }
                 } else {
                     showNotification('Draw a rectangle on the chart first using the Rectangle tool', 'warning');
                 }

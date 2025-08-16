@@ -2,9 +2,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import requests
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from langchain_groq import ChatGroq
+import chromadb
+from chromadb.config import Settings
+from datetime import datetime, timedelta
+import os
+
 
 app = FastAPI()
 
@@ -42,6 +47,59 @@ def get_chat_llm():
     )
 
 llm = get_chat_llm()
+
+def get_chroma_client():
+    """Initialize and return ChromaDB client"""
+    chroma_db_path = "./chroma_db"
+    os.makedirs(chroma_db_path, exist_ok=True)
+    
+    client = chromadb.PersistentClient(path=chroma_db_path)
+    return client
+
+chroma_client = get_chroma_client()
+
+
+def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 100) -> List[str]:
+    """Simple text chunking with overlap"""
+    chunks = []
+    start = 0
+    text_len = len(text)
+    
+    while start < text_len:
+        end = min(start + chunk_size, text_len)
+        chunk = text[start:end]
+        chunks.append(chunk)
+        
+        if end >= text_len:
+            break
+            
+        start = end - overlap
+    
+    return chunks
+
+def process_sec_filing(filing_data: dict, symbol: str) -> List[dict]:
+    """Process SEC filing data into chunks with metadata"""
+    chunks = []
+    filing_type = filing_data.get('filing_type', 'Unknown')
+    filing_date = filing_data.get('filing_date', 'Unknown')
+    content = filing_data.get('content', '')
+    
+    if content:
+        text_chunks = chunk_text(content)
+        
+        for i, chunk in enumerate(text_chunks):
+            chunks.append({
+                'text': chunk,
+                'metadata': {
+                    'filing_type': filing_type,
+                    'filing_date': filing_date,
+                    'symbol': symbol.upper(),
+                    'section': f'section_{i}',
+                    'chunk_id': f'{filing_type}_{filing_date}_{i}'
+                }
+            })
+    
+    return chunks
 
 class AnalyzeRequest(BaseModel):
     symbol: str
@@ -214,9 +272,102 @@ async def get_multiple_quotes(symbols: str):
     
     return {"quotes": quotes}
 
+
+def retrieve_sec_context(symbol: str, start_date: str, end_date: str, query: str) -> str:
+    """Retrieve relevant SEC filing context for the given time range and query"""
+    try:
+        collection_name = "aapl_sec_filings"  # Created by setup_sec_data.py script
+        print(f"DEBUG: Looking for collection: {collection_name}")
+        
+        try:
+            collection = chroma_client.get_collection(collection_name)
+            print(f"DEBUG: Found collection with {collection.count()} documents")
+        except Exception as e:
+            print(f"DEBUG: Collection not found: {e}")
+            return ""
+        
+        try:
+            if isinstance(start_date, str) and len(start_date) == 10:
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            else:
+                start_dt = datetime.now() - timedelta(days=365)
+                
+            if isinstance(end_date, str) and len(end_date) == 10:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            else:
+                end_dt = datetime.now()
+        except:
+            start_dt = datetime.now() - timedelta(days=365)
+            end_dt = datetime.now()
+        
+        print(f"DEBUG: Date range: {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
+        print(f"DEBUG: Query: '{query}' for symbol: {symbol.upper()}")
+        
+        results = collection.query(
+            query_texts=[query],
+            n_results=15,  
+            where={
+                "symbol": symbol.upper()
+            }
+        )
+        
+        print(f"DEBUG: Query returned {len(results['documents'][0]) if results['documents'] else 0} documents")
+        
+        if not results['documents'] or not results['documents'][0]:
+            print("DEBUG: No documents found in query results")
+            return ""
+        
+        relevant_docs = []
+        print(f"DEBUG: Processing {len(results['documents'][0])} documents")
+        
+        for i, doc in enumerate(results['documents'][0]):
+            metadata = results['metadatas'][0][i]
+            filing_date_str = metadata.get('filing_date', '')
+            filing_type = metadata.get('filing_type', '')
+            
+            print(f"DEBUG: Document {i}: {filing_type} from {filing_date_str}")
+            
+            try:
+                filing_date = datetime.strptime(filing_date_str, '%Y-%m-%d')
+                
+                is_recent = filing_date >= datetime(2020, 1, 1)
+                
+                relevant_docs.append({
+                    'content': doc[:800],
+                    'filing_type': metadata.get('filing_type', ''),
+                    'filing_date': filing_date_str,
+                    'is_recent': is_recent,
+                    'filing_year': filing_date.year
+                })
+                
+                print(f"DEBUG: Document {i} ADDED ({'recent' if is_recent else 'older'})")
+                
+            except Exception as e:
+                print(f"DEBUG: Document {i} EXCLUDED - date parsing error: {e}")
+                continue
+        
+        relevant_docs.sort(key=lambda x: (x['is_recent'], x['filing_year']), reverse=True)
+        relevant_docs = relevant_docs[:5]
+        
+        print(f"DEBUG: Using {len(relevant_docs)} documents for context")
+        
+        if not relevant_docs:
+            print("DEBUG: No relevant docs found")
+            return ""
+        
+        context_parts = []
+        for doc in relevant_docs[:3]: 
+            context_parts.append(f"[{doc['filing_type']} - {doc['filing_date']}]: {doc['content']}")
+        
+        return "\n\n".join(context_parts)
+        
+    except Exception as e:
+        print(f"Error retrieving SEC context: {e}")
+        return ""
+
 @app.post("/api/analyze")
 async def analyze_stock(request: AnalyzeRequest):
-    """Analyze stock data using LLM"""
+    """Analyze stock data using LLM with SEC filing context"""
     try:
         symbol = request.symbol.upper()
         user_query = request.userQuery
@@ -246,11 +397,33 @@ async def analyze_stock(request: AnalyzeRequest):
         formatted_start_date = format_date(start_date)
         formatted_end_date = format_date(end_date)
         
-        prompt = f"""Analyze {symbol} stock price movement from {formatted_start_date} to {formatted_end_date}. 
-Price range: ${start_price:.2f} to ${end_price:.2f} (volatility: {volatility}%). 
-High: ${high_price:.2f}, Low: ${low_price:.2f}. 
-User question: {user_query}. 
-Provide technical analysis insights in 2-3 sentences focusing on price action and trends."""
+        sec_context = retrieve_sec_context(symbol, start_date, end_date, user_query)
+        
+        if sec_context.strip():
+            prompt = f"""You are analyzing {symbol} stock for the period {formatted_start_date} to {formatted_end_date}.
+
+USER QUESTION: {user_query}
+
+RELEVANT SEC FILING DATA:
+{sec_context}
+
+PRICE DATA CONTEXT:
+- Price range: ${start_price:.2f} to ${end_price:.2f} 
+- High: ${high_price:.2f}, Low: ${low_price:.2f}
+- Volatility: {volatility}%
+
+INSTRUCTIONS: Answer the user's specific question directly using the SEC filing data provided. If they asked about revenue, focus on revenue. If they asked about earnings, focus on earnings. Only mention price movements if directly relevant to their question."""
+        else:
+            prompt = f"""You are analyzing {symbol} stock for the period {formatted_start_date} to {formatted_end_date}.
+
+USER QUESTION: {user_query}
+
+AVAILABLE DATA:
+- Price range: ${start_price:.2f} to ${end_price:.2f} 
+- High: ${high_price:.2f}, Low: ${low_price:.2f}
+- Volatility: {volatility}%
+
+INSTRUCTIONS: Answer the user's specific question as best you can with the available price data. Focus on what they actually asked about."""
         
         response = llm.invoke(prompt)
         analysis = response.content if hasattr(response, 'content') else str(response)
