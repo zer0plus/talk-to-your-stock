@@ -1,12 +1,9 @@
 fastapi
 uvicorn
-yfinance
 pandas
 requests
-dotenv
+python-dotenv
 langchain_groq
-datamule
 chromadb
-llama-index-core
-llama-index-vector-stores-chroma
-nest-asyncio
+google-cloud-aiplatform
+google-cloud-storage
