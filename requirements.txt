@@ -1,9 +1,0 @@
-fastapi
-uvicorn
-pandas
-requests
-python-dotenv
-langchain_groq
-chromadb
-google-cloud-aiplatform
-google-cloud-storage
