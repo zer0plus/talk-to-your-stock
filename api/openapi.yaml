@@ -1,0 +1,886 @@
+openapi: 3.1.0
+info:
+  title: TalkToYourStock API
+  version: 0.1.0
+  description: |
+    MVP API contract for chat-first trading comps workflows.
+servers:
+  - url: http://localhost:8000
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Auth
+  - name: Threads
+  - name: Messages
+  - name: Runs
+  - name: Exports
+  - name: Internal
+paths:
+  /v1/health:
+    get:
+      tags: [Health]
+      summary: Service liveness check
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service, time]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  service:
+                    type: string
+                  time:
+                    type: string
+                    format: date-time
+
+  /v1/ready:
+    get:
+      tags: [Health]
+      summary: Service readiness check
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+
+  /v1/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out user
+      responses:
+        '204':
+          description: Logged out
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/threads:
+    get:
+      tags: [Threads]
+      summary: List user threads
+      parameters:
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Thread list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [threads, page]
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Thread'
+                  page:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Threads]
+      summary: Create thread
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+      responses:
+        '201':
+          description: Created thread
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [thread]
+                properties:
+                  thread:
+                    $ref: '#/components/schemas/Thread'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/threads/{thread_id}:
+    get:
+      tags: [Threads]
+      summary: Get thread
+      parameters:
+        - $ref: '#/components/parameters/ThreadIdParam'
+      responses:
+        '200':
+          description: Thread
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [thread]
+                properties:
+                  thread:
+                    $ref: '#/components/schemas/Thread'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/threads/{thread_id}/messages:
+    get:
+      tags: [Messages]
+      summary: List thread messages
+      parameters:
+        - $ref: '#/components/parameters/ThreadIdParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Messages list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, page]
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  page:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Messages]
+      summary: Add user message and optionally trigger a comps run
+      description: |
+        Saves the user message. A run is created only when the message is classified
+        as a table-generation comps request.
+      parameters:
+        - $ref: '#/components/parameters/ThreadIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 5000
+                client_message_id:
+                  type: [string, 'null']
+                  maxLength: 64
+      responses:
+        '201':
+          description: Message accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_message, assistant_message]
+                properties:
+                  user_message:
+                    $ref: '#/components/schemas/Message'
+                  assistant_message:
+                    $ref: '#/components/schemas/Message'
+                  run:
+                    oneOf:
+                      - $ref: '#/components/schemas/Run'
+                      - type: 'null'
+                  events_url:
+                    type: [string, 'null']
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/threads/{thread_id}/events:
+    get:
+      tags: [Messages]
+      summary: Stream thread events via Server-Sent Events
+      parameters:
+        - $ref: '#/components/parameters/ThreadIdParam'
+        - $ref: '#/components/parameters/CursorParam'
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream where each `data:` payload conforms to EventEnvelope.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/threads/{thread_id}/runs:
+    get:
+      tags: [Runs]
+      summary: List table-generation runs in a thread
+      parameters:
+        - $ref: '#/components/parameters/ThreadIdParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [queued, running, succeeded, failed]
+      responses:
+        '200':
+          description: Runs list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs, page]
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Run'
+                  page:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/runs/{run_id}:
+    get:
+      tags: [Runs]
+      summary: Get run metadata
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      responses:
+        '200':
+          description: Run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run]
+                properties:
+                  run:
+                    $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/runs/{run_id}/table:
+    get:
+      tags: [Runs]
+      summary: Get structured comps table
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      responses:
+        '200':
+          description: Comps table
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunTableResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/runs/{run_id}/trace:
+    get:
+      tags: [Runs]
+      summary: Get audit trace of formulas and source inputs
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      responses:
+        '200':
+          description: Formula trace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/runs/{run_id}/export.csv:
+    get:
+      tags: [Exports]
+      summary: Download comps as CSV
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      responses:
+        '200':
+          description: CSV export
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/runs/{run_id}/export.xlsx:
+    get:
+      tags: [Exports]
+      summary: Download comps as XLSX
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      responses:
+        '200':
+          description: XLSX export
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/internal/tools/generate-comps-table:
+    post:
+      tags: [Internal]
+      summary: Internal tool call to generate a comps table
+      description: Internal-only endpoint for the single MVP agent tool intent.
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateCompsToolRequest'
+      responses:
+        '200':
+          description: Run and table payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, table]
+                properties:
+                  run:
+                    $ref: '#/components/schemas/Run'
+                  table:
+                    $ref: '#/components/schemas/RunTableResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    LimitParam:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 20
+    CursorParam:
+      in: query
+      name: cursor
+      schema:
+        type: string
+    ThreadIdParam:
+      in: path
+      name: thread_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RunIdParam:
+      in: path
+      name: run_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Rate limited
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UpstreamError:
+      description: Upstream provider error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - UNAUTHORIZED
+                - FORBIDDEN
+                - NOT_FOUND
+                - VALIDATION_ERROR
+                - RATE_LIMITED
+                - UPSTREAM_ERROR
+                - INTERNAL_ERROR
+            message:
+              type: string
+            details:
+              type: [object, 'null']
+              additionalProperties: true
+            request_id:
+              type: [string, 'null']
+
+    PaginationMeta:
+      type: object
+      required: [has_more, next_cursor]
+      properties:
+        has_more:
+          type: boolean
+        next_cursor:
+          type: [string, 'null']
+
+    User:
+      type: object
+      required: [id, email, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: [string, 'null']
+        avatar_url:
+          type: [string, 'null']
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Thread:
+      type: object
+      required: [id, user_id, title, message_count, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 120
+        message_count:
+          type: integer
+          minimum: 0
+        last_message_at:
+          type: [string, 'null']
+          format: date-time
+        latest_run_id:
+          type: [string, 'null']
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      required: [id, thread_id, role, content, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        thread_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant, tool, system]
+        content:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum: [complete, streaming, failed]
+        run_id:
+          type: [string, 'null']
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    Run:
+      type: object
+      required:
+        - id
+        - thread_id
+        - trigger_message_id
+        - status
+        - target_ticker
+        - peer_tickers
+        - currency
+        - as_of
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        thread_id:
+          type: string
+          format: uuid
+        trigger_message_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        target_ticker:
+          type: string
+          pattern: ^[A-Z.]{1,10}$
+        peer_tickers:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: ^[A-Z.]{1,10}$
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        as_of:
+          type: string
+          format: date-time
+        warnings:
+          type: array
+          items:
+            type: string
+        error_message:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: [string, 'null']
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+
+    CompsRow:
+      type: object
+      required: [ticker, is_target, currency, as_of]
+      properties:
+        ticker:
+          type: string
+          pattern: ^[A-Z.]{1,10}$
+        company_name:
+          type: [string, 'null']
+        is_target:
+          type: boolean
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        share_price:
+          type: [number, 'null']
+        shares_outstanding:
+          type: [number, 'null']
+        market_cap:
+          type: [number, 'null']
+        cash:
+          type: [number, 'null']
+        total_debt:
+          type: [number, 'null']
+        net_debt:
+          type: [number, 'null']
+        enterprise_value:
+          type: [number, 'null']
+        revenue_ltm:
+          type: [number, 'null']
+        ebitda_ltm:
+          type: [number, 'null']
+        net_income_ltm:
+          type: [number, 'null']
+        ev_to_revenue:
+          type: [number, 'null']
+        ev_to_ebitda:
+          type: [number, 'null']
+        pe:
+          type: [number, 'null']
+        as_of:
+          type: string
+          format: date-time
+
+    RunTableResponse:
+      type: object
+      required: [run_id, target_ticker, currency, as_of, rows, summary]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        target_ticker:
+          type: string
+          pattern: ^[A-Z.]{1,10}$
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        as_of:
+          type: string
+          format: date-time
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompsRow'
+        summary:
+          type: object
+          required: [stats]
+          properties:
+            stats:
+              type: object
+              required: [ev_to_revenue, ev_to_ebitda, pe]
+              properties:
+                ev_to_revenue:
+                  $ref: '#/components/schemas/MinMedianMax'
+                ev_to_ebitda:
+                  $ref: '#/components/schemas/MinMedianMax'
+                pe:
+                  $ref: '#/components/schemas/MinMedianMax'
+
+    MinMedianMax:
+      type: object
+      required: [min, median, max]
+      properties:
+        min:
+          type: [number, 'null']
+        median:
+          type: [number, 'null']
+        max:
+          type: [number, 'null']
+
+    TraceInput:
+      type: object
+      required: [field, value, source, as_of]
+      properties:
+        field:
+          type: string
+        value:
+          type: [number, string, 'null']
+        source:
+          type: string
+        as_of:
+          type: string
+          format: date-time
+
+    TraceFormula:
+      type: object
+      required: [ticker, output_field, expression, output_value, inputs]
+      properties:
+        ticker:
+          type: string
+          pattern: ^[A-Z.]{1,10}$
+        output_field:
+          type: string
+          enum: [equity_value, enterprise_value, net_debt, ev_to_revenue, ev_to_ebitda, pe]
+        expression:
+          type: string
+        output_value:
+          type: [number, 'null']
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceInput'
+
+    TraceResponse:
+      type: object
+      required: [run_id, formulas]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        formulas:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceFormula'
+
+    EventEnvelope:
+      type: object
+      required: [id, type, thread_id, timestamp, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - message.created
+            - message.delta
+            - message.completed
+            - run.status
+            - run.progress
+            - run.completed
+            - run.failed
+            - error
+        thread_id:
+          type: string
+          format: uuid
+        run_id:
+          type: [string, 'null']
+          format: uuid
+        message_id:
+          type: [string, 'null']
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+
+    GenerateCompsToolRequest:
+      type: object
+      required: [invocation_id, thread_id, trigger_message_id, target_ticker, peer_tickers]
+      properties:
+        invocation_id:
+          type: string
+          format: uuid
+        thread_id:
+          type: string
+          format: uuid
+        trigger_message_id:
+          type: string
+          format: uuid
+        target_ticker:
+          type: string
+          pattern: ^[A-Z.]{1,10}$
+        peer_tickers:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: ^[A-Z.]{1,10}$
+        currency:
+          type: string
+          default: USD
+          minLength: 3
+          maxLength: 3
+        as_of_date:
+          type: [string, 'null']
+          format: date
+
+    Readiness:
+      type: object
+      required: [status, checks, time]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          required: [db, cache, provider]
+          properties:
+            db:
+              type: string
+              enum: [ok, fail]
+            cache:
+              type: string
+              enum: [ok, fail]
+            provider:
+              type: string
+              enum: [ok, degraded, fail]
+        time:
+          type: string
+          format: date-time
