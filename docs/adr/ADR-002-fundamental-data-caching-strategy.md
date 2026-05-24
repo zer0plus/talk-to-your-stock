@@ -8,7 +8,7 @@ What must be true:
 * Fundamentals should be fast to read during run execution.
 * Data should remain stable/auditable for historical runs.
 * Freshness should follow filing cadence (annual/quarterly), not short quote-style TTLs.
-* Storage design should support both raw payload retention and efficient metric queries.
+* Storage design should stay simple while preserving the clean Alpha Vantage payload.
 
 ## Decision
 
@@ -22,29 +22,21 @@ flowchart LR
 
   subgraph Storage
     REDIS[("Redis<br/>Hot latest cache")]
-    PG_CUR[("PostgreSQL<br/>fundamental_current pointers<br/>(includes next_expected_refresh_at)")]
-    PG_SNAP[("PostgreSQL<br/>fundamental_snapshots JSONB")]
-    PG_FACT[("PostgreSQL<br/>fundamental_facts relational")]
+    PG[("PostgreSQL<br/>fundamental_cache JSONB")]
   end
 
   AV["Alpha Vantage<br/>INCOME_STATEMENT / BALANCE_SHEET / CASH_FLOW / EARNINGS"]
 
   COMPS -->|"Read latest by symbol+statement+period"| REDIS
   REDIS -->|"Hit + before refresh window"| COMPS
-  REDIS -->|"Miss or refresh window reached"| PG_CUR
-  PG_CUR --> PG_SNAP
-  PG_CUR --> PG_FACT
-  PG_CUR -->|"Compare now vs next_expected_refresh_at"| COMPS
+  REDIS -->|"Miss or refresh window reached"| PG
+  PG -->|"Return cached payload + next_expected_refresh_at"| COMPS
   COMPS -->|"If due: acquire single-flight refresh lock"| REDIS
   COMPS -->|"Refresh check"| AV
-  COMPS -->|"If new: insert snapshot + facts (transaction)"| PG_SNAP
-  COMPS -->|"Upsert normalized metrics"| PG_FACT
-  COMPS -->|"Update latest pointer"| PG_CUR
-  COMPS -->|"Set next_expected_refresh_at = next_report_date - 7d"| PG_CUR
-  COMPS -->|"If no new filing: move refresh time forward (daily/backoff)"| PG_CUR
-  COMPS -->|"Invalidate/refresh latest cache key"| REDIS
-  PG_SNAP -->|"Hydrate latest payload"| REDIS
-  PG_FACT -->|"Hydrate latest facts"| REDIS
+  COMPS -->|"If new: upsert payload_jsonb + metadata"| PG
+  COMPS -->|"Set next_expected_refresh_at = next_report_date - 7d"| PG
+  COMPS -->|"If no new filing: move refresh time forward (daily/backoff)"| PG
+  PG -->|"Hydrate latest cache entry"| REDIS
   REDIS -->|"Return fundamentals"| COMPS
 ```
 
@@ -59,12 +51,22 @@ Notes:
 
 * **Primary durable store:** PostgreSQL
 * **Hot cache:** Redis
-* **Raw storage format:** JSONB in `fundamental_snapshots`
-* **Query-optimized format:** relational rows in `fundamental_facts`
-* **Latest lookup model:** `fundamental_current` pointer table per symbol/statement/period
+* **Single table:** `fundamental_cache`
+* **Payload format:** Alpha Vantage response stored as `payload_jsonb`
+* **Read model:** Comps Service parses required metrics from the JSON payload at runtime
 
-Example uniqueness key for immutable snapshot versions:
-* `(symbol, statement_type, period_type, fiscal_date_ending, reported_date, source_hash)`
+Core fields:
+* `symbol`
+* `statement_type` (`income_statement`, `balance_sheet`, `cash_flow`, `earnings`)
+* `period_type` (`annual`, `quarterly`)
+* `latest_fiscal_date`
+* `payload_jsonb`
+* `source_hash`
+* `fetched_at`
+* `next_expected_refresh_at`
+
+Uniqueness key:
+* `(symbol, statement_type, period_type)`
 
 ### Refresh Timing Policy
 
@@ -76,18 +78,18 @@ Example uniqueness key for immutable snapshot versions:
 
 ### Decision Summary
 
-> We decided to use a hybrid storage model: **Redis for hot latest reads** and **PostgreSQL (JSONB snapshots + normalized relational facts)** for durable, auditable, and query-efficient fundamentals, with a **cache-until-next-filing** invalidation strategy.
+> We decided to use a simple hybrid cache: **Redis for hot latest reads** and **one PostgreSQL `fundamental_cache` table with JSONB payloads** for durable fundamentals, with a **cache-until-next-filing** invalidation strategy.
 
 ### Rationale
 
 * Decision drivers: low latency, deterministic calculations, auditability, provider rate-limit control.
 * Key assumptions:
   * Fundamentals change on filing cadence, not continuously like quotes.
-  * Comps calculations need normalized fields for fast deterministic queries.
-  * Raw payload preservation is required for traceability and future reprocessing.
+  * Alpha Vantage fundamentals are already clean enough to store and parse directly as JSON.
+  * MVP comps calculations can parse needed fields from JSONB without a separate facts table.
   * Refresh checks should begin early enough to catch schedule pull-ins (7-day lead).
 * Non-goals:
-  * Storing only opaque blobs with no normalized query layer.
+  * Designing a fully normalized financial facts warehouse in MVP.
   * Pure Redis-only storage for authoritative financial data.
   * Eventual migration complexity for additional providers in this ADR.
 
@@ -98,15 +100,15 @@ Example uniqueness key for immutable snapshot versions:
 ### Positive
 
 * Fast read path for run execution via Redis.
-* Durable and reproducible history via immutable JSONB snapshots.
-* Efficient computation path via normalized relational facts and indexes.
+* Durable fundamentals in a single PostgreSQL table.
+* Simpler MVP implementation with fewer synchronization paths.
 * Clear freshness semantics aligned to filing events.
 
 ### Negative / Trade-offs
 
-* More complexity than single-table storage.
-* Requires synchronization between snapshot and fact layers.
-* Requires refresh orchestration to detect and apply new filing versions.
+* Runtime parsing from JSON is less query-efficient than pre-normalized facts.
+* Historical filing versions are not fully modeled in this initial table shape.
+* A normalized facts table may be introduced later if calculation/query needs grow.
 
 
 ## Considered Alternatives
@@ -114,8 +116,8 @@ Example uniqueness key for immutable snapshot versions:
 * **Redis-only cache with no durable snapshot layer**
   Rejected because it cannot provide strong auditability or reproducibility.
 
-* **PostgreSQL JSONB only (no normalized facts)**
-  Rejected because deterministic comps queries become slower and harder to index at scale.
+* **Separate snapshot + facts + current tables**
+  Rejected because Alpha Vantage payloads are clean enough for MVP and the extra tables add unnecessary synchronization complexity.
 
 * **No cache, call Alpha Vantage per run**
   Rejected because latency and rate-limit risk are too high for interactive chat workflows.
