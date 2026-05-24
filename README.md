@@ -43,6 +43,7 @@ deactivate
 ## Source of truth
 - OpenAPI contract: `api/openapi.yaml`
 - Architecture decision record: `docs/adr/ADR-001-mvp-high-level-architecture.md`
+- Fundamental data caching ADR: `docs/adr/ADR-002-fundamental-data-caching-strategy.md`
 
 ## Design Decisions
 - API style: REST for request/response endpoints, plus SSE for real-time chat/run updates.
