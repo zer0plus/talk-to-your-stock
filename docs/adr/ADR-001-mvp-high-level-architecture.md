@@ -22,14 +22,13 @@ flowchart LR
   subgraph Services
     BFF["Web BFF<br/>(REST + SSE)"]
     AGENT["Agent Service<br/>(intent + orchestration)"]
-    COMPS["Comps Service<br/>(deterministic calc + async workers)"]
-    EXPORT["Export Service<br/>(CSV/XLSX)"]
+    COMPS["Comps Service<br/>(deterministic calc + exports + async workers)"]
   end
 
   subgraph Storages
     PG[("PostgreSQL<br/>Users, Threads, Messages,<br/>Runs, Tables, Traces")]
     REDIS[("Redis<br/>Queue + Realtime Events + Cache")]
-    BLOB[("Object Storage<br/>Exports + Snapshots")]
+    BLOB[("Object Storage<br/>Data Snapshots")]
   end
 
   subgraph External
@@ -44,12 +43,11 @@ flowchart LR
 
   BFF -->|"Chat message request"| AGENT
   AGENT -->|"Tool call: generate_comps_table"| COMPS
-  BFF -->|"Export request"| EXPORT
+  BFF -->|"Export request"| COMPS
 
   BFF -->|"Read/write threads, messages, runs"| PG
   AGENT -->|"Run metadata updates"| PG
-  COMPS -->|"Persist table + trace"| PG
-  EXPORT -->|"Read run table"| PG
+  COMPS -->|"Persist table + trace, read run table"| PG
 
   AGENT -->|"Enqueue run jobs"| REDIS
   COMPS -->|"Consume jobs + publish progress"| REDIS
@@ -57,12 +55,13 @@ flowchart LR
 
   COMPS -->|"Fetch market/fundamental data"| AV
   COMPS -->|"Store provider snapshots"| BLOB
-  EXPORT -->|"Write export files"| BLOB
 ```
 
 Notes:
 
 * `Comps Service` owns the domain capability; async workers are its execution mode.
+* MVP CSV/XLSX exports are owned by `Comps Service` because they are direct representations of comps table results.
+* Implementation should keep exports in an internal `exports/` module so the boundary can become a standalone service later if exports become async, template-heavy, multi-artifact, or independently scalable.
 
 ### Authentication Model (MVP)
 
@@ -74,7 +73,7 @@ Notes:
 
 ### Decision Summary
 
-> We decided to use a **Web BFF + Agent Service + Comps Service + Export Service** architecture, backed by **PostgreSQL, Redis, and Object Storage**, in order to deliver deterministic chat-driven comps with auditability and realtime UX, within the constraints of MVP speed and low operational overhead.
+> We decided to use a **Web BFF + Agent Service + Comps Service** architecture, backed by **PostgreSQL, Redis, and Object Storage**, in order to deliver deterministic chat-driven comps with auditability, downloadable outputs, and realtime UX, within the constraints of MVP speed and low operational overhead.
 
 ### Rationale
 
@@ -100,12 +99,15 @@ Notes:
 * Run model supports async execution, progress tracking, and auditable outputs.
 * BFF keeps client integration simple and allows fast UX iteration.
 * Storage split (PG/Redis/Object Storage) matches data access patterns and reliability needs.
+* Keeping exports inside Comps Service avoids a thin service boundary while exports are simple CSV/XLSX representations of run tables.
+* The internal `exports/` module preserves a clean future extraction path.
 
 ### Negative / Trade-offs
 
 * More moving parts than a single-process monolith.
 * Requires queue/event operational practices earlier (Redis + workers).
 * BFF-centric shape may require refactor when multiple clients with different needs appear.
+* Export work is coupled to Comps Service until exports become rich enough to justify extraction.
 
 
 ## Considered Alternatives
@@ -115,6 +117,9 @@ Notes:
 
 * **BFF directly calling provider and calculating comps (no agent/comps split)**
   Rejected because orchestration logic and deterministic calc logic become tightly coupled in one layer.
+
+* **Separate Export Service in MVP**
+  Rejected because MVP exports are simple CSV/XLSX representations of comps results. A separate service is deferred until exports become async, template-heavy, multi-artifact, or independently scalable.
 
 * **Full microservice decomposition from day one**
   Rejected because operational overhead is high for MVP and slows product learning.
