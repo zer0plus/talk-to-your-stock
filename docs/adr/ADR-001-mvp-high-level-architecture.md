@@ -71,6 +71,32 @@ Notes:
 * PostgreSQL stores app user records and provider user-id mapping.
 * No separate Auth Service in MVP.
 
+### Repository Layout
+
+Implementation will use one Git repository with separate top-level service folders.
+
+| Thing | Recommendation |
+| --- | --- |
+| Separate deployable service folders | Yes |
+| Separate Git repositories | No |
+| Git submodules/subrepos | No |
+| One repo with clean service boundaries | Yes |
+
+Initial layout:
+
+```text
+web-bff/
+agent-service/
+comps-service/
+shared/
+infra/
+  docker-compose.yml
+```
+
+`comps-service` owns an internal `exports/` module for MVP CSV/XLSX exports.
+
+`shared/` is reserved for small cross-service contracts and utilities, such as common schemas, error shapes, IDs, and enums. Business logic must stay inside the owning service.
+
 ### Decision Summary
 
 > We decided to use a **Web BFF + Agent Service + Comps Service** architecture, backed by **PostgreSQL, Redis, and Object Storage**, in order to deliver deterministic chat-driven comps with auditability, downloadable outputs, and realtime UX, within the constraints of MVP speed and low operational overhead.
