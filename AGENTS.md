@@ -36,3 +36,15 @@ Implementation must not diverge from accepted ADRs. This applies to:
 * caching and data-flow strategies
 
 If an implementation plan conflicts with an ADR, stop and update the ADR first. Do not silently simplify, collapse, rename, or bypass ADR-defined components because the project is pre-user or MVP-stage.
+
+## Fallback Implementation Policy
+
+Do not add fallback implementations unless the user explicitly requests them.
+
+This means:
+* Do not silently fall back from a real provider to mock data.
+* Do not silently fall back from an agent/LLM path to rule-based behavior.
+* Do not silently fall back from a service call to local/in-process behavior.
+* Do not silently fall back from durable storage to in-memory storage.
+
+Normal error handling is still required. If a required dependency, provider, credential, or service is unavailable, fail clearly with an actionable error instead of substituting alternate behavior.

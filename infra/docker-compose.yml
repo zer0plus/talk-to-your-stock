@@ -1,0 +1,82 @@
+name: talk-to-your-stock
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: talk_to_your_stock
+      POSTGRES_PASSWORD: talk_to_your_stock
+      POSTGRES_DB: talk_to_your_stock
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talk_to_your_stock -d talk_to_your_stock"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - talk_to_your_stock_postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  comps-service:
+    build:
+      context: ..
+      dockerfile: comps-service/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://talk_to_your_stock:talk_to_your_stock@postgres:5432/talk_to_your_stock
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  agent-service:
+    build:
+      context: ..
+      dockerfile: agent-service/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      COMPS_SERVICE_URL: http://comps-service:8002
+    ports:
+      - "8001:8001"
+    depends_on:
+      comps-service:
+        condition: service_started
+
+  web-bff:
+    build:
+      context: ..
+      dockerfile: web-bff/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://talk_to_your_stock:talk_to_your_stock@postgres:5432/talk_to_your_stock
+      REDIS_URL: redis://redis:6379/0
+      AGENT_SERVICE_URL: http://agent-service:8001
+      COMPS_SERVICE_URL: http://comps-service:8002
+      DEMO_USER_EMAIL: demo@talktoyourstock.com
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      agent-service:
+        condition: service_started
+
+volumes:
+  talk_to_your_stock_postgres:

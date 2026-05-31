@@ -691,11 +691,15 @@ components:
           type: [number, 'null']
         revenue_ltm:
           type: [number, 'null']
+        ebit_ltm:
+          type: [number, 'null']
         ebitda_ltm:
           type: [number, 'null']
         net_income_ltm:
           type: [number, 'null']
         ev_to_revenue:
+          type: [number, 'null']
+        ev_to_ebit:
           type: [number, 'null']
         ev_to_ebitda:
           type: [number, 'null']
@@ -732,9 +736,11 @@ components:
           properties:
             stats:
               type: object
-              required: [ev_to_revenue, ev_to_ebitda, pe]
+              required: [ev_to_revenue, ev_to_ebit, ev_to_ebitda, pe]
               properties:
                 ev_to_revenue:
+                  $ref: '#/components/schemas/MinMedianMax'
+                ev_to_ebit:
                   $ref: '#/components/schemas/MinMedianMax'
                 ev_to_ebitda:
                   $ref: '#/components/schemas/MinMedianMax'
@@ -775,7 +781,7 @@ components:
           pattern: ^[A-Z.]{1,10}$
         output_field:
           type: string
-          enum: [equity_value, enterprise_value, net_debt, ev_to_revenue, ev_to_ebitda, pe]
+          enum: [equity_value, enterprise_value, net_debt, ev_to_revenue, ev_to_ebit, ev_to_ebitda, pe]
         expression:
           type: string
         output_value:
