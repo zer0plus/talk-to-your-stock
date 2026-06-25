@@ -1,0 +1,1 @@
+"""Web BFF service package."""
