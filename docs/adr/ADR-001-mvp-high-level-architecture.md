@@ -89,9 +89,13 @@ web-bff/
 agent-service/
 comps-service/
 shared/
-infra/
+dev/
   docker-compose.yml
 ```
+
+`dev/` is the repository folder for local development setup, such as Docker
+Compose and local service wiring. Cloud deployment configuration can be added
+under a separate folder later if deployment-specific artifacts are needed.
 
 `comps-service` owns an internal `exports/` module for MVP CSV/XLSX exports.
 
