@@ -16,7 +16,7 @@ examples. Product behavior is intentionally not implemented in this slice.
 ## Repository Layout
 
 ```text
-web-bff/          # User-facing FastAPI BFF, OpenAPI docs, auth boundary
+web-bff/          # User-facing FastAPI BFF and auth boundary
 agent-service/    # Agent orchestration boundary, MVP fundamental agent home
 comps-service/    # Deterministic comps capability and internal exports/ module
 shared/           # Small cross-service contracts, enums, IDs, schemas
@@ -74,11 +74,11 @@ curl http://localhost:8001/v1/health
 curl http://localhost:8002/v1/health
 ```
 
-6. Open Web BFF docs:
+6. Open Web BFF skeleton docs:
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
-- Raw OpenAPI JSON: http://localhost:8000/openapi.json
+- Generated service OpenAPI JSON: http://localhost:8000/openapi.json
 
 7. When done:
 
