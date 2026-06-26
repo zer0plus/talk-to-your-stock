@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from talk_to_your_stock_shared.enums import (
     AnalysisPeriod,
     DependencyStatus,
+    ErrorCode,
     MessageRole,
     MessageStatus,
     PeerSelectionMode,
@@ -44,7 +45,7 @@ class ReadinessResponse(ContractModel):
 
 
 class ErrorDetail(ContractModel):
-    code: str
+    code: ErrorCode
     message: str
     details: dict[str, object] | None = None
     request_id: str | None = None

@@ -24,6 +24,16 @@ class DependencyStatus(StrEnum):
     FAIL = "fail"
 
 
+class ErrorCode(StrEnum):
+    UNAUTHORIZED = "UNAUTHORIZED"
+    FORBIDDEN = "FORBIDDEN"
+    NOT_FOUND = "NOT_FOUND"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    RATE_LIMITED = "RATE_LIMITED"
+    UPSTREAM_ERROR = "UPSTREAM_ERROR"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
 class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"

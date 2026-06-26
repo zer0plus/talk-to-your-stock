@@ -3,6 +3,7 @@
 from talk_to_your_stock_shared.enums import (
     AnalysisPeriod,
     DependencyStatus,
+    ErrorCode,
     EventType,
     MessageRole,
     MessageStatus,
@@ -37,6 +38,7 @@ __all__ = [
     "AnalysisPeriod",
     "CompsRow",
     "DependencyStatus",
+    "ErrorCode",
     "ErrorDetail",
     "ErrorResponse",
     "EventType",
