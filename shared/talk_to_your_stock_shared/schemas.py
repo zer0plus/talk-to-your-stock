@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,7 +20,7 @@ from talk_to_your_stock_shared.enums import (
     TraceOutputField,
 )
 
-Ticker = str
+Ticker = Annotated[str, Field(pattern=r"^[A-Z.]{1,10}$")]
 Currency = str
 
 
@@ -96,7 +97,7 @@ class Run(ContractModel):
     thread_id: UUID
     trigger_message_id: UUID
     status: RunStatus
-    target_ticker: Ticker = Field(pattern=r"^[A-Z.]{1,10}$")
+    target_ticker: Ticker
     peer_tickers: list[Ticker] = Field(min_length=1)
     currency: Currency = Field(min_length=3, max_length=3)
     as_of: datetime
@@ -108,7 +109,7 @@ class Run(ContractModel):
 
 
 class CompsRow(ContractModel):
-    ticker: Ticker = Field(pattern=r"^[A-Z.]{1,10}$")
+    ticker: Ticker
     company_name: str | None = None
     is_target: bool
     currency: Currency = Field(min_length=3, max_length=3)
@@ -149,7 +150,7 @@ class RunTableSummary(ContractModel):
 
 class RunTableResponse(ContractModel):
     run_id: UUID
-    target_ticker: Ticker = Field(pattern=r"^[A-Z.]{1,10}$")
+    target_ticker: Ticker
     currency: Currency = Field(min_length=3, max_length=3)
     as_of: datetime
     rows: list[CompsRow]
@@ -164,7 +165,7 @@ class TraceInput(ContractModel):
 
 
 class TraceFormula(ContractModel):
-    ticker: Ticker = Field(pattern=r"^[A-Z.]{1,10}$")
+    ticker: Ticker
     output_field: TraceOutputField
     expression: str
     output_value: float | None
@@ -180,10 +181,10 @@ class GenerateCompsToolRequest(ContractModel):
     invocation_id: UUID
     thread_id: UUID
     trigger_message_id: UUID
-    target_ticker: Ticker = Field(pattern=r"^[A-Z.]{1,10}$")
+    target_ticker: Ticker
     peer_tickers: list[Ticker] = Field(default_factory=list)
     peer_selection_mode: PeerSelectionMode
-    analysis_period: AnalysisPeriod = AnalysisPeriod.LATEST
+    analysis_period: AnalysisPeriod
     currency: Currency = Field(default="USD", min_length=3, max_length=3)
     as_of_date: date | None = None
 
