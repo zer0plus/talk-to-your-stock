@@ -16,6 +16,7 @@ from talk_to_your_stock_shared.enums import (
     RunStatus,
     ServiceName,
     ServiceStatus,
+    TraceOutputField,
 )
 
 Ticker = str
@@ -164,7 +165,7 @@ class TraceInput(ContractModel):
 
 class TraceFormula(ContractModel):
     ticker: Ticker = Field(pattern=r"^[A-Z.]{1,10}$")
-    output_field: str
+    output_field: TraceOutputField
     expression: str
     output_value: float | None
     inputs: list[TraceInput]

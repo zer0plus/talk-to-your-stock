@@ -63,6 +63,16 @@ class AnalysisPeriod(StrEnum):
     LATEST = "latest"
 
 
+class TraceOutputField(StrEnum):
+    EQUITY_VALUE = "equity_value"
+    ENTERPRISE_VALUE = "enterprise_value"
+    NET_DEBT = "net_debt"
+    EV_TO_REVENUE = "ev_to_revenue"
+    EV_TO_EBIT = "ev_to_ebit"
+    EV_TO_EBITDA = "ev_to_ebitda"
+    PE = "pe"
+
+
 class EventType(StrEnum):
     MESSAGE_CREATED = "message.created"
     MESSAGE_DELTA = "message.delta"

@@ -12,6 +12,7 @@ from talk_to_your_stock_shared.enums import (
     RunStatus,
     ServiceName,
     ServiceStatus,
+    TraceOutputField,
 )
 from talk_to_your_stock_shared.schemas import (
     CompsRow,
@@ -62,6 +63,7 @@ __all__ = [
     "Thread",
     "TraceFormula",
     "TraceInput",
+    "TraceOutputField",
     "TraceResponse",
     "User",
 ]
