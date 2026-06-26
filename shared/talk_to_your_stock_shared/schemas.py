@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from talk_to_your_stock_shared.enums import (
     AnalysisPeriod,
@@ -187,6 +187,17 @@ class GenerateCompsToolRequest(ContractModel):
     analysis_period: AnalysisPeriod
     currency: Currency = Field(default="USD", min_length=3, max_length=3)
     as_of_date: date | None = None
+
+    @model_validator(mode="after")
+    def require_peers_for_user_supplied_mode(self) -> GenerateCompsToolRequest:
+        if (
+            self.peer_selection_mode == PeerSelectionMode.USER_SUPPLIED
+            and not self.peer_tickers
+        ):
+            raise ValueError(
+                "peer_tickers is required when peer_selection_mode is user_supplied"
+            )
+        return self
 
 
 class GenerateCompsToolResponse(ContractModel):
