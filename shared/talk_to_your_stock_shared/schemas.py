@@ -96,7 +96,7 @@ class Run(ContractModel):
     trigger_message_id: UUID
     status: RunStatus
     target_ticker: Ticker = Field(pattern=r"^[A-Z.]{1,10}$")
-    peer_tickers: list[Ticker] = Field(default_factory=list)
+    peer_tickers: list[Ticker] = Field(min_length=1)
     currency: Currency = Field(min_length=3, max_length=3)
     as_of: datetime
     warnings: list[str] = Field(default_factory=list)
