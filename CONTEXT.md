@@ -37,16 +37,20 @@ The tabular output of a comps run, containing company rows and deterministic val
 _Avoid_: Spreadsheet, valuation table
 
 **Run**:
-A persisted execution record created only when a Message triggers table-generation comps work.
+A persisted execution record for a valid table-generation comps attempt, including attempts that fail during execution. Invalid tool calls and conversational responses do not create a Run.
 _Avoid_: Job, task
 
 **Source Snapshot**:
-The preserved provider data used for a Run so outputs can be audited and reproduced.
+The immutable evidence package for a Run, preserving raw provider evidence and normalized calculator inputs so outputs can be audited and reproduced. It is separate from the reusable latest-data Fundamental Cache.
 _Avoid_: Raw data dump, cache entry
 
 **Trace**:
 The formula, input, and source-field explanation for a computed comps value or Run output.
 _Avoid_: Log, audit trail
+
+**Run Warning**:
+A non-fatal issue from table-generation comps work where the Run can still produce a structurally valid Comps Table. Missing or unusable data that prevents the requested table from being built is a Run failure, not a warning.
+_Avoid_: Soft error, notice
 
 **Ticker**:
 The canonical exchange symbol used to identify a company for market and fundamental data lookups.
@@ -72,8 +76,12 @@ _Avoid_: Field, datapoint
 Company financial statement data used to calculate valuation metrics.
 _Avoid_: Financials when naming persistent concepts
 
+**Currency Normalization**:
+The process of converting monetary source values into the requested Comps Table currency using explicit FX evidence. As-of Runs use FX evidence from the as-of date or nearest prior available date; latest Runs use latest available FX evidence. Unconverted source-currency values must not be labeled as the requested output currency.
+_Avoid_: Currency formatting, currency display
+
 **Fundamental Cache**:
-The durable latest-filing store for Alpha Vantage fundamentals, backed by PostgreSQL JSONB and Redis hot reads.
+The reusable latest-filing store for Alpha Vantage Fundamentals used to reduce provider calls across Runs. It is separate from a Run-specific Source Snapshot.
 _Avoid_: Facts table, warehouse
 
 **Quote**:

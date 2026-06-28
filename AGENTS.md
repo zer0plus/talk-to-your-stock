@@ -63,3 +63,5 @@ Use short Codex sessions and durable artifacts:
 6. Implement one unblocked issue per fresh session with `tdd` where practical.
 7. Run focused tests/typechecks during implementation and the full relevant suite at the end.
 8. Use a fresh `review` session against both repo standards and the originating PRD/issue.
+
+Do not create implementation issues during `grill-with-docs`; use that session to resolve domain language, decisions, and planning shape, then hand off to `to-prd` / `to-issues` for tracker artifacts.
