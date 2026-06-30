@@ -86,11 +86,3 @@ curl http://localhost:8002/v1/health
 deactivate
 ```
 
-## Design Decisions
-
-- API style: REST for request/response endpoints, plus SSE for real-time chat/run updates.
-- Run model: a run is created only for table-generation comps requests; non-comps chat replies do not create a run.
-- Auditability: comps outputs are traceable via run-level formula/input trace endpoints.
-- Auth boundary: Google OAuth is the intended auth model; Web BFF verifies user-facing credentials.
-- Agent orchestration: Google ADK owns orchestration behavior and calls deterministic tools/services.
-- Export ownership: MVP CSV/XLSX exports live inside `comps-service/exports/`.
