@@ -1,9 +1,10 @@
 # TalkToYourStock
 
 This repo is currently in system-design and staged implementation phase. The
-first implementation slice establishes the ADR-defined service folders,
-OpenAPI contract, shared schema types, health endpoints, and local environment
-examples. Product behavior is intentionally not implemented in this slice.
+current implementation establishes the ADR-defined service folders, OpenAPI
+contract, shared schema types, health/readiness endpoints, and local backend
+stack. Product behavior is intentionally added through narrow implementation
+slices.
 
 ## Source of Truth
 
@@ -20,7 +21,7 @@ web-bff/          # User-facing FastAPI BFF and auth boundary
 agent-service/    # Agent orchestration boundary, MVP fundamental agent home
 comps-service/    # Deterministic comps capability and internal exports/ module
 shared/           # Small cross-service contracts, enums, IDs, schemas
-dev/              # Local development setup, added in a later implementation slice
+dev/              # Local Docker Compose stack and environment examples
 api/              # OpenAPI source of truth
 docs/adr/         # Binding architecture decisions
 ```
@@ -48,6 +49,15 @@ PIP_USER=0 python -m pip install --no-user -r requirements.txt
 
 4. Start one or more service skeletons:
 
+For readiness checks, set the local environment and database URL first:
+
+```bash
+export TALK_TO_YOUR_STOCK_ENV=local
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/talk_to_your_stock
+export DEV_AUTH_USER_ID=00000000-0000-0000-0000-000000000001
+export DEV_AUTH_EMAIL=dev@example.com
+```
+
 Web BFF:
 
 ```bash
@@ -74,17 +84,38 @@ curl http://localhost:8001/v1/health
 curl http://localhost:8002/v1/health
 ```
 
-6. Open Web BFF skeleton docs:
+6. Check readiness endpoints:
+
+```bash
+curl -i http://localhost:8000/v1/ready
+curl -i http://localhost:8001/v1/ready
+curl -i http://localhost:8002/v1/ready
+```
+
+7. Open Web BFF skeleton docs:
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 - Generated service OpenAPI JSON: http://localhost:8000/openapi.json
 
-7. When done:
+8. When done:
 
 ```bash
 deactivate
 ```
+
+## Local Docker Stack
+
+The Docker Compose stack starts PostgreSQL plus Web BFF, Agent Service, and
+Comps Service:
+
+```bash
+cp dev/.env.example dev/.env
+docker compose up --build
+```
+
+See `dev/README.md` for the readiness contract and required local/production
+environment configuration.
 
 ## Design Decisions
 

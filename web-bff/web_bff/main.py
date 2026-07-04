@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
 from talk_to_your_stock_shared import (
-    DependencyStatus,
     HealthResponse,
-    ReadinessCheck,
     ReadinessResponse,
-    ReadinessState,
     ServiceName,
     ServiceStatus,
+)
+from talk_to_your_stock_shared.readiness import (
+    build_readiness_response,
+    check_database,
+    readiness_http_status,
 )
 from talk_to_your_stock_shared.time import utc_now
 
@@ -31,12 +33,10 @@ def health() -> HealthResponse:
 
 
 @app.get("/v1/ready", response_model=ReadinessResponse, tags=["Health"])
-def ready() -> ReadinessResponse:
-    return ReadinessResponse(
-        status=ReadinessState.READY,
+def ready(response: Response) -> ReadinessResponse:
+    readiness = build_readiness_response(
         service=ServiceName.WEB_BFF,
-        checks={
-            "configuration": ReadinessCheck(status=DependencyStatus.OK),
-        },
-        time=utc_now(),
+        database_checker=check_database,
     )
+    response.status_code = readiness_http_status(readiness)
+    return readiness
