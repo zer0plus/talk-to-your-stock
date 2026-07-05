@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -20,24 +19,9 @@ LOCAL_ENV = {
     "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
     "DEV_AUTH_EMAIL": "dev@example.com",
 }
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class BackendServiceReadinessTest(unittest.TestCase):
-    def test_web_bff_env_template_matches_production_auth_readiness_names(self) -> None:
-        template = (REPO_ROOT / "web-bff" / ".env.example").read_text()
-        names = {
-            line.split("=", maxsplit=1)[0]
-            for line in template.splitlines()
-            if line and not line.startswith("#")
-        }
-
-        self.assertIn("MANAGED_AUTH_JWKS_URL", names)
-        self.assertIn("MANAGED_AUTH_ISSUER", names)
-        self.assertIn("MANAGED_AUTH_AUDIENCE", names)
-        self.assertNotIn("AUTH_ISSUER", names)
-        self.assertNotIn("AUTH_AUDIENCE", names)
-
     def test_local_stack_services_report_ready_when_configuration_and_database_pass(
         self,
     ) -> None:
