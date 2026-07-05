@@ -32,7 +32,12 @@ def health() -> HealthResponse:
     )
 
 
-@app.get("/v1/ready", response_model=ReadinessResponse, tags=["Health"])
+@app.get(
+    "/v1/ready",
+    response_model=ReadinessResponse,
+    responses={503: {"model": ReadinessResponse}},
+    tags=["Health"],
+)
 def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.AGENT_SERVICE,

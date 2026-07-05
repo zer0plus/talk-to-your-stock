@@ -22,6 +22,21 @@ LOCAL_ENV = {
 
 
 class BackendServiceReadinessTest(unittest.TestCase):
+    def test_readiness_openapi_documents_503_response(self) -> None:
+        for service_name, app in (
+            ("web-bff", web_bff_app),
+            ("agent-service", agent_app),
+            ("comps-service", comps_app),
+        ):
+            with self.subTest(service=service_name):
+                response = TestClient(app).get("/openapi.json")
+
+            self.assertEqual(response.status_code, 200)
+            ready_responses = response.json()["paths"]["/v1/ready"]["get"]["responses"]
+            self.assertIn("503", ready_responses)
+            schema = ready_responses["503"]["content"]["application/json"]["schema"]
+            self.assertEqual(schema["$ref"], "#/components/schemas/ReadinessResponse")
+
     def test_local_stack_services_report_ready_when_configuration_and_database_pass(
         self,
     ) -> None:
