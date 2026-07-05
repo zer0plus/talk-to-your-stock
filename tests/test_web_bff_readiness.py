@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from talk_to_your_stock_shared import DependencyStatus, ReadinessCheck
+from tests.readiness_fakes import database_connects
 from web_bff.main import app
 
 
@@ -21,10 +21,7 @@ class WebBffReadinessTest(unittest.TestCase):
 
         with (
             patch.dict(os.environ, env, clear=True),
-            patch(
-                "web_bff.main.check_database",
-                return_value=ReadinessCheck(status=DependencyStatus.OK),
-            ),
+            database_connects(),
         ):
             response = TestClient(app).get("/v1/ready")
 
@@ -44,10 +41,7 @@ class WebBffReadinessTest(unittest.TestCase):
 
         with (
             patch.dict(os.environ, env, clear=True),
-            patch(
-                "web_bff.main.check_database",
-                return_value=ReadinessCheck(status=DependencyStatus.OK),
-            ),
+            database_connects(),
         ):
             response = TestClient(app).get("/v1/ready")
 
@@ -73,10 +67,7 @@ class WebBffReadinessTest(unittest.TestCase):
 
         with (
             patch.dict(os.environ, env, clear=True),
-            patch(
-                "web_bff.main.check_database",
-                return_value=ReadinessCheck(status=DependencyStatus.OK),
-            ),
+            database_connects(),
         ):
             response = TestClient(app).get("/v1/ready")
 
