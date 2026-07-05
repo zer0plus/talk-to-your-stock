@@ -121,7 +121,7 @@ def check_database(environ: Mapping[str, str]) -> ReadinessCheck:
     except Exception as exc:  # pragma: no cover - exact driver errors vary.
         logger.exception("PostgreSQL readiness check failed.")
         message = "PostgreSQL readiness check failed."
-        if environ.get(ENVIRONMENT_VAR, "").strip().lower() != PRODUCTION_ENVIRONMENT:
+        if environ.get(ENVIRONMENT_VAR, "").strip().lower() in LOCAL_ENVIRONMENTS:
             message = f"{message} {exc}"
         return ReadinessCheck(
             status=DependencyStatus.FAIL,

@@ -104,6 +104,37 @@ class BackendServiceReadinessTest(unittest.TestCase):
             )
         )
 
+    def test_invalid_environment_database_failure_uses_sanitized_readiness_message(
+        self,
+    ) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "prodution",
+            "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
+        }
+
+        with (
+            database_unavailable("password auth failed for user postgres"),
+            self.assertLogs("talk_to_your_stock_shared.readiness", level="ERROR") as logs,
+        ):
+            response = self._get_ready(comps_app, env)
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["configuration"]["status"], "fail")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["database"]["message"],
+            "PostgreSQL readiness check failed.",
+        )
+        self.assertNotIn("password auth failed", body["checks"]["database"]["message"])
+        self.assertTrue(
+            any(
+                "password auth failed for user postgres" in message
+                for message in logs.output
+            )
+        )
+
     def test_production_agent_readiness_requires_adk_configuration(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
