@@ -5,10 +5,12 @@ from pathlib import Path
 
 import yaml
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 class LocalStackDefinitionTest(unittest.TestCase):
     def test_compose_starts_postgres_and_backend_services(self) -> None:
-        compose_path = Path(__file__).resolve().parents[1] / "dev" / "docker-compose.yml"
+        compose_path = REPO_ROOT / "dev" / "docker-compose.yml"
         compose = yaml.safe_load(compose_path.read_text())
 
         services = compose["services"]
@@ -33,6 +35,14 @@ class LocalStackDefinitionTest(unittest.TestCase):
                 )
 
         self.assertIn("healthcheck", services["postgres"])
+
+    def test_dockerignore_excludes_local_env_files_but_keeps_examples(self) -> None:
+        dockerignore = (REPO_ROOT / ".dockerignore").read_text().splitlines()
+
+        self.assertIn(".env", dockerignore)
+        self.assertIn("**/.env", dockerignore)
+        self.assertNotIn(".env.example", dockerignore)
+        self.assertNotIn("**/.env.example", dockerignore)
 
 
 if __name__ == "__main__":
