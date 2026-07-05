@@ -102,6 +102,25 @@ class BackendServiceReadinessTest(unittest.TestCase):
         message = response.json()["checks"]["configuration"]["message"]
         self.assertIn("GOOGLE_ADK_APP_NAME", message)
         self.assertIn("GOOGLE_API_KEY", message)
+        self.assertIn("COMPS_SERVICE_URL", message)
+
+    def test_production_agent_readiness_accepts_required_configuration(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "production",
+            "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
+            "GOOGLE_ADK_APP_NAME": "talk-to-your-stock",
+            "GOOGLE_API_KEY": "test-key",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
+        }
+
+        with database_connects():
+            response = self._get_ready(agent_app, env)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["checks"]["configuration"]["status"], "ok")
+        self.assertEqual(body["checks"]["database"]["status"], "ok")
 
     def test_production_comps_readiness_requires_provider_configuration(self) -> None:
         env = {
