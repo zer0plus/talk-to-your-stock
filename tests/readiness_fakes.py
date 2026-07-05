@@ -41,7 +41,7 @@ def database_connects() -> Iterator[Mock]:
 
 
 @contextmanager
-def database_unavailable() -> Iterator[Mock]:
-    connect = Mock(side_effect=RuntimeError("database unavailable"))
+def database_unavailable(message: str = "database unavailable") -> Iterator[Mock]:
+    connect = Mock(side_effect=RuntimeError(message))
     with patch.dict(sys.modules, {"psycopg": SimpleNamespace(connect=connect)}):
         yield connect

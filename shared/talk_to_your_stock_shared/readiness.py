@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from typing import Callable
@@ -18,6 +19,7 @@ DATABASE_URL_VAR = "DATABASE_URL"
 LOCAL_ENVIRONMENTS = {"local", "development", "test"}
 PRODUCTION_ENVIRONMENT = "production"
 VALID_ENVIRONMENTS = LOCAL_ENVIRONMENTS | {PRODUCTION_ENVIRONMENT}
+logger = logging.getLogger(__name__)
 
 
 DatabaseChecker = Callable[[Mapping[str, str]], ReadinessCheck]
@@ -117,9 +119,13 @@ def check_database(environ: Mapping[str, str]) -> ReadinessCheck:
                 cursor.execute("select 1")
                 cursor.fetchone()
     except Exception as exc:  # pragma: no cover - exact driver errors vary.
+        logger.exception("PostgreSQL readiness check failed.")
+        message = "PostgreSQL readiness check failed."
+        if environ.get(ENVIRONMENT_VAR, "").strip().lower() != PRODUCTION_ENVIRONMENT:
+            message = f"{message} {exc}"
         return ReadinessCheck(
             status=DependencyStatus.FAIL,
-            message=f"PostgreSQL readiness check failed: {exc}",
+            message=message,
         )
 
     return ReadinessCheck(status=DependencyStatus.OK)

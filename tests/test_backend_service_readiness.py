@@ -41,7 +41,10 @@ class BackendServiceReadinessTest(unittest.TestCase):
             self.assertEqual(body["checks"]["database"]["status"], "ok")
 
     def test_database_failure_makes_readiness_not_ready(self) -> None:
-        with database_unavailable():
+        with (
+            database_unavailable("database unavailable"),
+            self.assertLogs("talk_to_your_stock_shared.readiness", level="ERROR") as logs,
+        ):
             response = self._get_ready(comps_app, LOCAL_ENV)
 
         self.assertEqual(response.status_code, 503)
@@ -50,6 +53,41 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertEqual(body["checks"]["configuration"]["status"], "ok")
         self.assertEqual(body["checks"]["database"]["status"], "fail")
         self.assertIn("database unavailable", body["checks"]["database"]["message"])
+        self.assertTrue(
+            any("database unavailable" in message for message in logs.output)
+        )
+
+    def test_production_database_failure_uses_sanitized_readiness_message(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "production",
+            "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
+            "MANAGED_AUTH_JWKS_URL": "https://auth.example.com/.well-known/jwks.json",
+            "MANAGED_AUTH_ISSUER": "https://auth.example.com",
+            "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
+        }
+
+        with (
+            database_unavailable("password auth failed for user postgres"),
+            self.assertLogs("talk_to_your_stock_shared.readiness", level="ERROR") as logs,
+        ):
+            response = self._get_ready(web_bff_app, env)
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["configuration"]["status"], "ok")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["database"]["message"],
+            "PostgreSQL readiness check failed.",
+        )
+        self.assertNotIn("password auth failed", body["checks"]["database"]["message"])
+        self.assertTrue(
+            any(
+                "password auth failed for user postgres" in message
+                for message in logs.output
+            )
+        )
 
     def test_production_agent_readiness_requires_adk_configuration(self) -> None:
         env = {
