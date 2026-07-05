@@ -7,8 +7,8 @@ import yaml
 
 
 class LocalStackDefinitionTest(unittest.TestCase):
-    def test_root_compose_starts_postgres_and_backend_services(self) -> None:
-        compose_path = Path(__file__).resolve().parents[1] / "compose.yml"
+    def test_compose_starts_postgres_and_backend_services(self) -> None:
+        compose_path = Path(__file__).resolve().parents[1] / "dev" / "docker-compose.yml"
         compose = yaml.safe_load(compose_path.read_text())
 
         services = compose["services"]
@@ -29,19 +29,10 @@ class LocalStackDefinitionTest(unittest.TestCase):
                 self.assertIn("DATABASE_URL", service["environment"])
                 self.assertEqual(
                     service["environment"]["TALK_TO_YOUR_STOCK_ENV"],
-                    "${TALK_TO_YOUR_STOCK_ENV:-local}",
+                    "${TALK_TO_YOUR_STOCK_ENV}",
                 )
 
         self.assertIn("healthcheck", services["postgres"])
-
-    def test_dev_compose_file_remains_available_for_explicit_invocation(self) -> None:
-        compose_path = Path(__file__).resolve().parents[1] / "dev" / "docker-compose.yml"
-        compose = yaml.safe_load(compose_path.read_text())
-
-        self.assertEqual(
-            set(compose["services"]),
-            {"postgres", "web-bff", "agent-service", "comps-service"},
-        )
 
 
 if __name__ == "__main__":

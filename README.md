@@ -111,7 +111,7 @@ Comps Service:
 
 ```bash
 cp dev/.env.example dev/.env
-docker compose up --build
+docker compose -f dev/docker-compose.yml up --build -d
 ```
 
 See `dev/README.md` for the readiness contract and required local/production

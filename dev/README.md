@@ -21,7 +21,7 @@ cp dev/.env.example dev/.env
 3. Start the services:
 
 ```bash
-docker compose up --build
+docker compose -f dev/docker-compose.yml up --build -d
 ```
 
 4. Check readiness:
