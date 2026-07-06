@@ -19,6 +19,7 @@ ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 1.2
 class GenerateCompsToolValidationTest(unittest.TestCase):
     _last_live_validation_at = 0.0
 
+    # Rejects user-supplied peer mode before provider or database work when peers are missing.
     def test_user_supplied_mode_requires_peer_tickers_before_run_creation(self) -> None:
         database_connect = Mock()
 
@@ -47,6 +48,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertIn("peer_tickers", body["error"]["message"])
         database_connect.assert_not_called()
 
+    # Rejects malformed ticker syntax through request validation before provider or database work.
     def test_malformed_ticker_returns_validation_error_before_run_creation(self) -> None:
         database_connect = Mock()
 
@@ -80,6 +82,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertIn("peer_tickers", str(body["error"]["details"]))
         database_connect.assert_not_called()
 
+    # Rejects unsupported tickers using live Alpha Vantage search before Run creation.
     def test_unsupported_ticker_returns_validation_error_before_run_creation(self) -> None:
         database_connect = Mock()
 
@@ -114,6 +117,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertEqual(body["error"]["details"]["unsupported_tickers"], ["ZZZZ"])
         database_connect.assert_not_called()
 
+    # Fails clearly when Alpha Vantage configuration is missing before database work.
     def test_missing_validation_configuration_fails_before_run_creation(self) -> None:
         database_connect = Mock()
 
@@ -147,6 +151,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         )
         database_connect.assert_not_called()
 
+    # Lets live Alpha Vantage exact-match tickers pass pre-Run validation only.
     def test_valid_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
 
