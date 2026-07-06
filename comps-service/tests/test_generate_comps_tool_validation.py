@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from comps_service.main import app
 
 TEST_ALPHA_VANTAGE_API_KEY_VAR = "TEST_ALPHA_VANTAGE_API_KEY"
-ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 1.2
+ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 2.0
 
 
 class GenerateCompsToolValidationTest(unittest.TestCase):
@@ -48,8 +48,8 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertIn("peer_tickers", body["error"]["message"])
         database_connect.assert_not_called()
 
-    # Rejects malformed ticker syntax through request validation before provider or database work.
-    def test_malformed_ticker_returns_validation_error_before_run_creation(self) -> None:
+    # Normalizes mixed-case ticker candidates before live Alpha Vantage validation.
+    def test_mixed_case_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
 
         with (
@@ -69,8 +69,38 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "invocation_id": str(uuid4()),
                     "thread_id": str(uuid4()),
                     "trigger_message_id": str(uuid4()),
+                    "target_ticker": "aApL",
+                    "peer_tickers": ["mSfT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 501)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
+        self.assertIn("not implemented", body["error"]["message"])
+        database_connect.assert_not_called()
+
+    # Rejects ticker candidates with unsupported syntax before provider or database work.
+    def test_malformed_ticker_returns_validation_error_before_run_creation(self) -> None:
+        database_connect = Mock()
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
                     "target_ticker": "AAPL",
-                    "peer_tickers": ["msft"],
+                    "peer_tickers": ["MS FT"],
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
@@ -187,7 +217,12 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
 
     def _live_alpha_vantage_env(self) -> dict[str, str]:
         self._wait_for_live_alpha_vantage_slot()
-        return {"ALPHA_VANTAGE_API_KEY": self._test_alpha_vantage_api_key()}
+        return {
+            "ALPHA_VANTAGE_API_KEY": self._test_alpha_vantage_api_key(),
+            "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": str(
+                ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS
+            ),
+        }
 
     def _wait_for_live_alpha_vantage_slot(self) -> None:
         elapsed_seconds = time.monotonic() - self.__class__._last_live_validation_at
