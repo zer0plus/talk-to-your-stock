@@ -17,6 +17,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
         }
 
         with (
@@ -37,6 +38,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
         }
 
         with (
@@ -61,6 +63,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "MANAGED_AUTH_JWKS_URL": "https://auth.example.com/.well-known/jwks.json",
             "MANAGED_AUTH_ISSUER": "https://auth.example.com",
             "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
         }

@@ -42,7 +42,7 @@ Set `TALK_TO_YOUR_STOCK_ENV=production` for production-like readiness checks.
 Production mode does not accept `DEV_AUTH_*` config. It requires:
 
 - Web BFF: `MANAGED_AUTH_JWKS_URL`, `MANAGED_AUTH_ISSUER`,
-  `MANAGED_AUTH_AUDIENCE`
+  `MANAGED_AUTH_AUDIENCE`, `AGENT_SERVICE_URL`
 - Agent Service: `GOOGLE_ADK_APP_NAME`, `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`
 - Comps Service: `ALPHA_VANTAGE_API_KEY`
 - All services: `DATABASE_URL`

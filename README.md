@@ -56,6 +56,7 @@ export TALK_TO_YOUR_STOCK_ENV=local
 export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/talk_to_your_stock
 export DEV_AUTH_USER_ID=00000000-0000-0000-0000-000000000001
 export DEV_AUTH_EMAIL=dev@example.com
+export AGENT_SERVICE_URL=http://localhost:8001
 ```
 
 Web BFF:
