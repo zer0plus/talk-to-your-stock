@@ -56,6 +56,7 @@ class RunStatus(str, Enum):
 
 class PeerSelectionMode(str, Enum):
     USER_SUPPLIED = "user_supplied"
+    # Add AUTO here when Comps Service has deterministic peer selection.
 
 
 class AnalysisPeriod(str, Enum):

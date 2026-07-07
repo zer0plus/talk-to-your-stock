@@ -149,6 +149,7 @@ def validate_generate_comps_request(
     *,
     ticker_validator: AlphaVantageTickerValidator | None = None,
 ) -> None:
+    # Future auto mode should select Peer Tickers before this explicit-peer validation.
     target_ticker = request.target_ticker.upper()
     peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
     self_comparison_tickers = sorted(

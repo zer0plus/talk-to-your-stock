@@ -195,6 +195,7 @@ class GenerateCompsToolRequest(ContractModel):
 
     @model_validator(mode="after")
     def require_peers_for_user_supplied_mode(self) -> GenerateCompsToolRequest:
+        # Future auto mode should allow empty peers and route to peer selection.
         if (
             self.peer_selection_mode == PeerSelectionMode.USER_SUPPLIED
             and not self.peer_tickers

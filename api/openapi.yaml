@@ -867,6 +867,7 @@ components:
             pattern: ^[A-Za-z.]{1,10}$
         peer_selection_mode:
           type: string
+          # Add `auto` when deterministic peer selection is implemented.
           enum: [user_supplied]
         analysis_period:
           type: string
