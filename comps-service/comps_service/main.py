@@ -11,6 +11,7 @@ from talk_to_your_stock_shared import (
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     HealthResponse,
+    PeerSelectionMode,
     ReadinessResponse,
     ServiceName,
     ServiceStatus,
@@ -92,6 +93,13 @@ def ready(response: Response) -> ReadinessResponse:
     tags=["Internal"],
 )
 def generate_comps_table(_request: GenerateCompsToolRequest) -> JSONResponse:
+    if _request.peer_selection_mode == PeerSelectionMode.AUTO:
+        return _error_response(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Auto peer selection is not implemented yet.",
+        )
+
     try:
         validate_generate_comps_request(_request)
     except ToolValidationError as exc:

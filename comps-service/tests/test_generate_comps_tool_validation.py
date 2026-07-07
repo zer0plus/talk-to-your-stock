@@ -86,6 +86,35 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertIn("peer_tickers", body["error"]["message"])
         database_connect.assert_not_called()
 
+    # Preserves the ADR-defined auto contract without implementing peer selection.
+    def test_auto_mode_returns_not_implemented_before_run_creation(self) -> None:
+        database_connect = Mock()
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_selection_mode": "auto",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 501)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
+        self.assertIn("Auto peer selection is not implemented", body["error"]["message"])
+        database_connect.assert_not_called()
+
     # Normalizes mixed-case ticker candidates before live Alpha Vantage validation.
     def test_mixed_case_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()

@@ -56,7 +56,8 @@ class RunStatus(str, Enum):
 
 class PeerSelectionMode(str, Enum):
     USER_SUPPLIED = "user_supplied"
-    # Add AUTO here when Comps Service has deterministic peer selection.
+    # Future scope: accepted by the contract, not implemented in this PRD slice.
+    AUTO = "auto"
 
 
 class AnalysisPeriod(str, Enum):

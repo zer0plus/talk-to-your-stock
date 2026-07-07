@@ -875,8 +875,8 @@ components:
             pattern: ^[A-Za-z.]{1,10}$
         peer_selection_mode:
           type: string
-          # Add `auto` when deterministic peer selection is implemented.
-          enum: [user_supplied]
+          # Future scope: `auto` is accepted but returns 501 until peer selection is implemented.
+          enum: [user_supplied, auto]
         analysis_period:
           type: string
           enum: [latest]
