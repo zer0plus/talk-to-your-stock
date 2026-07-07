@@ -860,6 +860,7 @@ components:
           pattern: ^[A-Za-z0-9.-]{1,20}$
         peer_tickers:
           type: array
+          maxItems: 10
           description: Required when `peer_selection_mode` is `user_supplied`; empty when Comps Service should select peers.
           items:
             type: string

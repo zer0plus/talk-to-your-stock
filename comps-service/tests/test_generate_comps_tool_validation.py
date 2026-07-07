@@ -116,6 +116,36 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertIn("peer_tickers", str(body["error"]["details"]))
         database_connect.assert_not_called()
 
+    # Rejects oversized peer lists before provider or database work.
+    def test_peer_tickers_are_bounded_before_provider_validation(self) -> None:
+        database_connect = Mock()
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"] * 11,
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "VALIDATION_ERROR")
+        self.assertIn("peer_tickers", str(body["error"]["details"]))
+        database_connect.assert_not_called()
+
     # Rejects unsupported tickers using live Alpha Vantage search before Run creation.
     def test_unsupported_ticker_returns_validation_error_before_run_creation(self) -> None:
         database_connect = Mock()
