@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -181,6 +185,48 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         )
         database_connect.assert_not_called()
 
+    # Treats malformed successful provider responses as upstream failures.
+    def test_non_json_provider_response_returns_upstream_error_before_run_creation(
+        self,
+    ) -> None:
+        database_connect = Mock()
+
+        with (
+            _alpha_vantage_server(b"<html>temporarily unavailable</html>") as base_url,
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(
+                os.environ,
+                {
+                    "ALPHA_VANTAGE_API_KEY": "test-key",
+                    "ALPHA_VANTAGE_BASE_URL": base_url,
+                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+                },
+                clear=True,
+            ),
+        ):
+            response = TestClient(app, raise_server_exceptions=False).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
+        self.assertIn("malformed", body["error"]["message"])
+        self.assertEqual(body["error"]["details"]["provider"], "alpha_vantage")
+        database_connect.assert_not_called()
+
     # Lets live Alpha Vantage exact-match tickers pass pre-Run validation only.
     def test_valid_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
@@ -238,6 +284,31 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 "Alpha Vantage validation tests."
             )
         return api_key
+
+
+class _AlphaVantageResponseHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(self.server.response_body)
+
+    def log_message(self, _format: str, *args: object) -> None:
+        return
+
+
+@contextmanager
+def _alpha_vantage_server(response_body: bytes) -> Iterator[str]:
+    server = HTTPServer(("127.0.0.1", 0), _AlphaVantageResponseHandler)
+    server.response_body = response_body
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/query"
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 if __name__ == "__main__":

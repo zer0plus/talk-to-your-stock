@@ -71,7 +71,13 @@ class AlphaVantageTickerValidator:
                     },
                 )
             response.raise_for_status()
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise UpstreamValidationError(
+                    message="Alpha Vantage symbol search returned malformed JSON.",
+                    details={"provider": "alpha_vantage"},
+                ) from exc
         except httpx.HTTPError as exc:
             raise UpstreamValidationError(
                 message="Alpha Vantage symbol search request failed.",
