@@ -237,7 +237,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "invocation_id": str(uuid4()),
                     "thread_id": str(uuid4()),
                     "trigger_message_id": str(uuid4()),
-                    "target_ticker": "ZZZZ",
+                    "target_ticker": "AAPL",
                     "peer_tickers": ["ZZZZ"],
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
