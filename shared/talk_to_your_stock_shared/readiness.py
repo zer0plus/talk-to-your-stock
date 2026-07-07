@@ -156,7 +156,7 @@ def _required_config_names(
             )
     elif service == ServiceName.COMPS_SERVICE:
         if environment == PRODUCTION_ENVIRONMENT:
-            required.extend(["ALPHA_VANTAGE_API_KEY"])
+            required.extend(["ALPHA_VANTAGE_API_KEY", "COMPS_SERVICE_INTERNAL_TOKEN"])
 
     return required
 

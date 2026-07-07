@@ -180,6 +180,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         message = response.json()["checks"]["configuration"]["message"]
         self.assertIn("ALPHA_VANTAGE_API_KEY", message)
+        self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
 
     def _get_ready(self, app: FastAPI, env: dict[str, str]):
         with patch.dict(os.environ, env, clear=True):

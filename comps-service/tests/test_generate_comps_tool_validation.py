@@ -21,10 +21,56 @@ from comps_service.tool_validation import AlphaVantageTickerValidator
 TEST_ALPHA_VANTAGE_API_KEY_VAR = "TEST_ALPHA_VANTAGE_API_KEY"
 RUN_LIVE_ALPHA_VANTAGE_TESTS_VAR = "RUN_LIVE_ALPHA_VANTAGE_TESTS"
 ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 2.0
+INTERNAL_TOOL_TOKEN = str(uuid4())
 
 
 class GenerateCompsToolValidationTest(unittest.TestCase):
     _last_live_validation_at = 0.0
+
+    def _internal_tool_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"}
+
+    def _env_with_internal_auth(
+        self,
+        values: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        env = {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN}
+        if values is not None:
+            env.update(values)
+        return env
+
+    # Rejects unauthenticated internal tool calls before provider or database work.
+    def test_generate_comps_table_requires_bearer_auth_before_validation(self) -> None:
+        database_connect = Mock()
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(
+                os.environ,
+                {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+                clear=True,
+            ),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 401)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "UNAUTHORIZED")
+        database_connect.assert_not_called()
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
@@ -70,7 +116,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -82,6 +128,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -99,7 +146,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -111,6 +158,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "auto",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 501)
@@ -145,6 +193,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 501)
@@ -162,7 +211,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -175,6 +224,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -194,7 +244,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -207,6 +257,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -224,7 +275,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -237,6 +288,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -254,7 +306,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -267,6 +319,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -294,7 +347,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -307,6 +360,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -345,6 +399,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -363,7 +418,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 sys.modules,
                 {"psycopg": SimpleNamespace(connect=database_connect)},
             ),
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
@@ -376,6 +431,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 503)
@@ -402,11 +458,13 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             ),
             patch.dict(
                 os.environ,
-                {
-                    "ALPHA_VANTAGE_API_KEY": "test-key",
-                    "ALPHA_VANTAGE_BASE_URL": base_url,
-                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
-                },
+                self._env_with_internal_auth(
+                    {
+                        "ALPHA_VANTAGE_API_KEY": "test-key",
+                        "ALPHA_VANTAGE_BASE_URL": base_url,
+                        "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+                    }
+                ),
                 clear=True,
             ),
         ):
@@ -421,6 +479,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 502)
@@ -455,11 +514,13 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             ),
             patch.dict(
                 os.environ,
-                {
-                    "ALPHA_VANTAGE_API_KEY": "test-key",
-                    "ALPHA_VANTAGE_BASE_URL": base_url,
-                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
-                },
+                self._env_with_internal_auth(
+                    {
+                        "ALPHA_VANTAGE_API_KEY": "test-key",
+                        "ALPHA_VANTAGE_BASE_URL": base_url,
+                        "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+                    }
+                ),
                 clear=True,
             ),
         ):
@@ -474,6 +535,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 400)
@@ -509,6 +571,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=self._internal_tool_headers(),
             )
 
         self.assertEqual(response.status_code, 501)
@@ -519,12 +582,14 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
 
     def _live_alpha_vantage_env(self) -> dict[str, str]:
         self._wait_for_live_alpha_vantage_slot()
-        return {
-            "ALPHA_VANTAGE_API_KEY": self._test_alpha_vantage_api_key(),
-            "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": str(
-                ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS
-            ),
-        }
+        return self._env_with_internal_auth(
+            {
+                "ALPHA_VANTAGE_API_KEY": self._test_alpha_vantage_api_key(),
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": str(
+                    ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS
+                ),
+            }
+        )
 
     def _wait_for_live_alpha_vantage_slot(self) -> None:
         elapsed_seconds = time.monotonic() - self.__class__._last_live_validation_at

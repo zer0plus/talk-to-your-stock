@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Response, status
+import hmac
+import os
+from typing import Annotated
+
+from fastapi import FastAPI, Header, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -29,6 +33,8 @@ from .tool_validation import (
     UpstreamValidationError,
     validate_generate_comps_request,
 )
+
+COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
 
 app = FastAPI(
     title="TalkToYourStock Comps Service",
@@ -86,13 +92,21 @@ def ready(response: Response) -> ReadinessResponse:
     response_model=GenerateCompsToolResponse,
     responses={
         400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
         501: {"model": ErrorResponse},
     },
     tags=["Internal"],
 )
-def generate_comps_table(_request: GenerateCompsToolRequest) -> JSONResponse:
+def generate_comps_table(
+    _request: GenerateCompsToolRequest,
+    authorization: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    auth_error = _internal_tool_auth_error(authorization)
+    if auth_error is not None:
+        return auth_error
+
     if _request.peer_selection_mode == PeerSelectionMode.AUTO:
         return _error_response(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -152,6 +166,29 @@ def _error_response(
             )
         ).model_dump(mode="json"),
     )
+
+
+def _internal_tool_auth_error(authorization: str | None) -> JSONResponse | None:
+    token = os.environ.get(COMPS_SERVICE_INTERNAL_TOKEN_VAR, "").strip()
+    if not token:
+        return _error_response(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=ErrorCode.INTERNAL_ERROR,
+            message=(
+                f"Missing required configuration: "
+                f"{COMPS_SERVICE_INTERNAL_TOKEN_VAR}."
+            ),
+            details={"missing_configuration": [COMPS_SERVICE_INTERNAL_TOKEN_VAR]},
+        )
+
+    if not hmac.compare_digest(authorization or "", f"Bearer {token}"):
+        return _error_response(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code=ErrorCode.UNAUTHORIZED,
+            message="Unauthorized internal tool call.",
+        )
+
+    return None
 
 
 def _validation_error_details(exc: RequestValidationError) -> dict[str, object]:

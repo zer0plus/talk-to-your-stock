@@ -44,7 +44,7 @@ Production mode does not accept `DEV_AUTH_*` config. It requires:
 - Web BFF: `MANAGED_AUTH_JWKS_URL`, `MANAGED_AUTH_ISSUER`,
   `MANAGED_AUTH_AUDIENCE`
 - Agent Service: `GOOGLE_ADK_APP_NAME`, `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`
-- Comps Service: `ALPHA_VANTAGE_API_KEY`
+- Comps Service: `ALPHA_VANTAGE_API_KEY`, `COMPS_SERVICE_INTERNAL_TOKEN`
 - All services: `DATABASE_URL`
 
 Missing production configuration fails readiness clearly. The local dev-auth
