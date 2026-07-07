@@ -379,7 +379,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
     def _test_alpha_vantage_api_key(self) -> str:
         api_key = os.environ.get(TEST_ALPHA_VANTAGE_API_KEY_VAR, "").strip()
         if not api_key:
-            self.fail(
+            self.skipTest(
                 f"{TEST_ALPHA_VANTAGE_API_KEY_VAR} is required for live "
                 "Alpha Vantage validation tests."
             )
