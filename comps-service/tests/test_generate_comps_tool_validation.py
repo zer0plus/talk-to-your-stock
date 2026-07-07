@@ -280,6 +280,42 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         )
         database_connect.assert_not_called()
 
+    # Rejects duplicate peer tickers before provider or database work.
+    def test_duplicate_peer_tickers_return_validation_error_before_run_creation(
+        self,
+    ) -> None:
+        database_connect = Mock()
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT", "msft"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "VALIDATION_ERROR")
+        self.assertIn("Peer tickers must be unique", body["error"]["message"])
+        self.assertEqual(
+            body["error"]["details"]["duplicate_peer_tickers"],
+            ["MSFT"],
+        )
+        database_connect.assert_not_called()
+
     # Rejects unsupported tickers using live Alpha Vantage search before Run creation.
     def test_unsupported_ticker_returns_validation_error_before_run_creation(self) -> None:
         database_connect = Mock()

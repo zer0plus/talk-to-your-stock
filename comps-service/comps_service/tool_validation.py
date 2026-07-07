@@ -171,6 +171,15 @@ def validate_generate_comps_request(
     # Future auto mode should select Peer Tickers before this explicit-peer validation.
     target_ticker = request.target_ticker.upper()
     peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
+    duplicate_peer_tickers = sorted(
+        {ticker for ticker in peer_tickers if peer_tickers.count(ticker) > 1}
+    )
+    if duplicate_peer_tickers:
+        raise ToolValidationError(
+            message="Peer tickers must be unique.",
+            details={"duplicate_peer_tickers": duplicate_peer_tickers},
+        )
+
     self_comparison_tickers = sorted(
         {ticker for ticker in peer_tickers if ticker == target_ticker}
     )
