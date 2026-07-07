@@ -403,6 +403,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '502':
           $ref: '#/components/responses/UpstreamError'
         '503':
@@ -465,6 +467,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     RateLimited:
       description: Rate limited
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotImplemented:
+      description: Capability not implemented
       content:
         application/json:
           schema:
