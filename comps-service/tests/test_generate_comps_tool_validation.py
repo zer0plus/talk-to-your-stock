@@ -18,6 +18,7 @@ from comps_service.main import app
 from comps_service.tool_validation import AlphaVantageTickerValidator
 
 TEST_ALPHA_VANTAGE_API_KEY_VAR = "TEST_ALPHA_VANTAGE_API_KEY"
+RUN_LIVE_ALPHA_VANTAGE_TESTS_VAR = "RUN_LIVE_ALPHA_VANTAGE_TESTS"
 ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 2.0
 
 
@@ -440,6 +441,11 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.__class__._last_live_validation_at = time.monotonic()
 
     def _test_alpha_vantage_api_key(self) -> str:
+        if os.environ.get(RUN_LIVE_ALPHA_VANTAGE_TESTS_VAR, "").strip() != "1":
+            self.skipTest(
+                f"{RUN_LIVE_ALPHA_VANTAGE_TESTS_VAR}=1 is required for live "
+                "Alpha Vantage validation tests."
+            )
         api_key = os.environ.get(TEST_ALPHA_VANTAGE_API_KEY_VAR, "").strip()
         if not api_key:
             self.skipTest(
