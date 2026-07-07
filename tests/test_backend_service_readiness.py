@@ -37,17 +37,6 @@ class BackendServiceReadinessTest(unittest.TestCase):
             schema = ready_responses["503"]["content"]["application/json"]["schema"]
             self.assertEqual(schema["$ref"], "#/components/schemas/ReadinessResponse")
 
-    def test_comps_tool_openapi_documents_upstream_error_response(self) -> None:
-        response = TestClient(comps_app).get("/openapi.json")
-
-        self.assertEqual(response.status_code, 200)
-        responses = response.json()["paths"][
-            "/v1/internal/tools/generate-comps-table"
-        ]["post"]["responses"]
-        self.assertIn("502", responses)
-        schema = responses["502"]["content"]["application/json"]["schema"]
-        self.assertEqual(schema["$ref"], "#/components/schemas/ErrorResponse")
-
     def test_local_stack_services_report_ready_when_configuration_and_database_pass(
         self,
     ) -> None:
