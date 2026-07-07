@@ -21,7 +21,7 @@ from talk_to_your_stock_shared.enums import (
 )
 
 Ticker = Annotated[str, Field(pattern=r"^[A-Z.]{1,10}$")]
-TickerCandidate = Annotated[str, Field(pattern=r"^[A-Za-z0-9.-]{1,20}$")]
+TickerCandidate = Annotated[str, Field(pattern=r"^[A-Za-z.]{1,10}$")]
 MAX_EXPLICIT_PEER_TICKERS = 10
 Currency = str
 

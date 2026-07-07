@@ -857,14 +857,14 @@ components:
           format: uuid
         target_ticker:
           type: string
-          pattern: ^[A-Za-z0-9.-]{1,20}$
+          pattern: ^[A-Za-z.]{1,10}$
         peer_tickers:
           type: array
           maxItems: 10
           description: Required when `peer_selection_mode` is `user_supplied`; empty when Comps Service should select peers.
           items:
             type: string
-            pattern: ^[A-Za-z0-9.-]{1,20}$
+            pattern: ^[A-Za-z.]{1,10}$
         peer_selection_mode:
           type: string
           enum: [user_supplied, auto]
