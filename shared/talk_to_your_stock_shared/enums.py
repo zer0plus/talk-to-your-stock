@@ -56,7 +56,6 @@ class RunStatus(str, Enum):
 
 class PeerSelectionMode(str, Enum):
     USER_SUPPLIED = "user_supplied"
-    AUTO = "auto"
 
 
 class AnalysisPeriod(str, Enum):

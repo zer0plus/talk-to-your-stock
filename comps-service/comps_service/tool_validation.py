@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from talk_to_your_stock_shared import GenerateCompsToolRequest, PeerSelectionMode
+from talk_to_your_stock_shared import GenerateCompsToolRequest
 
 ALPHA_VANTAGE_API_KEY_VAR = "ALPHA_VANTAGE_API_KEY"
 ALPHA_VANTAGE_BASE_URL_VAR = "ALPHA_VANTAGE_BASE_URL"
@@ -23,12 +23,6 @@ DEFAULT_ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS = 1.1
 
 @dataclass(frozen=True)
 class ToolValidationError(Exception):
-    message: str
-    details: dict[str, object]
-
-
-@dataclass(frozen=True)
-class ToolCapabilityNotImplementedError(Exception):
     message: str
     details: dict[str, object]
 
@@ -155,12 +149,6 @@ def validate_generate_comps_request(
     *,
     ticker_validator: AlphaVantageTickerValidator | None = None,
 ) -> None:
-    if request.peer_selection_mode == PeerSelectionMode.AUTO:
-        raise ToolCapabilityNotImplementedError(
-            message="Auto peer selection is not implemented for this tool slice.",
-            details={"peer_selection_mode": request.peer_selection_mode.value},
-        )
-
     target_ticker = request.target_ticker.upper()
     peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
     self_comparison_tickers = sorted(

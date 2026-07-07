@@ -24,7 +24,6 @@ from talk_to_your_stock_shared.time import utc_now
 
 from .tool_validation import (
     RuntimeConfigurationError,
-    ToolCapabilityNotImplementedError,
     ToolValidationError,
     UpstreamValidationError,
     validate_generate_comps_request,
@@ -95,13 +94,6 @@ def ready(response: Response) -> ReadinessResponse:
 def generate_comps_table(_request: GenerateCompsToolRequest) -> JSONResponse:
     try:
         validate_generate_comps_request(_request)
-    except ToolCapabilityNotImplementedError as exc:
-        return _error_response(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            code=ErrorCode.INTERNAL_ERROR,
-            message=exc.message,
-            details=exc.details,
-        )
     except ToolValidationError as exc:
         return _error_response(
             status_code=status.HTTP_400_BAD_REQUEST,

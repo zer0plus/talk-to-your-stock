@@ -861,13 +861,13 @@ components:
         peer_tickers:
           type: array
           maxItems: 10
-          description: Required when `peer_selection_mode` is `user_supplied`; empty when Comps Service should select peers.
+          description: Required explicit Peer Tickers for this tool slice.
           items:
             type: string
             pattern: ^[A-Za-z.]{1,10}$
         peer_selection_mode:
           type: string
-          enum: [user_supplied, auto]
+          enum: [user_supplied]
         analysis_period:
           type: string
           enum: [latest]
