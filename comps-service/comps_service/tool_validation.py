@@ -159,6 +159,8 @@ class AlphaVantageTickerValidator:
     def _match_symbol(self, match: object) -> str | None:
         if not isinstance(match, dict):
             return None
+        if match.get("3. type") != "Equity":
+            return None
         symbol = match.get("1. symbol")
         return str(symbol).upper() if symbol else None
 

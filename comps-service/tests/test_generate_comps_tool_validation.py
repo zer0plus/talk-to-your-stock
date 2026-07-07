@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
@@ -28,7 +29,9 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
         response = Mock()
-        response.json.return_value = {"bestMatches": [{"1. symbol": "AAPL"}]}
+        response.json.return_value = {
+            "bestMatches": [{"1. symbol": "AAPL", "3. type": "Equity"}]
+        }
         response.raise_for_status.return_value = None
         client = Mock()
         client.__enter__ = Mock(return_value=client)
@@ -427,6 +430,59 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertEqual(body["error"]["details"]["provider"], "alpha_vantage")
         database_connect.assert_not_called()
 
+    # Rejects exact Alpha Vantage matches that are not company equity symbols.
+    def test_non_equity_ticker_match_returns_validation_error_before_run_creation(
+        self,
+    ) -> None:
+        database_connect = Mock()
+
+        with (
+            _alpha_vantage_server(
+                {
+                    "AAPL": (
+                        b'{"bestMatches":[{"1. symbol":"AAPL",'
+                        b'"3. type":"Equity"}]}'
+                    ),
+                    "FUND": (
+                        b'{"bestMatches":[{"1. symbol":"FUND",'
+                        b'"3. type":"Mutual Fund"}]}'
+                    ),
+                }
+            ) as base_url,
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(
+                os.environ,
+                {
+                    "ALPHA_VANTAGE_API_KEY": "test-key",
+                    "ALPHA_VANTAGE_BASE_URL": base_url,
+                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+                },
+                clear=True,
+            ),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["FUND"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "VALIDATION_ERROR")
+        self.assertIn("Unsupported ticker", body["error"]["message"])
+        self.assertEqual(body["error"]["details"]["unsupported_tickers"], ["FUND"])
+        database_connect.assert_not_called()
+
     # Lets live Alpha Vantage exact-match tickers pass pre-Run validation only.
     def test_valid_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
@@ -493,19 +549,32 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
 
 class _AlphaVantageResponseHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        response_body = self.server.response_body
+        response_bodies = getattr(self.server, "response_bodies", None)
+        if response_bodies is not None:
+            query = parse_qs(urlparse(self.path).query)
+            keyword = query.get("keywords", [""])[0]
+            response_body = response_bodies[keyword]
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(self.server.response_body)
+        self.wfile.write(response_body)
 
     def log_message(self, _format: str, *args: object) -> None:
         return
 
 
 @contextmanager
-def _alpha_vantage_server(response_body: bytes) -> Iterator[str]:
+def _alpha_vantage_server(
+    response_body: bytes | dict[str, bytes],
+) -> Iterator[str]:
     server = HTTPServer(("127.0.0.1", 0), _AlphaVantageResponseHandler)
-    server.response_body = response_body
+    if isinstance(response_body, dict):
+        server.response_body = b'{"bestMatches":[]}'
+        server.response_bodies = response_body
+    else:
+        server.response_body = response_body
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
