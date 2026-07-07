@@ -15,6 +15,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from comps_service.main import app
+from comps_service.tool_validation import AlphaVantageTickerValidator
 
 TEST_ALPHA_VANTAGE_API_KEY_VAR = "TEST_ALPHA_VANTAGE_API_KEY"
 ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 2.0
@@ -22,6 +23,39 @@ ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 2.0
 
 class GenerateCompsToolValidationTest(unittest.TestCase):
     _last_live_validation_at = 0.0
+
+    # Shares Alpha Vantage request pacing across validator instances.
+    def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
+        response = Mock()
+        response.json.return_value = {"bestMatches": [{"1. symbol": "AAPL"}]}
+        response.raise_for_status.return_value = None
+        client = Mock()
+        client.__enter__ = Mock(return_value=client)
+        client.__exit__ = Mock(return_value=None)
+        client.get.return_value = response
+
+        with (
+            patch("comps_service.tool_validation.httpx.Client", return_value=client),
+            patch("comps_service.tool_validation.time.monotonic", return_value=100.0),
+            patch("comps_service.tool_validation.time.sleep") as sleep,
+        ):
+            first_validator = AlphaVantageTickerValidator(
+                environ={
+                    "ALPHA_VANTAGE_API_KEY": "test-key",
+                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "1.1",
+                },
+            )
+            second_validator = AlphaVantageTickerValidator(
+                environ={
+                    "ALPHA_VANTAGE_API_KEY": "test-key",
+                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "1.1",
+                },
+            )
+
+            self.assertTrue(first_validator.is_supported("AAPL"))
+            self.assertTrue(second_validator.is_supported("AAPL"))
+
+        sleep.assert_called_once_with(1.1)
 
     # Rejects user-supplied peer mode before provider or database work when peers are missing.
     def test_user_supplied_mode_requires_peer_tickers_before_run_creation(self) -> None:

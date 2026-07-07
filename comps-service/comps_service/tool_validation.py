@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -39,10 +40,31 @@ class UpstreamValidationError(Exception):
     details: dict[str, object]
 
 
-class AlphaVantageTickerValidator:
-    def __init__(self, *, environ: Mapping[str, str] | None = None) -> None:
-        self.environ = os.environ if environ is None else environ
+class AlphaVantageRequestLimiter:
+    def __init__(self) -> None:
         self._last_request_at = 0.0
+        self._lock = threading.Lock()
+
+    def wait_for_slot(self, interval_seconds: float) -> None:
+        with self._lock:
+            elapsed_seconds = time.monotonic() - self._last_request_at
+            if elapsed_seconds < interval_seconds:
+                time.sleep(interval_seconds - elapsed_seconds)
+            self._last_request_at = time.monotonic()
+
+
+_ALPHA_VANTAGE_REQUEST_LIMITER = AlphaVantageRequestLimiter()
+
+
+class AlphaVantageTickerValidator:
+    def __init__(
+        self,
+        *,
+        environ: Mapping[str, str] | None = None,
+        request_limiter: AlphaVantageRequestLimiter | None = None,
+    ) -> None:
+        self.environ = os.environ if environ is None else environ
+        self._request_limiter = request_limiter or _ALPHA_VANTAGE_REQUEST_LIMITER
 
     def is_supported(self, ticker: str) -> bool:
         payload = self._search_symbol(ticker)
@@ -120,10 +142,7 @@ class AlphaVantageTickerValidator:
             ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS_VAR,
             DEFAULT_ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS,
         )
-        elapsed_seconds = time.monotonic() - self._last_request_at
-        if elapsed_seconds < interval_seconds:
-            time.sleep(interval_seconds - elapsed_seconds)
-        self._last_request_at = time.monotonic()
+        self._request_limiter.wait_for_slot(interval_seconds)
 
     def _float_env(self, name: str, default: float) -> float:
         raw_value = self.environ.get(name, "").strip()
