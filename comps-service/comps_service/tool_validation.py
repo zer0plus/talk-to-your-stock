@@ -28,6 +28,12 @@ class ToolValidationError(Exception):
 
 
 @dataclass(frozen=True)
+class ToolCapabilityNotImplementedError(Exception):
+    message: str
+    details: dict[str, object]
+
+
+@dataclass(frozen=True)
 class RuntimeConfigurationError(Exception):
     message: str
     details: dict[str, object]
@@ -149,9 +155,9 @@ def validate_generate_comps_request(
     *,
     ticker_validator: AlphaVantageTickerValidator | None = None,
 ) -> None:
-    if request.peer_selection_mode != PeerSelectionMode.USER_SUPPLIED:
-        raise ToolValidationError(
-            message="Only user_supplied peer selection is supported for this tool slice.",
+    if request.peer_selection_mode == PeerSelectionMode.AUTO:
+        raise ToolCapabilityNotImplementedError(
+            message="Auto peer selection is not implemented for this tool slice.",
             details={"peer_selection_mode": request.peer_selection_mode.value},
         )
 
