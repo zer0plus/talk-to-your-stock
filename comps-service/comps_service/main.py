@@ -85,6 +85,7 @@ def ready(response: Response) -> ReadinessResponse:
     response_model=GenerateCompsToolResponse,
     responses={
         400: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
         501: {"model": ErrorResponse},
     },
