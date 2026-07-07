@@ -155,10 +155,24 @@ def validate_generate_comps_request(
             details={"peer_selection_mode": request.peer_selection_mode.value},
         )
 
+    target_ticker = request.target_ticker.upper()
+    peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
+    self_comparison_tickers = sorted(
+        {ticker for ticker in peer_tickers if ticker == target_ticker}
+    )
+    if self_comparison_tickers:
+        raise ToolValidationError(
+            message="Target ticker cannot also be a peer ticker.",
+            details={
+                "target_ticker": target_ticker,
+                "self_comparison_tickers": self_comparison_tickers,
+            },
+        )
+
     validator = ticker_validator or AlphaVantageTickerValidator()
     requested_tickers = [
-        request.target_ticker.upper(),
-        *(ticker.upper() for ticker in request.peer_tickers),
+        target_ticker,
+        *peer_tickers,
     ]
     unsupported_tickers = [
         ticker

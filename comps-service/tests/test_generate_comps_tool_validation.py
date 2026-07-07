@@ -146,6 +146,44 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertIn("peer_tickers", str(body["error"]["details"]))
         database_connect.assert_not_called()
 
+    # Rejects self-comparison requests before provider or database work.
+    def test_target_ticker_cannot_also_be_a_peer_ticker(self) -> None:
+        database_connect = Mock()
+
+        with (
+            patch.dict(
+                sys.modules,
+                {"psycopg": SimpleNamespace(connect=database_connect)},
+            ),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["aapl"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "VALIDATION_ERROR")
+        self.assertIn(
+            "Target ticker cannot also be a peer ticker",
+            body["error"]["message"],
+        )
+        self.assertEqual(body["error"]["details"]["target_ticker"], "AAPL")
+        self.assertEqual(
+            body["error"]["details"]["self_comparison_tickers"],
+            ["AAPL"],
+        )
+        database_connect.assert_not_called()
+
     # Rejects unsupported tickers using live Alpha Vantage search before Run creation.
     def test_unsupported_ticker_returns_validation_error_before_run_creation(self) -> None:
         database_connect = Mock()
