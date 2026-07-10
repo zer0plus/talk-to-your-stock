@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hmac
 import os
-from typing import Annotated
+from collections.abc import Awaitable, Callable
 
-from fastapi import FastAPI, Header, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -35,6 +35,7 @@ from .tool_validation import (
 )
 
 COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
+GENERATE_COMPS_TOOL_PATH = "/v1/internal/tools/generate-comps-table"
 
 app = FastAPI(
     title="TalkToYourStock Comps Service",
@@ -42,6 +43,19 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+
+@app.middleware("http")
+async def authenticate_internal_tool_routes(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    if request.url.path == GENERATE_COMPS_TOOL_PATH:
+        auth_error = _internal_tool_auth_error(request.headers.get("authorization"))
+        if auth_error is not None:
+            return auth_error
+
+    return await call_next(request)
 
 
 @app.exception_handler(RequestValidationError)
@@ -88,7 +102,7 @@ def ready(response: Response) -> ReadinessResponse:
 
 
 @app.post(
-    "/v1/internal/tools/generate-comps-table",
+    GENERATE_COMPS_TOOL_PATH,
     response_model=GenerateCompsToolResponse,
     responses={
         400: {"model": ErrorResponse},
@@ -101,12 +115,7 @@ def ready(response: Response) -> ReadinessResponse:
 )
 def generate_comps_table(
     _request: GenerateCompsToolRequest,
-    authorization: Annotated[str | None, Header()] = None,
 ) -> JSONResponse:
-    auth_error = _internal_tool_auth_error(authorization)
-    if auth_error is not None:
-        return auth_error
-
     if _request.peer_selection_mode == PeerSelectionMode.AUTO:
         return _error_response(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -181,7 +190,14 @@ def _internal_tool_auth_error(authorization: str | None) -> JSONResponse | None:
             details={"missing_configuration": [COMPS_SERVICE_INTERNAL_TOKEN_VAR]},
         )
 
-    if not hmac.compare_digest(authorization or "", f"Bearer {token}"):
+    try:
+        actual = (authorization or "").encode("ascii")
+        expected = f"Bearer {token}".encode("ascii")
+    except UnicodeEncodeError:
+        actual = b""
+        expected = b"\x00"
+
+    if not hmac.compare_digest(actual, expected):
         return _error_response(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code=ErrorCode.UNAUTHORIZED,

@@ -18,6 +18,8 @@ LOCAL_ENV = {
     "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
     "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
     "DEV_AUTH_EMAIL": "dev@example.com",
+    "COMPS_SERVICE_INTERNAL_TOKEN": "local-comps-token",
+    "ALPHA_VANTAGE_API_KEY": "local-alpha-vantage-key",
 }
 
 
@@ -181,6 +183,19 @@ class BackendServiceReadinessTest(unittest.TestCase):
         message = response.json()["checks"]["configuration"]["message"]
         self.assertIn("ALPHA_VANTAGE_API_KEY", message)
         self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
+
+    def test_local_comps_readiness_requires_comps_configuration(self) -> None:
+        env = dict(LOCAL_ENV)
+        del env["COMPS_SERVICE_INTERNAL_TOKEN"]
+        del env["ALPHA_VANTAGE_API_KEY"]
+
+        with database_connects():
+            response = self._get_ready(comps_app, env)
+
+        self.assertEqual(response.status_code, 503)
+        message = response.json()["checks"]["configuration"]["message"]
+        self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
+        self.assertIn("ALPHA_VANTAGE_API_KEY", message)
 
     def _get_ready(self, app: FastAPI, env: dict[str, str]):
         with patch.dict(os.environ, env, clear=True):

@@ -39,7 +39,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             env.update(values)
         return env
 
-    # Rejects unauthenticated internal tool calls before provider or database work.
+    # Rejects unauthenticated internal tool calls before body validation.
     def test_generate_comps_table_requires_bearer_auth_before_validation(self) -> None:
         database_connect = Mock()
 
@@ -56,6 +56,23 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         ):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
+                content='{"malformed_json":',
+                headers={"Content-Type": "application/json"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "UNAUTHORIZED")
+        database_connect.assert_not_called()
+
+    def test_generate_comps_table_rejects_non_ascii_auth_header(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
                 json={
                     "invocation_id": str(uuid4()),
                     "thread_id": str(uuid4()),
@@ -65,12 +82,12 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
+                headers=[("Authorization", "Bearer inválido".encode())],
             )
 
         self.assertEqual(response.status_code, 401)
         body = response.json()
         self.assertEqual(body["error"]["code"], "UNAUTHORIZED")
-        database_connect.assert_not_called()
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
