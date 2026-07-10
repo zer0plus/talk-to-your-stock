@@ -16,15 +16,21 @@ cp dev/.env.example dev/.env
 ```
 
 2. Keep `TALK_TO_YOUR_STOCK_ENV=local` and set an explicit dev-auth identity in
-   `dev/.env`. The example identity is intentionally local-only.
+   `dev/.env`. The example identity and `COMPS_SERVICE_INTERNAL_TOKEN` are
+   intentionally local-only.
 
-3. Start the services:
+3. Set `ALPHA_VANTAGE_API_KEY` in `dev/.env`. Comps Service readiness requires
+   a real provider key because the current tool validation path uses Alpha
+   Vantage. `TEST_ALPHA_VANTAGE_API_KEY` is only used when
+   `RUN_LIVE_ALPHA_VANTAGE_TESTS=1` for opt-in live tests.
+
+4. Start the services:
 
 ```bash
 docker compose -f dev/docker-compose.yml up --build -d
 ```
 
-4. Check readiness:
+5. Check readiness:
 
 ```bash
 curl -i http://localhost:8000/v1/ready
@@ -43,8 +49,9 @@ Production mode does not accept `DEV_AUTH_*` config. It requires:
 
 - Web BFF: `MANAGED_AUTH_JWKS_URL`, `MANAGED_AUTH_ISSUER`,
   `MANAGED_AUTH_AUDIENCE`
-- Agent Service: `GOOGLE_ADK_APP_NAME`, `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`
-- Comps Service: `ALPHA_VANTAGE_API_KEY`
+- Agent Service: `GOOGLE_ADK_APP_NAME`, `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`,
+  `COMPS_SERVICE_INTERNAL_TOKEN`
+- Comps Service: `ALPHA_VANTAGE_API_KEY`, `COMPS_SERVICE_INTERNAL_TOKEN`
 - All services: `DATABASE_URL`
 
 Missing production configuration fails readiness clearly. The local dev-auth

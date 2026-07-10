@@ -21,6 +21,8 @@ from talk_to_your_stock_shared.enums import (
 )
 
 Ticker = Annotated[str, Field(pattern=r"^[A-Z.]{1,10}$")]
+TickerCandidate = Annotated[str, Field(pattern=r"^[A-Za-z.]{1,10}$")]
+MAX_EXPLICIT_PEER_TICKERS = 10
 Currency = str
 
 
@@ -181,8 +183,11 @@ class GenerateCompsToolRequest(ContractModel):
     invocation_id: UUID
     thread_id: UUID
     trigger_message_id: UUID
-    target_ticker: Ticker
-    peer_tickers: list[Ticker] = Field(default_factory=list)
+    target_ticker: TickerCandidate
+    peer_tickers: list[TickerCandidate] = Field(
+        default_factory=list,
+        max_length=MAX_EXPLICIT_PEER_TICKERS,
+    )
     peer_selection_mode: PeerSelectionMode
     analysis_period: AnalysisPeriod
     currency: Currency = Field(default="USD", min_length=3, max_length=3)
@@ -190,6 +195,7 @@ class GenerateCompsToolRequest(ContractModel):
 
     @model_validator(mode="after")
     def require_peers_for_user_supplied_mode(self) -> GenerateCompsToolRequest:
+        # Future auto mode should allow empty peers and route to peer selection.
         if (
             self.peer_selection_mode == PeerSelectionMode.USER_SUPPLIED
             and not self.peer_tickers

@@ -403,8 +403,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '502':
           $ref: '#/components/responses/UpstreamError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
 components:
   securitySchemes:
@@ -467,8 +471,20 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    NotImplemented:
+      description: Capability not implemented
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     UpstreamError:
       description: Upstream provider error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Service unavailable
       content:
         application/json:
           schema:
@@ -849,15 +865,17 @@ components:
           format: uuid
         target_ticker:
           type: string
-          pattern: ^[A-Z.]{1,10}$
+          pattern: ^[A-Za-z.]{1,10}$
         peer_tickers:
           type: array
-          description: Required when `peer_selection_mode` is `user_supplied`; empty when Comps Service should select peers.
+          maxItems: 10
+          description: Required explicit Peer Tickers for this tool slice.
           items:
             type: string
-            pattern: ^[A-Z.]{1,10}$
+            pattern: ^[A-Za-z.]{1,10}$
         peer_selection_mode:
           type: string
+          # Future scope: `auto` is accepted but returns 501 until peer selection is implemented.
           enum: [user_supplied, auto]
         analysis_period:
           type: string

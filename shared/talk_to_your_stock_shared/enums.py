@@ -56,6 +56,7 @@ class RunStatus(str, Enum):
 
 class PeerSelectionMode(str, Enum):
     USER_SUPPLIED = "user_supplied"
+    # Future scope: accepted by the contract, not implemented in this PRD slice.
     AUTO = "auto"
 
 

@@ -54,6 +54,7 @@ _Avoid_: Soft error, notice
 
 **Ticker**:
 The canonical exchange symbol used to identify a company for market and fundamental data lookups.
+For Alpha Vantage `SYMBOL_SEARCH` validation, a candidate is a supported company Ticker only when an exact symbol match has `3. type` equal to `Equity`; ETF, Mutual Fund, or other instrument-type matches are not valid Comps company Tickers.
 _Avoid_: Stock symbol when naming domain entities
 
 **Target Ticker**:

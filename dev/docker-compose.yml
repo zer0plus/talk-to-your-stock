@@ -45,6 +45,7 @@ services:
       GOOGLE_ADK_APP_NAME: ${GOOGLE_ADK_APP_NAME:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       COMPS_SERVICE_URL: ${COMPS_SERVICE_URL:-http://comps-service:8002}
+      COMPS_SERVICE_INTERNAL_TOKEN: ${COMPS_SERVICE_INTERNAL_TOKEN:-}
     ports:
       - "8001:8001"
     depends_on:
@@ -60,6 +61,7 @@ services:
       TALK_TO_YOUR_STOCK_ENV: ${TALK_TO_YOUR_STOCK_ENV}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/talk_to_your_stock
       ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      COMPS_SERVICE_INTERNAL_TOKEN: ${COMPS_SERVICE_INTERNAL_TOKEN:-}
     ports:
       - "8002:8002"
     depends_on:

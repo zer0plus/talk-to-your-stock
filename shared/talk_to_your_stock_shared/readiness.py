@@ -152,11 +152,15 @@ def _required_config_names(
     elif service == ServiceName.AGENT_SERVICE:
         if environment == PRODUCTION_ENVIRONMENT:
             required.extend(
-                ["GOOGLE_ADK_APP_NAME", "GOOGLE_API_KEY", "COMPS_SERVICE_URL"]
+                [
+                    "GOOGLE_ADK_APP_NAME",
+                    "GOOGLE_API_KEY",
+                    "COMPS_SERVICE_URL",
+                    "COMPS_SERVICE_INTERNAL_TOKEN",
+                ]
             )
     elif service == ServiceName.COMPS_SERVICE:
-        if environment == PRODUCTION_ENVIRONMENT:
-            required.extend(["ALPHA_VANTAGE_API_KEY"])
+        required.extend(["ALPHA_VANTAGE_API_KEY", "COMPS_SERVICE_INTERNAL_TOKEN"])
 
     return required
 

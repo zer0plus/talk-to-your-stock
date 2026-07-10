@@ -58,6 +58,7 @@ flowchart LR
 Notes:
 
 * `Comps Service` owns the domain capability and its execution mode. The Agent calls the `generate_comps_table` tool contract and does not enqueue jobs or depend on worker mechanics.
+* Future deployment work should keep `Comps Service` internal-only at the network/ingress layer so public traffic cannot reach its internal tool routes. Route-level internal bearer auth is still required as a defense if network exposure is misconfigured.
 * MVP CSV/XLSX exports are owned by `Comps Service` because they are direct representations of comps table results.
 * Implementation should keep exports in an internal `exports/` module so the boundary can become a standalone service later if exports become async, template-heavy, multi-artifact, or independently scalable.
 * MVP source snapshots are stored in PostgreSQL JSONB as separate run-bound records, not in object storage. They remain conceptually and schematically separate from the reusable Fundamental Cache.
