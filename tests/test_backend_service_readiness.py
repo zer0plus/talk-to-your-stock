@@ -151,6 +151,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertIn("GOOGLE_ADK_APP_NAME", message)
         self.assertIn("GOOGLE_API_KEY", message)
         self.assertIn("COMPS_SERVICE_URL", message)
+        self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
 
     def test_production_agent_readiness_accepts_required_configuration(self) -> None:
         env = {
@@ -159,6 +160,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
             "GOOGLE_ADK_APP_NAME": "talk-to-your-stock",
             "GOOGLE_API_KEY": "test-key",
             "COMPS_SERVICE_URL": "http://comps-service:8002",
+            "COMPS_SERVICE_INTERNAL_TOKEN": "test-comps-token",
         }
 
         with database_connects():
