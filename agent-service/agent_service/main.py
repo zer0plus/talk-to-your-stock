@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import FastAPI, Response
 
 from talk_to_your_stock_shared import (
+    AgentMessageRequest,
+    AgentMessageResponse,
     HealthResponse,
     ReadinessResponse,
     ServiceName,
@@ -45,3 +47,18 @@ def ready(response: Response) -> ReadinessResponse:
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
+
+
+@app.post(
+    "/v1/internal/agent/respond",
+    response_model=AgentMessageResponse,
+    tags=["Internal"],
+)
+def respond_to_message(_request: AgentMessageRequest) -> AgentMessageResponse:
+    return AgentMessageResponse(
+        content=(
+            "The Agent Service received the Message, "
+            "but Agent routing is not implemented yet."
+        ),
+        run=None,
+    )

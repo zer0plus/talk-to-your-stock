@@ -410,6 +410,30 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /v1/internal/agent/respond:
+    post:
+      tags: [Internal]
+      summary: Internal Agent response call for a persisted user message
+      description: Internal-only endpoint used by the Web BFF after persisting a User Message.
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentMessageRequest'
+      responses:
+        '200':
+          description: Assistant response payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessageResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -904,6 +928,35 @@ components:
           type: array
           items:
             type: string
+
+    AgentMessageRequest:
+      type: object
+      required: [user_id, thread_id, user_message_id, content]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        thread_id:
+          type: string
+          format: uuid
+        user_message_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          minLength: 1
+
+    AgentMessageResponse:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+        run:
+          oneOf:
+            - $ref: '#/components/schemas/Run'
+            - type: 'null'
 
     Readiness:
       type: object
