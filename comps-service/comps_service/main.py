@@ -190,14 +190,22 @@ def _internal_tool_auth_error(authorization: str | None) -> JSONResponse | None:
             details={"missing_configuration": [COMPS_SERVICE_INTERNAL_TOKEN_VAR]},
         )
 
-    try:
-        actual = (authorization or "").encode("ascii")
-        expected = f"Bearer {token}".encode("ascii")
-    except UnicodeEncodeError:
-        actual = b""
-        expected = b"\x00"
+    parts = (authorization or "").split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return _error_response(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code=ErrorCode.UNAUTHORIZED,
+            message="Unauthorized internal tool call.",
+        )
 
-    if not hmac.compare_digest(actual, expected):
+    try:
+        actual_token = parts[1].encode("ascii")
+        expected_token = token.encode("ascii")
+    except UnicodeEncodeError:
+        actual_token = b""
+        expected_token = b"\x00"
+
+    if not hmac.compare_digest(actual_token, expected_token):
         return _error_response(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code=ErrorCode.UNAUTHORIZED,

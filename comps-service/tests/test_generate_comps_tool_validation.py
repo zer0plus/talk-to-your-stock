@@ -89,6 +89,37 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["error"]["code"], "UNAUTHORIZED")
 
+    def test_generate_comps_table_accepts_case_insensitive_bearer_scheme(self) -> None:
+        ticker_validator = Mock()
+        ticker_validator.is_supported.return_value = True
+
+        with (
+            patch.dict(
+                os.environ,
+                self._env_with_internal_auth(),
+                clear=True,
+            ),
+            patch(
+                "comps_service.tool_validation.AlphaVantageTickerValidator",
+                return_value=ticker_validator,
+            ),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+                headers={"Authorization": f"bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 501)
+
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
         response = Mock()
