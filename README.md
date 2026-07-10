@@ -117,7 +117,3 @@ docker compose -f dev/docker-compose.yml up --build -d
 
 See `dev/README.md` for the readiness contract and required local/production
 environment configuration.
-
-## Design Decisions
-
-TBD
