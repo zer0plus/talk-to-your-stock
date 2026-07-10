@@ -16,15 +16,21 @@ cp dev/.env.example dev/.env
 ```
 
 2. Keep `TALK_TO_YOUR_STOCK_ENV=local` and set an explicit dev-auth identity in
-   `dev/.env`. The example identity is intentionally local-only.
+   `dev/.env`. The example identity and `COMPS_SERVICE_INTERNAL_TOKEN` are
+   intentionally local-only.
 
-3. Start the services:
+3. Set `ALPHA_VANTAGE_API_KEY` in `dev/.env`. Comps Service readiness requires
+   a real provider key because the current tool validation path uses Alpha
+   Vantage. `TEST_ALPHA_VANTAGE_API_KEY` is only used when
+   `RUN_LIVE_ALPHA_VANTAGE_TESTS=1` for opt-in live tests.
+
+4. Start the services:
 
 ```bash
 docker compose -f dev/docker-compose.yml up --build -d
 ```
 
-4. Check readiness:
+5. Check readiness:
 
 ```bash
 curl -i http://localhost:8000/v1/ready
