@@ -57,8 +57,8 @@ def ready(response: Response) -> ReadinessResponse:
 def respond_to_message(_request: AgentMessageRequest) -> AgentMessageResponse:
     return AgentMessageResponse(
         content=(
-            "The Agent Service received the Message, "
-            "but Agent routing is not implemented yet."
+            "AgentService: Message received"
+            "AgentService: routing WIP"
         ),
         run=None,
     )
