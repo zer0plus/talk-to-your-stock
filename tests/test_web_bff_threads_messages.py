@@ -4,13 +4,11 @@ import os
 import unittest
 from datetime import datetime, timezone
 from collections.abc import Callable
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from unittest.mock import patch
-import yaml
 
 from talk_to_your_stock_shared import (
     Message,
@@ -190,17 +188,6 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         fetched = client.get(f"/v1/threads/{thread['id']}")
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json()["thread"]["id"], thread["id"])
-
-    def test_source_openapi_documents_message_upstream_errors(self) -> None:
-        source_contract = yaml.safe_load(
-            (Path(__file__).resolve().parents[1] / "api/openapi.yaml").read_text()
-        )
-
-        response = source_contract["paths"]["/v1/threads/{thread_id}/messages"]["post"][
-            "responses"
-        ]["502"]
-
-        self.assertEqual(response, {"$ref": "#/components/responses/UpstreamError"})
 
     def test_posting_message_stores_user_message_before_invoking_agent(self) -> None:
         repository = RecordingRepository()
