@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import os
+import socket
+import threading
+import time
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import httpx
+import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -32,9 +38,9 @@ class BackendServiceReadinessTest(unittest.TestCase):
             request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
             json={"status": "ready"},
         )
-        agent_get_patcher = patch("httpx.get", return_value=agent_response)
-        agent_get_patcher.start()
-        self.addCleanup(agent_get_patcher.stop)
+        self.agent_get_patcher = patch("httpx.get", return_value=agent_response)
+        self.agent_get_patcher.start()
+        self.addCleanup(self.agent_get_patcher.stop)
 
     def test_readiness_openapi_documents_503_response(self) -> None:
         for service_name, app in (
@@ -68,6 +74,19 @@ class BackendServiceReadinessTest(unittest.TestCase):
             self.assertEqual(body["status"], "ready")
             self.assertEqual(body["checks"]["configuration"]["status"], "ok")
             self.assertEqual(body["checks"]["database"]["status"], "ok")
+
+    def test_web_bff_checks_agent_readiness_through_real_http_boundary(self) -> None:
+        self.agent_get_patcher.stop()
+
+        with running_service(agent_app) as agent_service_url:
+            env = {**LOCAL_ENV, "AGENT_SERVICE_URL": agent_service_url}
+            with patch.dict(os.environ, env, clear=True), database_connects():
+                response = TestClient(web_bff_app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "ok")
 
     def test_database_failure_makes_readiness_not_ready(self) -> None:
         with (
@@ -219,6 +238,39 @@ class BackendServiceReadinessTest(unittest.TestCase):
     def _get_ready(self, app: FastAPI, env: dict[str, str]):
         with patch.dict(os.environ, env, clear=True):
             return TestClient(app).get("/v1/ready")
+
+
+@contextmanager
+def running_service(app: FastAPI) -> Iterator[str]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(
+        uvicorn.Config(app, log_level="critical", access_log=False, ws="none")
+    )
+    thread = threading.Thread(
+        target=server.run,
+        kwargs={"sockets": [sock]},
+        daemon=True,
+    )
+    thread.start()
+
+    deadline = time.monotonic() + 5
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not server.started:
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()
+        raise RuntimeError("Test service failed to start.")
+
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()
 
 
 if __name__ == "__main__":
