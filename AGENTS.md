@@ -65,3 +65,21 @@ Use short Codex sessions and durable artifacts:
 8. Use a fresh `review` session against both repo standards and the originating PRD/issue.
 
 Do not create implementation issues during `grill-with-docs`; use that session to resolve domain language, decisions, and planning shape, then hand off to `to-prd` / `to-issues` for tracker artifacts.
+
+## Pre-PR Contract Audit
+
+Before opening or marking a PR ready, audit every new or changed contract exposed by the PR. In this repo, contracts include:
+
+* OpenAPI paths, request fields, response fields, status codes, and error shapes.
+* Web BFF, Agent Service, and Comps Service HTTP calls.
+* Returned URLs such as events, exports, table, or trace links.
+* Environment variables, readiness checks, and production/local auth behavior.
+* Persisted table fields, Message/Run linkage, and service-owned storage boundaries.
+
+For each contract, one of these must be true:
+
+* It is implemented and covered by a boundary-level test through the real public/service interface.
+* It is intentionally disabled or returned as `null` until the owning route/capability exists.
+* It is not exposed yet.
+
+Do not expose future behavior. If an endpoint does not exist, do not return its URL. If a request field is not honored, do not accept it. If production auth, provider, ADK, database, or service behavior is not implemented, readiness must fail clearly rather than report ready. If the Web BFF calls the Agent Service or Comps Service, the target route must exist and be tested at least once without mocking that service boundary.
