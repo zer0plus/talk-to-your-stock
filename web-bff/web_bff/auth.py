@@ -41,9 +41,14 @@ def _dev_user(environ: Mapping[str, str]) -> User:
     if not user_id or not email:
         raise AuthenticationError("DEV_AUTH_USER_ID and DEV_AUTH_EMAIL are required.")
 
+    try:
+        parsed_user_id = UUID(user_id)
+    except ValueError as exc:
+        raise AuthenticationError("DEV_AUTH_USER_ID must be a valid UUID.") from exc
+
     now = utc_now()
     return User(
-        id=UUID(user_id),
+        id=parsed_user_id,
         email=email,
         created_at=now,
         updated_at=now,

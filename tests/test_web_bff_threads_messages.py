@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from datetime import datetime, timezone
+from collections.abc import Callable
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -42,10 +43,12 @@ class ControlledAgent:
         *,
         repository: RecordingRepository,
         response: ControlledAgentResponse | None = None,
+        response_factory: Callable[[Message], ControlledAgentResponse] | None = None,
         error: Exception | None = None,
     ) -> None:
         self._repository = repository
         self._response = response or ControlledAgentResponse(content="Assistant reply.")
+        self._response_factory = response_factory
         self._error = error
         self.invocations: list[dict[str, object]] = []
 
@@ -69,6 +72,8 @@ class ControlledAgent:
             raise AssertionError("User Message was not persisted before Agent call.")
         if self._error is not None:
             raise self._error
+        if self._response_factory is not None:
+            return self._response_factory(user_message)
         return self._response
 
 
@@ -207,19 +212,24 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
     def test_agent_run_response_links_assistant_message_to_run(self) -> None:
         repository = RecordingRepository()
-        agent = ControlledAgent(repository=repository)
+        created_thread_id: UUID | None = None
+
+        def agent_response(user_message: Message) -> ControlledAgentResponse:
+            assert created_thread_id is not None
+            return ControlledAgentResponse(
+                content="Table-backed response.",
+                run=_run(
+                    thread_id=created_thread_id,
+                    trigger_message_id=user_message.id,
+                ),
+            )
+
+        agent = ControlledAgent(repository=repository, response_factory=agent_response)
         client = self._client(repository=repository, agent=agent)
         created_thread = client.post("/v1/threads", json={"title": "Comps"}).json()[
             "thread"
         ]
-        run = _run(
-            thread_id=UUID(created_thread["id"]),
-            trigger_message_id=uuid4(),
-        )
-        agent._response = ControlledAgentResponse(
-            content="Table-backed response.",
-            run=run,
-        )
+        created_thread_id = UUID(created_thread["id"])
 
         response = client.post(
             f"/v1/threads/{created_thread['id']}/messages",
@@ -228,11 +238,36 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
         body = response.json()
-        self.assertEqual(body["run"]["id"], str(run.id))
-        self.assertEqual(body["assistant_message"]["run_id"], str(run.id))
+        self.assertEqual(body["run"]["trigger_message_id"], body["user_message"]["id"])
+        self.assertEqual(body["assistant_message"]["run_id"], body["run"]["id"])
+        self.assertEqual(body["events_url"], None)
 
         fetched = client.get(f"/v1/threads/{created_thread['id']}")
-        self.assertEqual(fetched.json()["thread"]["latest_run_id"], str(run.id))
+        self.assertEqual(fetched.json()["thread"]["latest_run_id"], body["run"]["id"])
+
+    def test_agent_run_must_belong_to_current_thread_and_user_message(self) -> None:
+        repository = RecordingRepository()
+        agent = ControlledAgent(
+            repository=repository,
+            response=ControlledAgentResponse(
+                content="Mismatched run.",
+                run=_run(thread_id=uuid4(), trigger_message_id=uuid4()),
+            ),
+        )
+        client = self._client(repository=repository, agent=agent)
+        thread_id = client.post("/v1/threads", json={"title": "Comps"}).json()["thread"][
+            "id"
+        ]
+
+        response = client.post(
+            f"/v1/threads/{thread_id}/messages",
+            json={"content": "Compare AAPL with MSFT"},
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
+        self.assertIn("invalid Run linkage", response.json()["error"]["message"])
+        self.assertEqual([message.role for message in repository.messages], [MessageRole.USER])
 
     def test_agent_unavailable_returns_clear_error_after_user_message_is_saved(
         self,
@@ -257,17 +292,65 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertIn("Agent Service unavailable", response.json()["error"]["message"])
         self.assertEqual([message.role for message in repository.messages], [MessageRole.USER])
 
+    def test_missing_agent_configuration_returns_upstream_error(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(
+            repository=repository,
+            override_agent=False,
+            env={key: value for key, value in LOCAL_ENV.items() if key != "AGENT_SERVICE_URL"},
+        )
+        thread_id = client.post("/v1/threads", json={"title": "Comps"}).json()["thread"]["id"]
+
+        response = client.post(
+            f"/v1/threads/{thread_id}/messages",
+            json={"content": "Compare AAPL with MSFT"},
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
+        self.assertIn("AGENT_SERVICE_URL", response.json()["error"]["message"])
+
+    def test_request_validation_errors_use_error_response_shape(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+
+        response = client.post("/v1/threads", json={"title": ""})
+
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "VALIDATION_ERROR")
+        self.assertIn("details", body["error"])
+
+    def test_client_message_id_is_not_accepted_without_idempotency(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        thread_id = client.post("/v1/threads", json={"title": "Comps"}).json()["thread"]["id"]
+
+        response = client.post(
+            f"/v1/threads/{thread_id}/messages",
+            json={
+                "content": "Compare AAPL with MSFT",
+                "client_message_id": "retry-key",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+
     def _client(
         self,
         *,
         repository: RecordingRepository,
         agent: ControlledAgent | None = None,
+        override_agent: bool = True,
+        env: dict[str, str] | None = None,
     ) -> TestClient:
         app.dependency_overrides[get_repository] = lambda: repository
-        app.dependency_overrides[get_agent_client] = lambda: agent or ControlledAgent(
-            repository=repository
-        )
-        env_patcher = patch.dict(os.environ, LOCAL_ENV, clear=True)
+        if override_agent:
+            app.dependency_overrides[get_agent_client] = lambda: agent or ControlledAgent(
+                repository=repository
+            )
+        env_patcher = patch.dict(os.environ, env or LOCAL_ENV, clear=True)
         env_patcher.start()
         self.addCleanup(env_patcher.stop)
         return TestClient(app)

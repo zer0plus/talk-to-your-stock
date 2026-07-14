@@ -4,6 +4,8 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, Path, Query, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from talk_to_your_stock_shared import (
@@ -61,6 +63,41 @@ def handle_api_exception(_request, exc: ApiException) -> JSONResponse:
     )
 
 
+@app.exception_handler(AgentServiceUnavailable)
+def handle_agent_service_unavailable(
+    _request,
+    exc: AgentServiceUnavailable,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content=ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.UPSTREAM_ERROR,
+                message=str(exc),
+            )
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+def validation_exception_handler(
+    _request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    first_error = exc.errors()[0] if exc.errors() else {}
+    message = str(first_error.get("msg", "Request validation failed."))
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content=ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.VALIDATION_ERROR,
+                message=message,
+                details=_validation_error_details(exc),
+            )
+        ).model_dump(mode="json"),
+    )
+
+
 @app.get("/v1/health", response_model=HealthResponse, tags=["Health"])
 def health() -> HealthResponse:
     return HealthResponse(
@@ -114,7 +151,12 @@ def me(
     return {"user": repository.upsert_user(current_user)}
 
 
-@app.get("/v1/threads", response_model=ThreadListResponse, tags=["Threads"])
+@app.get(
+    "/v1/threads",
+    response_model=ThreadListResponse,
+    responses={400: {"model": ErrorResponse}},
+    tags=["Threads"],
+)
 def list_threads(
     repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
     current_user: Annotated[User, Depends(get_current_user)],
@@ -134,6 +176,7 @@ def list_threads(
     "/v1/threads",
     response_model=ThreadResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={400: {"model": ErrorResponse}},
     tags=["Threads"],
 )
 def create_thread(
@@ -149,6 +192,7 @@ def create_thread(
 @app.get(
     "/v1/threads/{thread_id}",
     response_model=ThreadResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
     tags=["Threads"],
 )
 def get_thread(
@@ -170,6 +214,7 @@ def get_thread(
 @app.get(
     "/v1/threads/{thread_id}/messages",
     response_model=MessageListResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
     tags=["Messages"],
 )
 def list_messages(
@@ -199,6 +244,11 @@ def list_messages(
     "/v1/threads/{thread_id}/messages",
     response_model=CreateMessageResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+    },
     tags=["Messages"],
 )
 def create_message(
@@ -237,6 +287,15 @@ def create_message(
         ) from exc
 
     run = agent_response.run
+    if run is not None and (
+        run.thread_id != thread.id or run.trigger_message_id != user_message.id
+    ):
+        raise ApiException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code=ErrorCode.UPSTREAM_ERROR,
+            message="Agent Service returned invalid Run linkage.",
+        )
+
     assistant_message = repository.create_message(
         thread_id=thread.id,
         role=MessageRole.ASSISTANT,
@@ -244,10 +303,42 @@ def create_message(
         status=MessageStatus.COMPLETE,
         run_id=run.id if run is not None else None,
     )
-    events_url = f"/v1/threads/{thread.id}/events" if run is not None else None
     return CreateMessageResponse(
         user_message=user_message,
         assistant_message=assistant_message,
         run=run,
-        events_url=events_url,
+        events_url=None,
     )
+
+
+def _validation_error_details(exc: RequestValidationError) -> dict[str, object]:
+    errors: list[dict[str, object]] = []
+    for error in exc.errors():
+        errors.append(
+            {
+                "location": list(error.get("loc", ())),
+                "message": str(error.get("msg", "Request validation failed.")),
+                "type": str(error.get("type", "value_error")),
+            }
+        )
+    return {"errors": errors}
+
+
+def _custom_openapi() -> dict[str, object]:
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version="0.1.0",
+        routes=app.routes,
+    )
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if isinstance(operation, dict):
+                operation.get("responses", {}).pop("422", None)
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi

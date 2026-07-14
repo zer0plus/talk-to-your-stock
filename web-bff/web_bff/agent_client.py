@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from json import JSONDecodeError
 
 import httpx
+from pydantic import ValidationError
 
 from talk_to_your_stock_shared import (
     AgentMessageRequest,
@@ -61,4 +63,9 @@ class HttpAgentClient:
         except httpx.HTTPError as exc:
             raise AgentServiceUnavailable("Agent Service unavailable.") from exc
 
-        return AgentMessageResponse.model_validate(response.json())
+        try:
+            return AgentMessageResponse.model_validate(response.json())
+        except (JSONDecodeError, ValidationError, ValueError) as exc:
+            raise AgentServiceUnavailable(
+                "Agent Service returned an invalid response."
+            ) from exc

@@ -99,7 +99,6 @@ class ThreadListResponse(ContractModel):
 
 class CreateMessageRequest(ContractModel):
     content: str = Field(min_length=1, max_length=5000)
-    client_message_id: str | None = Field(default=None, max_length=64)
 
 
 class Message(ContractModel):

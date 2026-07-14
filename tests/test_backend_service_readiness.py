@@ -94,7 +94,11 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         body = response.json()
         self.assertEqual(body["status"], "not_ready")
-        self.assertEqual(body["checks"]["configuration"]["status"], "ok")
+        self.assertEqual(body["checks"]["configuration"]["status"], "fail")
+        self.assertIn(
+            "JWT verification is not implemented",
+            body["checks"]["configuration"]["message"],
+        )
         self.assertEqual(body["checks"]["database"]["status"], "fail")
         self.assertEqual(
             body["checks"]["database"]["message"],

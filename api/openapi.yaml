@@ -201,9 +201,6 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 5000
-                client_message_id:
-                  type: [string, 'null']
-                  maxLength: 64
       responses:
         '201':
           description: Message accepted

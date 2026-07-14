@@ -5,6 +5,7 @@ import os
 from collections.abc import Mapping
 from typing import Callable
 from urllib.parse import urlparse
+from uuid import UUID
 
 from talk_to_your_stock_shared.enums import (
     DependencyStatus,
@@ -85,6 +86,21 @@ def check_configuration(
         return ReadinessCheck(
             status=DependencyStatus.FAIL,
             message="DEV_AUTH_* configuration is not allowed in production mode.",
+        )
+
+    if service == ServiceName.WEB_BFF and environment in LOCAL_ENVIRONMENTS:
+        try:
+            UUID(environ["DEV_AUTH_USER_ID"].strip())
+        except ValueError:
+            return ReadinessCheck(
+                status=DependencyStatus.FAIL,
+                message="DEV_AUTH_USER_ID must be a valid UUID.",
+            )
+
+    if service == ServiceName.WEB_BFF and environment == PRODUCTION_ENVIRONMENT:
+        return ReadinessCheck(
+            status=DependencyStatus.FAIL,
+            message="Managed JWT verification is not implemented.",
         )
 
     return ReadinessCheck(status=DependencyStatus.OK)

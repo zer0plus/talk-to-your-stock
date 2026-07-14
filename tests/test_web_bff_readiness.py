@@ -80,6 +80,48 @@ class WebBffReadinessTest(unittest.TestCase):
         self.assertEqual(body["checks"]["configuration"]["status"], "fail")
         self.assertIn("DEV_AUTH_*", body["checks"]["configuration"]["message"])
 
+    def test_production_readiness_fails_until_jwt_verification_exists(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "production",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "MANAGED_AUTH_JWKS_URL": "https://auth.example.com/.well-known/jwks.json",
+            "MANAGED_AUTH_ISSUER": "https://auth.example.com",
+            "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["configuration"]["status"], "fail")
+        self.assertIn("JWT verification is not implemented", body["checks"]["configuration"]["message"])
+
+    def test_local_readiness_rejects_invalid_dev_auth_user_id(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "dev-user",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["checks"]["configuration"]["status"], "fail")
+        self.assertIn("DEV_AUTH_USER_ID must be a valid UUID", body["checks"]["configuration"]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
