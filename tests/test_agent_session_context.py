@@ -12,6 +12,23 @@ from agent_service.session_context import AdkSessionContext
 
 
 class AgentSessionContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_readiness_does_not_prepare_database_session_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "agent-session-context.sqlite3"
+            context = AdkSessionContext.from_database_url(
+                app_name="talk-to-your-stock",
+                database_url=f"sqlite+aiosqlite:///{database_path}",
+            )
+
+            readiness = await context.readiness_check()
+
+            self.assertEqual(readiness.status.value, "fail")
+            self.assertFalse(database_path.exists())
+
+            await context.prepare()
+            self.assertTrue(database_path.exists())
+            await context.close()
+
     async def test_tool_invocation_and_result_survive_context_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_url = (
@@ -25,6 +42,7 @@ class AgentSessionContextTest(unittest.IsolatedAsyncioTestCase):
                 app_name="talk-to-your-stock",
                 database_url=database_url,
             )
+            await first_context.prepare()
 
             await first_context.record_event(
                 user_id=user_id,
@@ -66,6 +84,7 @@ class AgentSessionContextTest(unittest.IsolatedAsyncioTestCase):
                 app_name="talk-to-your-stock",
                 database_url=database_url,
             )
+            await reloaded_context.prepare()
             session = await reloaded_context.get_session(
                 user_id=user_id,
                 thread_id=thread_id,

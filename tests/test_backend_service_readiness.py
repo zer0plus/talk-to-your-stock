@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import socket
+import tempfile
 import threading
 import time
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -135,6 +137,37 @@ class BackendServiceReadinessTest(unittest.TestCase):
             "Agent session readiness check failed.",
         )
 
+    def test_agent_startup_prepares_database_session_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "agent-session-context.sqlite3"
+            session_context = AdkSessionContext.from_database_url(
+                app_name="talk-to-your-stock",
+                database_url=f"sqlite+aiosqlite:///{database_path}",
+            )
+            agent_app.dependency_overrides[get_session_context] = (
+                lambda: session_context
+            )
+
+            self.assertFalse(database_path.exists())
+            with TestClient(agent_app):
+                self.assertTrue(database_path.exists())
+
+    def test_missing_database_configuration_makes_agent_readiness_not_ready(
+        self,
+    ) -> None:
+        agent_app.dependency_overrides.clear()
+        get_session_context.cache_clear()
+
+        response = self._get_ready(
+            agent_app,
+            {"TALK_TO_YOUR_STOCK_ENV": "local"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_session"]["status"], "fail")
+
     def test_production_database_failure_uses_sanitized_readiness_message(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
@@ -219,7 +252,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertIn("COMPS_SERVICE_URL", message)
         self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
 
-    def test_production_agent_readiness_accepts_required_configuration(self) -> None:
+    def test_production_agent_readiness_fails_until_real_routing_exists(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
             "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
@@ -232,11 +265,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
         with database_connects():
             response = self._get_ready(agent_app, env)
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 503)
         body = response.json()
-        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["status"], "not_ready")
         self.assertEqual(body["checks"]["configuration"]["status"], "ok")
         self.assertEqual(body["checks"]["database"]["status"], "ok")
+        self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
 
     def test_production_comps_readiness_requires_provider_configuration(self) -> None:
         env = {

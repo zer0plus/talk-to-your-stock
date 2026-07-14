@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Annotated
 
@@ -13,6 +15,7 @@ from fastapi.responses import JSONResponse
 from talk_to_your_stock_shared import (
     AgentMessageRequest,
     AgentMessageResponse,
+    DependencyStatus,
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
@@ -20,6 +23,7 @@ from talk_to_your_stock_shared import (
     ReadinessResponse,
     ServiceName,
     ServiceStatus,
+    ReadinessCheck,
 )
 from talk_to_your_stock_shared.readiness import (
     ENVIRONMENT_VAR,
@@ -33,17 +37,40 @@ from agent_service.session_context import AdkSessionContext, AgentSessionUnavail
 
 logger = logging.getLogger(__name__)
 
+@lru_cache(maxsize=1)
+def get_session_context() -> AdkSessionContext:
+    try:
+        return AdkSessionContext.from_env()
+    except AgentSessionUnavailable as exc:
+        return AdkSessionContext.unavailable(str(exc))
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    factory = application.dependency_overrides.get(
+        get_session_context,
+        get_session_context,
+    )
+    session_context = factory()
+    try:
+        await session_context.prepare()
+    except AgentSessionUnavailable:
+        logger.exception("Agent session startup preparation failed.")
+    try:
+        yield
+    finally:
+        await session_context.close()
+        if factory is get_session_context:
+            get_session_context.cache_clear()
+
+
 app = FastAPI(
     title="TalkToYourStock Agent Service",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
-
-
-@lru_cache(maxsize=1)
-def get_session_context() -> AdkSessionContext:
-    return AdkSessionContext.from_env()
 
 
 @app.exception_handler(RequestValidationError)
@@ -88,10 +115,22 @@ async def ready(
     readiness = build_readiness_response(
         service=ServiceName.AGENT_SERVICE,
         database_checker=check_database,
-        additional_checks={"agent_session": agent_session_check},
+        additional_checks={
+            "agent_session": agent_session_check,
+            "agent_routing": _agent_routing_readiness_check(),
+        },
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
+
+
+def _agent_routing_readiness_check() -> ReadinessCheck:
+    if os.environ.get(ENVIRONMENT_VAR, "").strip().lower() == PRODUCTION_ENVIRONMENT:
+        return ReadinessCheck(
+            status=DependencyStatus.FAIL,
+            message="Production Agent routing is not implemented.",
+        )
+    return ReadinessCheck(status=DependencyStatus.OK)
 
 
 @app.post(

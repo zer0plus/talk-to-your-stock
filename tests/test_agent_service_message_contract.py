@@ -23,6 +23,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         app.dependency_overrides.clear()
+        get_session_context.cache_clear()
 
     def test_agent_service_resumes_complete_thread_message_history(self) -> None:
         user_id = uuid4()
@@ -101,6 +102,26 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
         self.assertEqual(body["error"]["message"], "Agent session unavailable.")
+
+    def test_missing_database_configuration_returns_upstream_error(self) -> None:
+        app.dependency_overrides.clear()
+        get_session_context.cache_clear()
+
+        with patch.dict(os.environ, {}, clear=True):
+            response = TestClient(app).post(
+                "/v1/internal/agent/respond",
+                json={
+                    "user_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "user_message_id": str(uuid4()),
+                    "content": "Compare AAPL with MSFT",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
+        self.assertEqual(body["error"]["message"], "DATABASE_URL is required.")
 
     def test_agent_service_production_route_fails_until_real_routing_exists(self) -> None:
         with patch.dict(os.environ, {"TALK_TO_YOUR_STOCK_ENV": "production"}, clear=True):

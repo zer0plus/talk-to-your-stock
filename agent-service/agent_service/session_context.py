@@ -28,12 +28,23 @@ class AdkSessionContext:
         self,
         *,
         app_name: str,
-        session_service: BaseSessionService,
+        session_service: BaseSessionService | None,
+        unavailable_message: str | None = None,
     ) -> None:
         if not app_name.strip():
             raise AgentSessionUnavailable(f"{GOOGLE_ADK_APP_NAME_VAR} is required.")
         self._app_name = app_name
         self._session_service = session_service
+        self._unavailable_message = unavailable_message
+        self._prepared = not isinstance(session_service, DatabaseSessionService)
+
+    @classmethod
+    def unavailable(cls, message: str) -> AdkSessionContext:
+        return cls(
+            app_name=LOCAL_ADK_APP_NAME,
+            session_service=None,
+            unavailable_message=message,
+        )
 
     @classmethod
     def from_env(
@@ -68,8 +79,9 @@ class AdkSessionContext:
         user_id: UUID,
         thread_id: UUID,
     ) -> Session | None:
+        session_service = self._require_prepared_service()
         try:
-            return await self._session_service.get_session(
+            return await session_service.get_session(
                 app_name=self._app_name,
                 user_id=str(user_id),
                 session_id=str(thread_id),
@@ -77,9 +89,20 @@ class AdkSessionContext:
         except Exception as exc:
             raise AgentSessionUnavailable("Agent session unavailable.") from exc
 
+    async def prepare(self) -> None:
+        session_service = self._require_service()
+        prepare_tables = getattr(session_service, "prepare_tables", None)
+        if prepare_tables is not None:
+            try:
+                await prepare_tables()
+            except Exception as exc:
+                raise AgentSessionUnavailable("Agent session unavailable.") from exc
+        self._prepared = True
+
     async def readiness_check(self) -> ReadinessCheck:
         try:
-            await self._session_service.get_session(
+            session_service = self._require_prepared_service()
+            await session_service.get_session(
                 app_name=self._app_name,
                 user_id="readiness",
                 session_id="readiness",
@@ -168,7 +191,8 @@ class AdkSessionContext:
         if session is not None:
             return session
         try:
-            return await self._session_service.create_session(
+            session_service = self._require_prepared_service()
+            return await session_service.create_session(
                 app_name=self._app_name,
                 user_id=str(user_id),
                 session_id=str(thread_id),
@@ -180,10 +204,24 @@ class AdkSessionContext:
             raise AgentSessionUnavailable("Agent session unavailable.") from exc
 
     async def _append_event(self, session: Session, event: Event) -> None:
+        session_service = self._require_prepared_service()
         try:
-            await self._session_service.append_event(session, event)
+            await session_service.append_event(session, event)
         except Exception as exc:
             raise AgentSessionUnavailable("Agent session unavailable.") from exc
+
+    def _require_service(self) -> BaseSessionService:
+        if self._session_service is None:
+            raise AgentSessionUnavailable(
+                self._unavailable_message or "Agent session unavailable."
+            )
+        return self._session_service
+
+    def _require_prepared_service(self) -> BaseSessionService:
+        session_service = self._require_service()
+        if not self._prepared:
+            raise AgentSessionUnavailable("Agent session has not been prepared.")
+        return session_service
 
 
 def _adk_database_url(database_url: str) -> str:

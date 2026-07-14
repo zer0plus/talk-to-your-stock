@@ -8,8 +8,8 @@ The Web BFF and Google ADK persist different views of a Thread:
   thread_id)` for the complete semantic Agent context. ADK session events
   include User and Assistant content, Tool invocations, and Tool results.
 - ADK's `DatabaseSessionService` owns its session/event tables in the shared
-  PostgreSQL database and prepares that schema through the Agent readiness
-  check.
+  PostgreSQL database. The Agent Service prepares that schema during application
+  startup; readiness and Message requests never prepare database objects.
 - The application database does not duplicate ADK logs, spans, hidden
   reasoning, or other observability-only events.
 - No fixed Message-count truncation is applied. Any future context compaction
@@ -35,19 +35,24 @@ sequenceDiagram
     BFF->>Agent: user_id, thread_id, message_id, content
     Agent->>Session: Load or create session for User + Thread
     Agent->>Session: Append User Message
-    Agent->>Tool: Invoke with AAPL and NVDA
-    Tool-->>Agent: Tool result
-    Agent->>Session: Store invocation and result
-    Agent->>Session: Store Assistant response
-    Agent-->>BFF: Assistant response + optional Run
+    rect rgb(245, 245, 245)
+        Note over Agent,Tool: Future ADK Runner flow; not implemented by issue #18
+        Agent->>Tool: Invoke with AAPL and NVDA
+        Tool-->>Agent: Tool result
+        Agent->>Session: Store invocation and result
+        Agent->>Session: Store Assistant response
+        Agent-->>BFF: Assistant response + optional Run
+    end
     BFF->>ProductDB: Persist Assistant Message
 
     User->>BFF: "Now compare it to MSFT"
     BFF->>ProductDB: Persist User Message
     BFF->>Agent: Same user_id + thread_id, new Message
     Agent->>Session: Load complete prior event history
-    Note over Agent,Session: Includes AAPL, NVDA,<br/>Tool invocation, and Tool result
-    Agent-->>BFF: Context-aware response
+    rect rgb(245, 245, 245)
+        Note over Agent,Session: Future Runner receives AAPL, NVDA,<br/>Tool invocation, and Tool result
+        Agent-->>BFF: Context-aware response
+    end
 ```
 
 ## Ownership Rules
