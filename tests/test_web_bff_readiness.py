@@ -11,6 +11,76 @@ from web_bff.main import app
 
 
 class WebBffReadinessTest(unittest.TestCase):
+    def test_readiness_fails_when_migration_configuration_is_invalid(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "web_bff.readiness.required_schema_revision",
+                side_effect=RuntimeError("multiple migration heads"),
+            ),
+            self.assertLogs("web_bff.readiness", level="ERROR"),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["database"]["message"],
+            "Web BFF migration configuration is invalid.",
+        )
+
+    def test_readiness_fails_when_database_schema_revision_is_stale(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(schema_revision="obsolete_revision"),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertIn("required revision", body["checks"]["database"]["message"])
+
+    def test_readiness_fails_when_database_schema_is_not_migrated(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(schema_revision=None),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertIn("migration", body["checks"]["database"]["message"].lower())
+
     def test_local_readiness_accepts_explicit_dev_auth_identity(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "local",

@@ -25,7 +25,6 @@ class PostgresWebBffRepository:
         if not database_url.strip():
             raise RepositoryConfigurationError(f"{DATABASE_URL_VAR} is required.")
         self._database_url = database_url
-        self._schema_ready = False
 
     @classmethod
     def from_env(
@@ -36,7 +35,6 @@ class PostgresWebBffRepository:
         return cls(database_url=env.get(DATABASE_URL_VAR, ""))
 
     def upsert_user(self, user: User) -> User:
-        self._ensure_schema()
         now = utc_now()
         with self._connect() as connection:
             with connection.cursor(row_factory=self._dict_row()) as cursor:
@@ -58,7 +56,6 @@ class PostgresWebBffRepository:
                 return User.model_validate(cursor.fetchone())
 
     def create_thread(self, *, user_id: UUID, title: str) -> Thread:
-        self._ensure_schema()
         now = utc_now()
         thread_id = uuid4()
         with self._connect() as connection:
@@ -83,7 +80,6 @@ class PostgresWebBffRepository:
         limit: int,
         cursor: str | None,
     ) -> tuple[list[Thread], PaginationMeta]:
-        self._ensure_schema()
         offset = _cursor_to_offset(cursor)
         with self._connect() as connection:
             with connection.cursor(row_factory=self._dict_row()) as db_cursor:
@@ -106,7 +102,6 @@ class PostgresWebBffRepository:
         return threads, PaginationMeta(has_more=has_more, next_cursor=next_cursor)
 
     def get_thread(self, *, thread_id: UUID, user_id: UUID) -> Thread | None:
-        self._ensure_schema()
         with self._connect() as connection:
             with connection.cursor(row_factory=self._dict_row()) as cursor:
                 cursor.execute(
@@ -130,7 +125,6 @@ class PostgresWebBffRepository:
         status: MessageStatus,
         run_id: UUID | None = None,
     ) -> Message:
-        self._ensure_schema()
         now = utc_now()
         message_id = uuid4()
         with self._connect() as connection:
@@ -175,7 +169,6 @@ class PostgresWebBffRepository:
         limit: int,
         cursor: str | None,
     ) -> tuple[list[Message] | None, PaginationMeta]:
-        self._ensure_schema()
         if self.get_thread(thread_id=thread_id, user_id=user_id) is None:
             return None, PaginationMeta(has_more=False, next_cursor=None)
 
@@ -198,69 +191,6 @@ class PostgresWebBffRepository:
         messages = [Message.model_validate(row) for row in rows[:limit]]
         next_cursor = str(offset + limit) if has_more else None
         return messages, PaginationMeta(has_more=has_more, next_cursor=next_cursor)
-
-    def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    create table if not exists web_bff_users (
-                        id uuid primary key,
-                        email text not null,
-                        name text null,
-                        avatar_url text null,
-                        created_at timestamptz not null,
-                        updated_at timestamptz not null
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    create table if not exists web_bff_threads (
-                        id uuid primary key,
-                        user_id uuid not null references web_bff_users(id),
-                        title text not null check (char_length(title) between 1 and 120),
-                        message_count integer not null default 0 check (message_count >= 0),
-                        last_message_at timestamptz null,
-                        latest_run_id uuid null,
-                        created_at timestamptz not null,
-                        updated_at timestamptz not null
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    create table if not exists web_bff_messages (
-                        id uuid primary key,
-                        thread_id uuid not null references web_bff_threads(id),
-                        role text not null check (
-                            role in ('user', 'assistant', 'tool', 'system')
-                        ),
-                        content text not null check (char_length(content) >= 1),
-                        status text not null check (
-                            status in ('complete', 'streaming', 'failed')
-                        ),
-                        run_id uuid null,
-                        created_at timestamptz not null
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    create index if not exists web_bff_threads_user_updated_idx
-                    on web_bff_threads (user_id, updated_at desc)
-                    """
-                )
-                cursor.execute(
-                    """
-                    create index if not exists web_bff_messages_thread_created_idx
-                    on web_bff_messages (thread_id, created_at asc)
-                    """
-                )
-        self._schema_ready = True
 
     def _connect(self):
         import psycopg

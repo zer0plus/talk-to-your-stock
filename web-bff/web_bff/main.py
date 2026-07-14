@@ -28,13 +28,13 @@ from talk_to_your_stock_shared import (
 )
 from talk_to_your_stock_shared.readiness import (
     build_readiness_response,
-    check_database,
     readiness_http_status,
 )
 from talk_to_your_stock_shared.time import utc_now
 from web_bff.agent_client import AgentServiceUnavailable, HttpAgentClient
 from web_bff.auth import AuthenticationError, authenticate_user
 from web_bff.repository import PostgresWebBffRepository
+from web_bff.readiness import check_web_bff_database
 
 app = FastAPI(
     title="TalkToYourStock Web BFF",
@@ -116,7 +116,7 @@ def health() -> HealthResponse:
 def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.WEB_BFF,
-        database_checker=check_database,
+        database_checker=check_web_bff_database,
     )
     response.status_code = readiness_http_status(readiness)
     return readiness

@@ -12,6 +12,7 @@ slices.
 - High-level architecture ADR: `docs/adr/ADR-001-mvp-high-level-architecture.md`
 - Fundamental data caching ADR: `docs/adr/ADR-002-fundamental-data-caching-strategy.md`
 - Agent architecture ADR: `docs/adr/ADR-003-agent-architecture.md`
+- Database migration design: `docs/database/README.md`
 - Agent implementation rules: `AGENTS.md`
 
 ## Repository Layout
@@ -24,6 +25,7 @@ shared/           # Small cross-service contracts, enums, IDs, schemas
 dev/              # Local Docker Compose stack and environment examples
 api/              # OpenAPI source of truth
 docs/adr/         # Binding architecture decisions
+docs/database/    # Database migration design and operating guidance
 ```
 
 ## Local Python Venv
@@ -57,6 +59,12 @@ export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/talk_to_your_s
 export DEV_AUTH_USER_ID=00000000-0000-0000-0000-000000000001
 export DEV_AUTH_EMAIL=dev@example.com
 export AGENT_SERVICE_URL=http://localhost:8001
+```
+
+Apply the Web BFF database migrations before starting the Web BFF:
+
+```bash
+python -m alembic upgrade head
 ```
 
 Web BFF:

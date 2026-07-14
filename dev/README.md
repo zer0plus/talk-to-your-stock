@@ -30,6 +30,9 @@ cp dev/.env.example dev/.env
 docker compose -f dev/docker-compose.yml up --build -d
 ```
 
+Compose waits for PostgreSQL, runs the one-shot `web-bff-migrate` service, and
+starts the Web BFF only after `python -m alembic upgrade head` succeeds.
+
 5. Check readiness:
 
 ```bash
@@ -41,6 +44,9 @@ curl -i http://localhost:8002/v1/ready
 Each readiness response uses the shared contract from `api/openapi.yaml` and
 includes `configuration` and `database` checks. A failed required check returns
 HTTP `503` with `status: "not_ready"`.
+
+Web BFF database readiness also requires the current Alembic schema revision.
+Missing or stale migrations keep the Web BFF not ready.
 
 ## Production Mode
 

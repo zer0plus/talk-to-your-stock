@@ -106,7 +106,11 @@ def check_configuration(
     return ReadinessCheck(status=DependencyStatus.OK)
 
 
-def check_database(environ: Mapping[str, str]) -> ReadinessCheck:
+def check_database(
+    environ: Mapping[str, str],
+    *,
+    required_schema_revision: str | None = None,
+) -> ReadinessCheck:
     database_url = environ.get(DATABASE_URL_VAR, "").strip()
     if not database_url:
         return ReadinessCheck(
@@ -134,6 +138,24 @@ def check_database(environ: Mapping[str, str]) -> ReadinessCheck:
             with connection.cursor() as cursor:
                 cursor.execute("select 1")
                 cursor.fetchone()
+                if required_schema_revision is not None:
+                    try:
+                        cursor.execute("select version_num from alembic_version")
+                        revision = cursor.fetchone()
+                    except Exception:  # pragma: no cover - exact driver errors vary.
+                        logger.exception("PostgreSQL migration readiness check failed.")
+                        return ReadinessCheck(
+                            status=DependencyStatus.FAIL,
+                            message="PostgreSQL database migrations are not applied.",
+                        )
+                    if revision != (required_schema_revision,):
+                        return ReadinessCheck(
+                            status=DependencyStatus.FAIL,
+                            message=(
+                                "PostgreSQL database migration is not at the required "
+                                f"revision {required_schema_revision}."
+                            ),
+                        )
     except Exception as exc:  # pragma: no cover - exact driver errors vary.
         logger.exception("PostgreSQL readiness check failed.")
         message = "PostgreSQL readiness check failed."

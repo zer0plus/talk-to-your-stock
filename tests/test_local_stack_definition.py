@@ -9,6 +9,22 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class LocalStackDefinitionTest(unittest.TestCase):
+    def test_compose_migrates_web_bff_schema_before_starting_web_bff(self) -> None:
+        compose_path = REPO_ROOT / "dev" / "docker-compose.yml"
+        services = yaml.safe_load(compose_path.read_text())["services"]
+
+        migration = services["web-bff-migrate"]
+        self.assertEqual(migration["command"], "python -m alembic upgrade head")
+        self.assertIn("DATABASE_URL", migration["environment"])
+        self.assertEqual(
+            migration["depends_on"]["postgres"]["condition"],
+            "service_healthy",
+        )
+        self.assertEqual(
+            services["web-bff"]["depends_on"]["web-bff-migrate"]["condition"],
+            "service_completed_successfully",
+        )
+
     def test_compose_starts_postgres_and_backend_services(self) -> None:
         compose_path = REPO_ROOT / "dev" / "docker-compose.yml"
         compose = yaml.safe_load(compose_path.read_text())
@@ -16,7 +32,13 @@ class LocalStackDefinitionTest(unittest.TestCase):
         services = compose["services"]
         self.assertEqual(
             set(services),
-            {"postgres", "web-bff", "agent-service", "comps-service"},
+            {
+                "postgres",
+                "web-bff-migrate",
+                "web-bff",
+                "agent-service",
+                "comps-service",
+            },
         )
 
         for service_name, port in (
