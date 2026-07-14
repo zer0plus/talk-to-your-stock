@@ -7,14 +7,16 @@ import time
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from google.adk.sessions import InMemorySessionService
 
-from agent_service.main import app as agent_app
+from agent_service.main import app as agent_app, get_session_context
+from agent_service.session_context import AdkSessionContext
 from comps_service.main import app as comps_app
 from tests.readiness_fakes import database_connects, database_unavailable
 from web_bff.main import app as web_bff_app
@@ -41,6 +43,14 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.agent_get_patcher = patch("httpx.get", return_value=agent_response)
         self.agent_get_patcher.start()
         self.addCleanup(self.agent_get_patcher.stop)
+        self.agent_session_context = AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=InMemorySessionService(),
+        )
+        agent_app.dependency_overrides[get_session_context] = (
+            lambda: self.agent_session_context
+        )
+        self.addCleanup(agent_app.dependency_overrides.clear)
 
     def test_readiness_openapi_documents_503_response(self) -> None:
         for service_name, app in (
@@ -103,6 +113,26 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertIn("database unavailable", body["checks"]["database"]["message"])
         self.assertTrue(
             any("database unavailable" in message for message in logs.output)
+        )
+
+    def test_agent_session_failure_makes_agent_readiness_not_ready(self) -> None:
+        session_service = AsyncMock()
+        session_service.get_session.side_effect = RuntimeError("session database denied")
+        agent_app.dependency_overrides[get_session_context] = lambda: AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=session_service,
+        )
+
+        with database_connects():
+            response = self._get_ready(agent_app, LOCAL_ENV)
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_session"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["agent_session"]["message"],
+            "Agent session readiness check failed.",
         )
 
     def test_production_database_failure_uses_sanitized_readiness_message(self) -> None:

@@ -12,6 +12,7 @@ slices.
 - High-level architecture ADR: `docs/adr/ADR-001-mvp-high-level-architecture.md`
 - Fundamental data caching ADR: `docs/adr/ADR-002-fundamental-data-caching-strategy.md`
 - Agent architecture ADR: `docs/adr/ADR-003-agent-architecture.md`
+- Agent chat persistence flow: `agent-service/README.md`
 - Database migration design: `docs/database/README.md`
 - Agent implementation rules: `AGENTS.md`
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import os
+from functools import lru_cache
+from typing import Annotated
 
-from fastapi import FastAPI, Response, status
+from fastapi import Depends, FastAPI, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
@@ -26,6 +29,9 @@ from talk_to_your_stock_shared.readiness import (
     readiness_http_status,
 )
 from talk_to_your_stock_shared.time import utc_now
+from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="TalkToYourStock Agent Service",
@@ -33,6 +39,11 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+
+@lru_cache(maxsize=1)
+def get_session_context() -> AdkSessionContext:
+    return AdkSessionContext.from_env()
 
 
 @app.exception_handler(RequestValidationError)
@@ -69,10 +80,15 @@ def health() -> HealthResponse:
     responses={503: {"model": ReadinessResponse}},
     tags=["Health"],
 )
-def ready(response: Response) -> ReadinessResponse:
+async def ready(
+    response: Response,
+    session_context: Annotated[AdkSessionContext, Depends(get_session_context)],
+) -> ReadinessResponse:
+    agent_session_check = await session_context.readiness_check()
     readiness = build_readiness_response(
         service=ServiceName.AGENT_SERVICE,
         database_checker=check_database,
+        additional_checks={"agent_session": agent_session_check},
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
@@ -84,7 +100,10 @@ def ready(response: Response) -> ReadinessResponse:
     responses={400: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
     tags=["Internal"],
 )
-def respond_to_message(_request: AgentMessageRequest) -> AgentMessageResponse | JSONResponse:
+async def respond_to_message(
+    request: AgentMessageRequest,
+    session_context: Annotated[AdkSessionContext, Depends(get_session_context)],
+) -> AgentMessageResponse | JSONResponse:
     if os.environ.get(ENVIRONMENT_VAR, "").strip().lower() == PRODUCTION_ENVIRONMENT:
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -96,12 +115,44 @@ def respond_to_message(_request: AgentMessageRequest) -> AgentMessageResponse | 
             ).model_dump(mode="json"),
         )
 
-    return AgentMessageResponse(
+    try:
+        session = await session_context.begin_turn(
+            user_id=request.user_id,
+            thread_id=request.thread_id,
+            user_message_id=request.user_message_id,
+            user_content=request.content,
+        )
+    except AgentSessionUnavailable as exc:
+        return _agent_session_error(exc)
+
+    response = AgentMessageResponse(
         content=(
             "AgentService: Message received"
             "AgentService: routing WIP"
         ),
         run=None,
+    )
+    try:
+        await session_context.complete_turn(
+            session=session,
+            user_message_id=request.user_message_id,
+            assistant_content=response.content,
+        )
+    except AgentSessionUnavailable as exc:
+        return _agent_session_error(exc)
+    return response
+
+
+def _agent_session_error(exc: AgentSessionUnavailable) -> JSONResponse:
+    logger.exception("Agent session operation failed.")
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content=ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.UPSTREAM_ERROR,
+                message=str(exc),
+            )
+        ).model_dump(mode="json"),
     )
 
 

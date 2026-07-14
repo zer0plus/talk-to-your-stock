@@ -32,6 +32,7 @@ def build_readiness_response(
     environ: Mapping[str, str] | None = None,
     database_checker: DatabaseChecker | None = None,
     additional_checkers: Mapping[str, DatabaseChecker] | None = None,
+    additional_checks: Mapping[str, ReadinessCheck] | None = None,
 ) -> ReadinessResponse:
     env = os.environ if environ is None else environ
     checker = check_database if database_checker is None else database_checker
@@ -42,6 +43,7 @@ def build_readiness_response(
     }
     for name, dependency_checker in (additional_checkers or {}).items():
         checks[name] = dependency_checker(env)
+    checks.update(additional_checks or {})
     status = (
         ReadinessState.READY
         if all(check.status != DependencyStatus.FAIL for check in checks.values())
