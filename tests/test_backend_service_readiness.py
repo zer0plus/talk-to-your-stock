@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -25,6 +26,16 @@ LOCAL_ENV = {
 
 
 class BackendServiceReadinessTest(unittest.TestCase):
+    def setUp(self) -> None:
+        agent_response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={"status": "ready"},
+        )
+        agent_get_patcher = patch("httpx.get", return_value=agent_response)
+        agent_get_patcher.start()
+        self.addCleanup(agent_get_patcher.stop)
+
     def test_readiness_openapi_documents_503_response(self) -> None:
         for service_name, app in (
             ("web-bff", web_bff_app),

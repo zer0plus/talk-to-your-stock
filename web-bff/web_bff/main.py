@@ -34,7 +34,7 @@ from talk_to_your_stock_shared.time import utc_now
 from web_bff.agent_client import AgentServiceUnavailable, HttpAgentClient
 from web_bff.auth import AuthenticationError, authenticate_user
 from web_bff.repository import PostgresWebBffRepository
-from web_bff.readiness import check_web_bff_database
+from web_bff.readiness import check_agent_service, check_web_bff_database
 
 app = FastAPI(
     title="TalkToYourStock Web BFF",
@@ -117,6 +117,7 @@ def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.WEB_BFF,
         database_checker=check_web_bff_database,
+        additional_checkers={"agent_service": check_agent_service},
     )
     response.status_code = readiness_http_status(readiness)
     return readiness

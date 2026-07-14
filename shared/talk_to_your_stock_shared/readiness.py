@@ -31,6 +31,7 @@ def build_readiness_response(
     service: ServiceName,
     environ: Mapping[str, str] | None = None,
     database_checker: DatabaseChecker | None = None,
+    additional_checkers: Mapping[str, DatabaseChecker] | None = None,
 ) -> ReadinessResponse:
     env = os.environ if environ is None else environ
     checker = check_database if database_checker is None else database_checker
@@ -39,6 +40,8 @@ def build_readiness_response(
         "configuration": check_configuration(service=service, environ=env),
         "database": checker(env),
     }
+    for name, dependency_checker in (additional_checkers or {}).items():
+        checks[name] = dependency_checker(env)
     status = (
         ReadinessState.READY
         if all(check.status != DependencyStatus.FAIL for check in checks.values())
