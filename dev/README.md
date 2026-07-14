@@ -45,9 +45,10 @@ Each readiness response uses the shared contract from `api/openapi.yaml` and
 includes `configuration` and `database` checks. A failed required check returns
 HTTP `503` with `status: "not_ready"`.
 
-Agent Service readiness also includes `agent_session`. It prepares and verifies
-the ADK-owned session/event tables used to retain complete Agent and Tool event
-history for each User and Thread.
+Agent Service startup prepares the ADK-owned session/event tables used to retain
+complete Agent and Tool event history for each User and Thread. Readiness
+includes `agent_session` to verify that store without preparing database objects.
+In production, `agent_routing` remains failed until real Agent routing exists.
 
 Web BFF database readiness also requires the current Alembic schema revision.
 Missing or stale migrations keep the Web BFF not ready.
