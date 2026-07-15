@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from google.adk.sessions import InMemorySessionService
 
 from agent_service.main import app as agent_app, get_session_context
-from agent_service.session_context import AdkSessionContext
+from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
 from comps_service.main import app as comps_app
 from tests.readiness_fakes import database_connects, database_unavailable
 from web_bff.main import app as web_bff_app
@@ -151,6 +151,25 @@ class BackendServiceReadinessTest(unittest.TestCase):
             self.assertFalse(database_path.exists())
             with TestClient(agent_app):
                 self.assertTrue(database_path.exists())
+
+    def test_agent_startup_fails_when_session_schema_cannot_be_prepared(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            blocked_parent = Path(directory) / "not-a-directory"
+            blocked_parent.write_text("blocks SQLite database creation")
+            session_context = AdkSessionContext.from_database_url(
+                app_name="talk-to-your-stock",
+                database_url=(
+                    "sqlite+aiosqlite:///"
+                    f"{blocked_parent / 'agent-session-context.sqlite3'}"
+                ),
+            )
+            agent_app.dependency_overrides[get_session_context] = (
+                lambda: session_context
+            )
+
+            with self.assertRaises(AgentSessionUnavailable):
+                with TestClient(agent_app):
+                    pass
 
     def test_missing_database_configuration_makes_agent_readiness_not_ready(
         self,

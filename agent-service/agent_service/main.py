@@ -54,14 +54,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     session_context = factory()
     try:
         await session_context.prepare()
-    except AgentSessionUnavailable:
-        logger.exception("Agent session startup preparation failed.")
-    try:
         yield
     finally:
-        await session_context.close()
-        if factory is get_session_context:
-            get_session_context.cache_clear()
+        try:
+            await session_context.close()
+        finally:
+            if factory is get_session_context:
+                get_session_context.cache_clear()
 
 
 app = FastAPI(
