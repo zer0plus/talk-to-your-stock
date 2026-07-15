@@ -16,7 +16,12 @@ class WebBffReadinessTest(unittest.TestCase):
         agent_response = httpx.Response(
             200,
             request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
-            json={"status": "ready"},
+            json={
+                "status": "ready",
+                "service": "agent-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
         )
         agent_get_patcher = patch("httpx.get", return_value=agent_response)
         self.agent_get = agent_get_patcher.start()
@@ -50,6 +55,82 @@ class WebBffReadinessTest(unittest.TestCase):
             "http://agent-service:8001/v1/ready",
             timeout=2,
         )
+
+    def test_readiness_fails_when_agent_response_is_malformed(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+        self.agent_get.return_value = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={"status": "ready"},
+        )
+
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "fail")
+
+    def test_readiness_fails_when_ready_response_is_from_another_service(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+        self.agent_get.return_value = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={
+                "status": "ready",
+                "service": "comps-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "fail")
+
+    def test_readiness_fails_when_agent_reports_not_ready(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+        self.agent_get.return_value = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={
+                "status": "not_ready",
+                "service": "agent-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "fail")
 
     def test_readiness_fails_when_migration_configuration_is_invalid(self) -> None:
         env = {

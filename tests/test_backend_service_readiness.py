@@ -40,7 +40,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
         agent_response = httpx.Response(
             200,
             request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
-            json={"status": "ready"},
+            json={
+                "status": "ready",
+                "service": "agent-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
         )
         self.agent_get_patcher = patch("httpx.get", return_value=agent_response)
         self.agent_get_patcher.start()
