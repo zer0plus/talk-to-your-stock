@@ -187,6 +187,24 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertEqual(body["status"], "not_ready")
         self.assertEqual(body["checks"]["agent_session"]["status"], "fail")
 
+    def test_invalid_database_url_makes_agent_readiness_not_ready(self) -> None:
+        agent_app.dependency_overrides.clear()
+        get_session_context.cache_clear()
+
+        response = self._get_ready(
+            agent_app,
+            {**LOCAL_ENV, "DATABASE_URL": "not-a-database-url"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_session"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["agent_session"]["message"],
+            "Agent session readiness check failed.",
+        )
+
     def test_production_database_failure_uses_sanitized_readiness_message(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",

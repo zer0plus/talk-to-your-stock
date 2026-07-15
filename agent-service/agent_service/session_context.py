@@ -68,9 +68,15 @@ class AdkSessionContext:
         app_name: str,
         database_url: str,
     ) -> AdkSessionContext:
+        try:
+            session_service = DatabaseSessionService(database_url)
+        except Exception as exc:
+            raise AgentSessionUnavailable(
+                "Agent session configuration is invalid."
+            ) from exc
         return cls(
             app_name=app_name,
-            session_service=DatabaseSessionService(database_url),
+            session_service=session_service,
         )
 
     async def get_session(
