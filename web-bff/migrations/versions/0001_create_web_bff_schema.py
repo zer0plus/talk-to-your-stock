@@ -83,7 +83,7 @@ def upgrade() -> None:
     op.create_index(
         "web_bff_threads_user_updated_idx",
         "web_bff_threads",
-        ["user_id", sa.text("updated_at DESC")],
+        ["user_id", sa.text("updated_at DESC"), sa.text("id DESC")],
     )
     op.create_index(
         "web_bff_messages_thread_created_idx",

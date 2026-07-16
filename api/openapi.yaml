@@ -99,6 +99,8 @@ paths:
                       $ref: '#/components/schemas/Thread'
                   page:
                     $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -452,6 +454,7 @@ components:
     CursorParam:
       in: query
       name: cursor
+      description: Opaque continuation cursor returned by the previous page.
       schema:
         type: string
     ThreadIdParam:

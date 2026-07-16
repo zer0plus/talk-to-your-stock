@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+from base64 import b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from collections.abc import Mapping
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from talk_to_your_stock_shared import (
@@ -17,6 +20,10 @@ from talk_to_your_stock_shared.time import utc_now
 
 
 class RepositoryConfigurationError(RuntimeError):
+    pass
+
+
+class InvalidCursorError(ValueError):
     pass
 
 
@@ -80,25 +87,32 @@ class PostgresWebBffRepository:
         limit: int,
         cursor: str | None,
     ) -> tuple[list[Thread], PaginationMeta]:
-        offset = _cursor_to_offset(cursor)
+        page_cursor = _decode_thread_cursor(cursor) if cursor is not None else None
+        cursor_filter = ""
+        parameters: list[object] = [user_id]
+        if page_cursor is not None:
+            cursor_filter = "and (updated_at, id) < (%s, %s)"
+            parameters.extend(page_cursor)
+        parameters.append(limit + 1)
         with self._connect() as connection:
             with connection.cursor(row_factory=self._dict_row()) as db_cursor:
                 db_cursor.execute(
-                    """
+                    f"""
                     select id, user_id, title, message_count, last_message_at,
                         latest_run_id, created_at, updated_at
                     from web_bff_threads
                     where user_id = %s
+                    {cursor_filter}
                     order by updated_at desc, id desc
-                    limit %s offset %s
+                    limit %s
                     """,
-                    (user_id, limit + 1, offset),
+                    parameters,
                 )
                 rows = db_cursor.fetchall()
 
         has_more = len(rows) > limit
         threads = [Thread.model_validate(row) for row in rows[:limit]]
-        next_cursor = str(offset + limit) if has_more else None
+        next_cursor = _encode_thread_cursor(threads[-1]) if has_more else None
         return threads, PaginationMeta(has_more=has_more, next_cursor=next_cursor)
 
     def get_thread(self, *, thread_id: UUID, user_id: UUID) -> Thread | None:
@@ -211,3 +225,22 @@ def _cursor_to_offset(cursor: str | None) -> int:
         return max(int(cursor), 0)
     except ValueError:
         return 0
+
+
+def _encode_thread_cursor(thread: Thread) -> str:
+    value = f"{thread.updated_at.isoformat()}|{thread.id}".encode()
+    return urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _decode_thread_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        value = b64decode(cursor + padding, altchars=b"-_", validate=True).decode()
+        updated_at_value, thread_id_value = value.split("|", maxsplit=1)
+        updated_at = datetime.fromisoformat(updated_at_value)
+        thread_id = UUID(thread_id_value)
+    except (Base64Error, UnicodeDecodeError, ValueError) as exc:
+        raise InvalidCursorError("Thread cursor is invalid.") from exc
+    if updated_at.tzinfo is None:
+        raise InvalidCursorError("Thread cursor is invalid.")
+    return updated_at, thread_id

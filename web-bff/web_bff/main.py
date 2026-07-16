@@ -33,7 +33,7 @@ from talk_to_your_stock_shared.readiness import (
 from talk_to_your_stock_shared.time import utc_now
 from web_bff.agent_client import AgentServiceUnavailable, HttpAgentClient
 from web_bff.auth import AuthenticationError, authenticate_user
-from web_bff.repository import PostgresWebBffRepository
+from web_bff.repository import InvalidCursorError, PostgresWebBffRepository
 from web_bff.readiness import check_agent_service, check_web_bff_database
 
 app = FastAPI(
@@ -73,6 +73,19 @@ def handle_agent_service_unavailable(
         content=ErrorResponse(
             error=ErrorDetail(
                 code=ErrorCode.UPSTREAM_ERROR,
+                message=str(exc),
+            )
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(InvalidCursorError)
+def handle_invalid_cursor(_request, exc: InvalidCursorError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content=ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.VALIDATION_ERROR,
                 message=str(exc),
             )
         ).model_dump(mode="json"),
