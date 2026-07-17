@@ -32,14 +32,10 @@ flowchart LR
   end
 
   subgraph External
-    AUTH["Managed Auth<br/>(Google OAuth)"]
     AV["Alpha Vantage"]
   end
 
   WEB -->|"API calls + SSE subscribe"| BFF
-  WEB -->|"Login"| AUTH
-  AUTH -->|"JWT"| WEB
-  BFF -->|"Verify JWT"| AUTH
 
   BFF -->|"Chat message request"| AGENT
   AGENT -->|"Tool call: generate_comps_table"| COMPS
@@ -58,20 +54,20 @@ flowchart LR
 Notes:
 
 * `Comps Service` owns the domain capability and its execution mode. The Agent calls the `generate_comps_table` tool contract and does not enqueue jobs or depend on worker mechanics.
-* Future deployment work should keep `Comps Service` internal-only at the network/ingress layer so public traffic cannot reach its internal tool routes. Route-level internal bearer auth is still required as a defense if network exposure is misconfigured.
+* During PRD #10, the backend is a local-only, single-user system and must not be exposed to an untrusted network. Public deployment controls and route-level service authentication are deferred with the rest of the authentication work.
 * MVP CSV/XLSX exports are owned by `Comps Service` because they are direct representations of comps table results.
 * Implementation should keep exports in an internal `exports/` module so the boundary can become a standalone service later if exports become async, template-heavy, multi-artifact, or independently scalable.
 * MVP source snapshots are stored in PostgreSQL JSONB as separate run-bound records, not in object storage. They remain conceptually and schematically separate from the reusable Fundamental Cache.
 * Object Storage is deferred until source snapshots become large, file-like, numerous enough to require lifecycle policies, or otherwise artifact-like.
 
-### Authentication Model (MVP)
+### Authentication Deferral for PRD #10
 
-* Login method: Google-only initially.
-* Use a managed auth provider for OAuth and token issuance.
-* Web BFF verifies JWT on every user-facing request and enforces tenant boundaries.
-* PostgreSQL stores app user records and provider user-id mapping.
-* No separate Auth Service in MVP.
-* Local development may use an explicit environment-controlled dev-auth identity for smoke tests and backend integration. Dev auth must not be a production fallback: production mode requires managed auth/JWT verification and readiness must fail clearly when required auth configuration is missing.
+* PRD #10 and all of its child issues target a local, single-user demo. They do not implement user authentication or authorization.
+* The Web BFF uses one deterministic local User identity to associate Threads, Messages, and Runs with the local operator. This identity is product-state ownership, not proof of identity.
+* Login, OAuth, JWT issuance or verification, bearer-token handling, sessions, tenant enforcement, dev-auth modes, and route-level service authentication are all deferred.
+* Authentication work begins only after PRD #10 and all child issues under it are complete.
+* A follow-up PRD must define the authentication provider, user identity mapping, authorization boundaries, internal service authentication, production readiness requirements, and deployment threat model before any of those contracts are exposed.
+* Until that follow-up work is implemented, TalkToYourStock is local-only and must not claim readiness for public or untrusted-network deployment.
 
 ### Repository Layout
 
@@ -112,12 +108,12 @@ under a separate folder later if deployment-specific artifacts are needed.
 * Decision drivers: maintainability, deterministic financial correctness, UX responsiveness, extensibility.
 * Key assumptions:
   * One primary client (web chat) in MVP.
-  * Authentication is Google-only via managed auth provider.
+  * PRD #10 runs locally for one operator without authentication.
   * Runs are created only for table-generation comps requests.
   * Non-comps conversational replies must not create runs.
 * Non-goals:
   * Multi-provider abstraction in MVP.
-  * Dedicated standalone Auth Service in MVP.
+  * User authentication, authorization, tenant isolation, and internal service authentication during PRD #10.
   * Multi-client API optimization in MVP.
   * Fully distributed microservice platform from day one.
 
@@ -134,6 +130,7 @@ under a separate folder later if deployment-specific artifacts are needed.
 * Source snapshots stay transactionally close to Run/Table/Trace records while they are small JSON evidence packages.
 * Keeping exports inside Comps Service avoids a thin service boundary while exports are simple CSV/XLSX representations of run tables.
 * The internal `exports/` module preserves a clean future extraction path.
+* Deferring authentication keeps PRD #10 focused on demonstrating the comps-backed product path locally.
 
 ### Negative / Trade-offs
 
@@ -142,6 +139,7 @@ under a separate folder later if deployment-specific artifacts are needed.
 * BFF-centric shape may require refactor when multiple clients with different needs appear.
 * Export work is coupled to Comps Service until exports become rich enough to justify extraction.
 * Storing source snapshots in PostgreSQL may need revisiting if evidence payloads grow into large blobs or require independent retention policies.
+* The PRD #10 system has no identity verification, tenant isolation, or authenticated service boundary and therefore cannot be safely exposed to untrusted networks.
 
 
 ## Considered Alternatives
@@ -160,3 +158,6 @@ under a separate folder later if deployment-specific artifacts are needed.
 
 * **Full microservice decomposition from day one**
   Rejected because operational overhead is high for MVP and slows product learning.
+
+* **Implement authentication alongside PRD #10**
+  Deferred because the first milestone is a local, single-user learning demo. Authentication adds provider, token, authorization, readiness, and deployment work without helping validate the canonical comps-backed path. It will be planned after PRD #10 and all child issues are complete.
