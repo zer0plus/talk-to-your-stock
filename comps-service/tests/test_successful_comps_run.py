@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+import yaml
 
 from comps_service.calculator import CompanyCompsInput
 from comps_service.main import (
@@ -15,10 +17,12 @@ from comps_service.main import (
     get_repository,
     get_ticker_validator,
 )
+from comps_service.repository import CompsPersistenceUnavailable
 from talk_to_your_stock_shared import Run, RunTableResponse
 
 
 INTERNAL_TOOL_TOKEN = "test-internal-tool-token"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class SupportedTickerValidator:
@@ -227,6 +231,63 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             [row["ticker"] for row in response.json()["table"]["rows"]],
             ["AAPL", "MSFT", "GOOG"],
         )
+
+    def test_readback_contract_documents_local_error_behavior(self) -> None:
+        source_contract = yaml.safe_load(
+            (REPO_ROOT / "api" / "openapi.yaml").read_text()
+        )
+        generated_contract = TestClient(app).get("/openapi.json").json()
+
+        for path in ("/v1/runs/{run_id}", "/v1/runs/{run_id}/table"):
+            with self.subTest(path=path):
+                source_operation = source_contract["paths"][path]["get"]
+                generated_operation = generated_contract["paths"][path]["get"]
+                self.assertEqual(source_operation["security"], [])
+                self.assertEqual(
+                    set(source_operation["responses"]),
+                    {"200", "400", "404", "503"},
+                )
+                self.assertEqual(
+                    set(generated_operation["responses"]),
+                    {"200", "400", "404", "503", "422"},
+                )
+
+    def test_readback_returns_structured_not_found_and_validation_errors(
+        self,
+    ) -> None:
+        client = TestClient(app)
+
+        for suffix in ("", "/table"):
+            with self.subTest(error="not_found", suffix=suffix):
+                response = client.get(f"/v1/runs/{uuid4()}{suffix}")
+                self.assertEqual(response.status_code, 404, response.text)
+                self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+
+            with self.subTest(error="invalid_id", suffix=suffix):
+                response = client.get(f"/v1/runs/not-a-uuid{suffix}")
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(
+                    response.json()["error"]["code"],
+                    "VALIDATION_ERROR",
+                )
+
+    def test_readback_returns_service_unavailable_when_persistence_fails(
+        self,
+    ) -> None:
+        def unavailable_repository() -> InMemoryCompsRunRepository:
+            raise CompsPersistenceUnavailable("Comps persistence is unavailable.")
+
+        app.dependency_overrides[get_repository] = unavailable_repository
+        client = TestClient(app)
+
+        for suffix in ("", "/table"):
+            with self.subTest(suffix=suffix):
+                response = client.get(f"/v1/runs/{uuid4()}{suffix}")
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertEqual(
+                    response.json()["error"]["code"],
+                    "INTERNAL_ERROR",
+                )
 
 
 if __name__ == "__main__":

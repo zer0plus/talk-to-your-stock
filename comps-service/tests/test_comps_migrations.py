@@ -102,6 +102,8 @@ class CompsMigrationsTest(unittest.TestCase):
         }
 
         with patch.dict(os.environ, env, clear=False):
+            command.downgrade(migration_config, "base")
+            command.upgrade(migration_config, "0001_web_bff_schema")
             command.upgrade(migration_config, "head")
             try:
                 app.dependency_overrides[get_company_data_source] = (

@@ -290,6 +290,7 @@ paths:
     get:
       tags: [Runs]
       summary: Get run metadata
+      security: []
       parameters:
         - $ref: '#/components/parameters/RunIdParam'
       responses:
@@ -303,15 +304,18 @@ paths:
                 properties:
                   run:
                     $ref: '#/components/schemas/Run'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/runs/{run_id}/table:
     get:
       tags: [Runs]
       summary: Get structured comps table
+      security: []
       parameters:
         - $ref: '#/components/parameters/RunIdParam'
       responses:
@@ -321,10 +325,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RunTableResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/runs/{run_id}/trace:
     get:
