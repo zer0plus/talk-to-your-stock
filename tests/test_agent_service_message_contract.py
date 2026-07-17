@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+import httpx
 from fastapi.testclient import TestClient
 from google.adk.sessions import InMemorySessionService
 
@@ -61,6 +64,61 @@ class AgentServiceMessageContractTest(unittest.TestCase):
                 "Now compare it to MSFT",
                 "AgentService: Message receivedAgentService: routing WIP",
             ],
+        )
+
+    def test_agent_service_serializes_overlapping_messages_in_one_thread(self) -> None:
+        async def exercise_overlapping_messages() -> tuple[list[int], list[str]]:
+            with tempfile.TemporaryDirectory() as directory:
+                session_context = AdkSessionContext.from_database_url(
+                    app_name="talk-to-your-stock",
+                    database_url=(
+                        "sqlite+aiosqlite:///"
+                        f"{Path(directory) / 'agent-session-context.sqlite3'}"
+                    ),
+                )
+                await session_context.prepare()
+                app.dependency_overrides[get_session_context] = lambda: session_context
+                user_id = uuid4()
+                thread_id = uuid4()
+                transport = httpx.ASGITransport(app=app)
+
+                async with httpx.AsyncClient(
+                    transport=transport,
+                    base_url="http://agent-service.test",
+                ) as client:
+                    responses = await asyncio.gather(
+                        *(
+                            client.post(
+                                "/v1/internal/agent/respond",
+                                json={
+                                    "user_id": str(user_id),
+                                    "thread_id": str(thread_id),
+                                    "user_message_id": str(uuid4()),
+                                    "content": content,
+                                },
+                            )
+                            for content in (
+                                "Compare AAPL with NVDA",
+                                "Now compare it to MSFT",
+                            )
+                        )
+                    )
+
+                session = await session_context.get_session(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                )
+                assert session is not None
+                event_authors = [event.author for event in session.events]
+                await session_context.close()
+                return [response.status_code for response in responses], event_authors
+
+        status_codes, event_authors = asyncio.run(exercise_overlapping_messages())
+
+        self.assertEqual(status_codes, [200, 200])
+        self.assertEqual(
+            event_authors,
+            ["user", "fundamental_analysis_agent"] * 2,
         )
 
     def test_agent_service_accepts_bff_message_request(self) -> None:

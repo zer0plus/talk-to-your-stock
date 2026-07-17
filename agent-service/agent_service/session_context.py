@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from inspect import isawaitable
 from uuid import UUID
 
@@ -37,6 +39,9 @@ class AdkSessionContext:
         self._session_service = session_service
         self._unavailable_message = unavailable_message
         self._prepared = not isinstance(session_service, DatabaseSessionService)
+        self._turn_locks: dict[tuple[UUID, UUID], asyncio.Lock] = {}
+        self._turn_lock_ref_counts: dict[tuple[UUID, UUID], int] = {}
+        self._turn_locks_guard = asyncio.Lock()
 
     @classmethod
     def unavailable(cls, message: str) -> AdkSessionContext:
@@ -120,6 +125,35 @@ class AdkSessionContext:
                 message="Agent session readiness check failed.",
             )
         return ReadinessCheck(status=DependencyStatus.OK)
+
+    @asynccontextmanager
+    async def turn(
+        self,
+        *,
+        user_id: UUID,
+        thread_id: UUID,
+    ) -> AsyncIterator[None]:
+        lock_key = (user_id, thread_id)
+        async with self._turn_locks_guard:
+            lock = self._turn_locks.get(lock_key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._turn_locks[lock_key] = lock
+            self._turn_lock_ref_counts[lock_key] = (
+                self._turn_lock_ref_counts.get(lock_key, 0) + 1
+            )
+
+        try:
+            async with lock:
+                yield
+        finally:
+            async with self._turn_locks_guard:
+                remaining = self._turn_lock_ref_counts[lock_key] - 1
+                if remaining == 0:
+                    del self._turn_lock_ref_counts[lock_key]
+                    del self._turn_locks[lock_key]
+                else:
+                    self._turn_lock_ref_counts[lock_key] = remaining
 
     async def begin_turn(
         self,

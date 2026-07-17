@@ -154,28 +154,28 @@ async def respond_to_message(
         )
 
     try:
-        session = await session_context.begin_turn(
+        async with session_context.turn(
             user_id=request.user_id,
             thread_id=request.thread_id,
-            user_message_id=request.user_message_id,
-            user_content=request.content,
-        )
-    except AgentSessionUnavailable as exc:
-        return _agent_session_error(exc)
-
-    response = AgentMessageResponse(
-        content=(
-            "AgentService: Message received"
-            "AgentService: routing WIP"
-        ),
-        run=None,
-    )
-    try:
-        await session_context.complete_turn(
-            session=session,
-            user_message_id=request.user_message_id,
-            assistant_content=response.content,
-        )
+        ):
+            session = await session_context.begin_turn(
+                user_id=request.user_id,
+                thread_id=request.thread_id,
+                user_message_id=request.user_message_id,
+                user_content=request.content,
+            )
+            response = AgentMessageResponse(
+                content=(
+                    "AgentService: Message received"
+                    "AgentService: routing WIP"
+                ),
+                run=None,
+            )
+            await session_context.complete_turn(
+                session=session,
+                user_message_id=request.user_message_id,
+                assistant_content=response.content,
+            )
     except AgentSessionUnavailable as exc:
         return _agent_session_error(exc)
     return response
