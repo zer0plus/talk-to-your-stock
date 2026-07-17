@@ -454,7 +454,7 @@ components:
     CursorParam:
       in: query
       name: cursor
-      description: Opaque continuation cursor returned by the previous page.
+      description: Opaque continuation cursor returned by the prior response.
       schema:
         type: string
     ThreadIdParam:
