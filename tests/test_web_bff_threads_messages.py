@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 from datetime import datetime, timezone
@@ -7,9 +8,13 @@ from collections.abc import Callable
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+from google.adk.sessions import InMemorySessionService
 from pydantic import BaseModel
 from unittest.mock import patch
 
+from agent_service.main import app as agent_app
+from agent_service.main import get_session_context as get_agent_session_context
+from agent_service.session_context import AdkSessionContext
 from talk_to_your_stock_shared import (
     Message,
     MessageRole,
@@ -20,6 +25,7 @@ from talk_to_your_stock_shared import (
     Thread,
     User,
 )
+from tests.live_service import running_service
 from web_bff.main import app, get_agent_client, get_repository
 
 
@@ -208,6 +214,55 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(
             repository.events,
             ["message.created:user", "agent.invoked", "message.created:assistant"],
+        )
+
+    def test_posting_message_crosses_real_agent_http_boundary(self) -> None:
+        session_context = AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=InMemorySessionService(),
+        )
+        agent_app.dependency_overrides[get_agent_session_context] = lambda: session_context
+        self.addCleanup(agent_app.dependency_overrides.clear)
+        self.addCleanup(get_agent_session_context.cache_clear)
+
+        with running_service(agent_app) as agent_service_url:
+            repository = RecordingRepository()
+            client = self._client(
+                repository=repository,
+                override_agent=False,
+                env={**LOCAL_ENV, "AGENT_SERVICE_URL": agent_service_url},
+            )
+            thread_id = client.post(
+                "/v1/threads",
+                json={"title": "Comps"},
+            ).json()["thread"]["id"]
+
+            response = client.post(
+                f"/v1/threads/{thread_id}/messages",
+                json={"content": "Compare AAPL with MSFT"},
+            )
+
+            self.assertEqual(response.status_code, 201)
+            body = response.json()
+            session = asyncio.run(
+                session_context.get_session(
+                    user_id=UUID(LOCAL_ENV["DEV_AUTH_USER_ID"]),
+                    thread_id=UUID(thread_id),
+                )
+            )
+
+        assert session is not None
+        self.assertEqual(
+            [event.invocation_id for event in session.events],
+            [body["user_message"]["id"]] * 2,
+        )
+        self.assertEqual(
+            [event.content.parts[0].text for event in session.events],
+            ["Compare AAPL with MSFT", body["assistant_message"]["content"]],
+        )
+        self.assertEqual(
+            [message.role for message in repository.messages],
+            [MessageRole.USER, MessageRole.ASSISTANT],
         )
 
     def test_agent_run_response_links_assistant_message_to_run(self) -> None:
