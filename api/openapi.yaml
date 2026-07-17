@@ -914,10 +914,6 @@ components:
           default: USD
           minLength: 3
           maxLength: 3
-        as_of_date:
-          type: [string, 'null']
-          format: date
-
     GenerateCompsToolResponse:
       type: object
       required: [run, table, trace, warnings]
