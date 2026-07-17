@@ -165,10 +165,7 @@ async def respond_to_message(
                 user_content=request.content,
             )
             response = AgentMessageResponse(
-                content=(
-                    "AgentService: Message received"
-                    "AgentService: routing WIP"
-                ),
+                content="Message received. Agent routing is not implemented yet.",
                 run=None,
             )
             await session_context.complete_turn(

@@ -60,9 +60,9 @@ class AgentServiceMessageContractTest(unittest.TestCase):
             [event.content.parts[0].text for event in session.events],
             [
                 "Compare AAPL with NVDA",
-                "AgentService: Message receivedAgentService: routing WIP",
+                "Message received. Agent routing is not implemented yet.",
                 "Now compare it to MSFT",
-                "AgentService: Message receivedAgentService: routing WIP",
+                "Message received. Agent routing is not implemented yet.",
             ],
         )
 
@@ -135,7 +135,10 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["run"], None)
-        self.assertGreater(len(body["content"]), 0)
+        self.assertEqual(
+            body["content"],
+            "Message received. Agent routing is not implemented yet.",
+        )
 
     def test_agent_session_failure_returns_upstream_error(self) -> None:
         session_service = AsyncMock()
