@@ -5,7 +5,7 @@ TalkToYourStock is a chat-first fundamental analysis product for generating audi
 ## Language
 
 **User**:
-The authenticated person using TalkToYourStock.
+The person using TalkToYourStock. During PRD #10, the app represents its sole local operator with one deterministic local User identity; this identity is for product-state ownership and is not authentication.
 _Avoid_: Customer, account holder
 
 **Thread**:
@@ -94,7 +94,7 @@ A downloadable CSV or XLSX representation of a Comps Table owned by the Comps Se
 _Avoid_: Report
 
 **Web BFF**:
-The user-facing backend boundary that verifies auth, persists Thread and Message state, calls the Agent Service, and streams progress to the web app.
+The user-facing backend boundary that persists Thread and Message state, calls the Agent Service, and streams progress to the web app. Authentication and authorization are deferred until after PRD #10 and all of its child issues are complete.
 _Avoid_: API server, backend
 
 **Agent Service**:
