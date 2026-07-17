@@ -28,7 +28,13 @@ from talk_to_your_stock_shared import (
     User,
 )
 from tests.live_service import running_service
-from web_bff.main import app, get_agent_client, get_repository
+from web_bff.main import (
+    app,
+    get_agent_client,
+    get_repository,
+    get_thread_turn_coordinator,
+)
+from web_bff.turn_coordinator import ThreadTurnCoordinator
 
 
 LOCAL_ENV = {
@@ -269,6 +275,8 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
             return ControlledAgentResponse(content=f"Reply to: {user_message.content}")
 
         agent = ControlledAgent(repository=repository, response_factory=respond)
+        turn_coordinator = ThreadTurnCoordinator()
+        app.dependency_overrides[get_thread_turn_coordinator] = lambda: turn_coordinator
         first_client = self._client(repository=repository, agent=agent)
         second_client = TestClient(app)
         thread_id = first_client.post(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
@@ -44,6 +43,7 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+_thread_turn_coordinator = ThreadTurnCoordinator()
 
 
 class ApiException(Exception):
@@ -146,9 +146,8 @@ def get_agent_client() -> HttpAgentClient:
     return HttpAgentClient.from_env()
 
 
-@lru_cache(maxsize=1)
 def get_thread_turn_coordinator() -> ThreadTurnCoordinator:
-    return ThreadTurnCoordinator()
+    return _thread_turn_coordinator
 
 
 def get_current_user(
