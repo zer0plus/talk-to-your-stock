@@ -179,6 +179,8 @@ paths:
                       $ref: '#/components/schemas/Message'
                   page:
                     $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

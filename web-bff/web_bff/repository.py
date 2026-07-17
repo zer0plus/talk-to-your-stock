@@ -222,9 +222,12 @@ def _cursor_to_offset(cursor: str | None) -> int:
     if cursor is None:
         return 0
     try:
-        return max(int(cursor), 0)
-    except ValueError:
-        return 0
+        offset = int(cursor)
+    except ValueError as exc:
+        raise InvalidCursorError("Message cursor is invalid.") from exc
+    if offset < 0:
+        raise InvalidCursorError("Message cursor is invalid.")
+    return offset
 
 
 def _encode_thread_cursor(thread: Thread) -> str:

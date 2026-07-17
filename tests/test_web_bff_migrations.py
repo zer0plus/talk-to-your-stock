@@ -144,6 +144,45 @@ class WebBffMigrationsTest(unittest.TestCase):
             finally:
                 command.downgrade(migration_config, "base")
 
+    @unittest.skipUnless(
+        os.environ.get("WEB_BFF_MIGRATION_TEST_DATABASE_URL"),
+        "WEB_BFF_MIGRATION_TEST_DATABASE_URL is required for PostgreSQL integration.",
+    )
+    def test_message_list_rejects_invalid_cursors(self) -> None:
+        database_url = os.environ["WEB_BFF_MIGRATION_TEST_DATABASE_URL"]
+        migration_config = Config(str(REPO_ROOT / "alembic.ini"))
+        env = {
+            "DATABASE_URL": database_url,
+            "TALK_TO_YOUR_STOCK_ENV": "test",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service.test",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            command.upgrade(migration_config, "head")
+            try:
+                client = TestClient(app)
+                thread_id = client.post(
+                    "/v1/threads",
+                    json={"title": "Cursor validation"},
+                ).json()["thread"]["id"]
+
+                for cursor in ("bogus", "-1"):
+                    with self.subTest(cursor=cursor):
+                        response = client.get(
+                            f"/v1/threads/{thread_id}/messages",
+                            params={"cursor": cursor},
+                        )
+
+                        self.assertEqual(response.status_code, 400, response.text)
+                        self.assertEqual(
+                            response.json()["error"]["code"],
+                            "VALIDATION_ERROR",
+                        )
+            finally:
+                command.downgrade(migration_config, "base")
+
 
 if __name__ == "__main__":
     unittest.main()
