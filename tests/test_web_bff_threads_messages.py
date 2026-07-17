@@ -378,7 +378,7 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
             response = client.post(
                 f"/v1/threads/{thread_id}/messages",
-                json={"content": "Compare AAPL with MSFT"},
+                json={"content": "What is enterprise value?"},
             )
 
             self.assertEqual(response.status_code, 201)
@@ -397,7 +397,7 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         )
         self.assertEqual(
             [event.content.parts[0].text for event in session.events],
-            ["Compare AAPL with MSFT", body["assistant_message"]["content"]],
+            ["What is enterprise value?", body["assistant_message"]["content"]],
         )
         self.assertEqual(
             [message.role for message in repository.messages],

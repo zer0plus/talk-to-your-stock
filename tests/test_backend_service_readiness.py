@@ -295,7 +295,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertIn("COMPS_SERVICE_URL", message)
         self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
 
-    def test_production_agent_readiness_reports_real_routing_ready(self) -> None:
+    def test_production_agent_readiness_rejects_local_only_routing(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
             "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
@@ -308,12 +308,16 @@ class BackendServiceReadinessTest(unittest.TestCase):
         with database_connects():
             response = self._get_ready(agent_app, env)
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 503)
         body = response.json()
-        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["status"], "not_ready")
         self.assertEqual(body["checks"]["configuration"]["status"], "ok")
         self.assertEqual(body["checks"]["database"]["status"], "ok")
-        self.assertEqual(body["checks"]["agent_routing"]["status"], "ok")
+        self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
+        self.assertIn(
+            "local-only",
+            body["checks"]["agent_routing"]["message"],
+        )
 
     def test_production_comps_readiness_requires_provider_configuration(self) -> None:
         env = {

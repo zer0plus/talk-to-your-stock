@@ -22,10 +22,12 @@ structured Tickers and calls the configured Comps Service through
 identity, so the User Message, model Tool call, Tool result, and Assistant
 Message remain visible in ADK-native event history.
 
-The Agent never calculates final Comps Table Metrics. A successful Assistant
-Message can explain only the Run/Table/Trace payload returned by the Tool. A
-pre-Run validation error permits one corrected Tool call; a second validation
-error ends the turn with a concise Ticker clarification.
+The Agent never calculates final Comps Table Metrics. After Tool success, the
+route stops further model generation and returns a deterministic confirmation
+built only from the returned Run. This prevents an unconstrained model response
+from inventing or recalculating Metrics. A pre-Run validation error permits one
+corrected Tool call; a second validation error ends the turn with a concise
+Ticker clarification.
 
 ## Persistence Flow
 
@@ -65,7 +67,8 @@ sequenceDiagram
    ID.
 3. The ADK Runner loads the complete session and appends the current User event
    before response processing.
-4. The Runner appends model Tool calls, Tool results, and the Assistant event in
-   invocation order. After a second validation error, the Agent closes the
-   Runner and appends the deterministic clarification to the same ADK session.
+4. The Runner appends model Tool calls and Tool results in invocation order.
+   After Tool success, or after a second validation error, the Agent closes the
+   Runner and appends the deterministic Assistant response to the same ADK
+   session.
 5. The Web BFF persists the returned Assistant Message and optional Run link.

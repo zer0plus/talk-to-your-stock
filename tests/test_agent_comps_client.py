@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse
 
 from agent_service.comps_client import (
+    CompsToolUnavailable,
     CompsToolValidationError,
     HttpCompsToolClient,
 )
+from comps_service.main import app as real_comps_app
 from talk_to_your_stock_shared import (
     AnalysisPeriod,
     ErrorCode,
@@ -85,6 +89,36 @@ class HttpCompsToolClientTest(unittest.TestCase):
             context.exception.error.error.details,
             {"unsupported_tickers": ["AAPLL"]},
         )
+
+    def test_calls_real_comps_service_route_with_service_credential(self) -> None:
+        ticker_validator = Mock()
+        ticker_validator.is_supported.return_value = True
+        request = _tool_request(thread_id=uuid4(), trigger_message_id=uuid4())
+
+        with (
+            patch.dict(
+                os.environ,
+                {"COMPS_SERVICE_INTERNAL_TOKEN": "internal-token"},
+                clear=True,
+            ),
+            patch(
+                "comps_service.tool_validation.AlphaVantageTickerValidator",
+                return_value=ticker_validator,
+            ),
+            running_service(real_comps_app) as base_url,
+        ):
+            client = HttpCompsToolClient(
+                base_url=base_url,
+                internal_token="internal-token",
+            )
+            with self.assertRaises(CompsToolUnavailable) as context:
+                asyncio.run(client.generate_comps_table(request))
+
+        self.assertEqual(
+            str(context.exception),
+            "Comps Service returned HTTP 501.",
+        )
+        self.assertEqual(ticker_validator.is_supported.call_count, 2)
 
 
 def _tool_request(

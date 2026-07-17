@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -139,6 +140,14 @@ async def ready(
 
 
 def _agent_routing_readiness_check() -> ReadinessCheck:
+    if os.environ.get("TALK_TO_YOUR_STOCK_ENV", "").strip().lower() == "production":
+        return ReadinessCheck(
+            status=DependencyStatus.FAIL,
+            message=(
+                "Agent routing is local-only until public deployment controls "
+                "are implemented."
+            ),
+        )
     return ReadinessCheck(status=DependencyStatus.OK)
 
 

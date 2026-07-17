@@ -15,8 +15,9 @@ inside their containers so they can communicate over the private Compose
 network, but other machines cannot reach the published host ports.
 
 Keep the loopback-qualified port mappings in `dev/docker-compose.yml` until the
-public ingress and service-to-service authentication controls required by
-ADR-001 are implemented and validated.
+public ingress and production-grade service identity controls required by
+ADR-001 are implemented and validated. The shared Agent-to-Comps Service
+Credential is local defense in depth, not a public deployment boundary.
 
 ## Start The Stack
 
@@ -58,11 +59,13 @@ HTTP `503` with `status: "not_ready"`.
 
 Agent Service startup prepares the ADK-owned session/event tables used to retain
 complete Agent and Tool event history for each User and Thread. Readiness
-includes `agent_session` to verify that store without preparing database objects
-and `agent_routing` to report that the ADK/Comps routing path is implemented.
-Configuration readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and
-`COMPS_SERVICE_INTERNAL_TOKEN` in local and production modes; production also
-requires `GOOGLE_ADK_APP_NAME`.
+includes `agent_session` to verify that store without preparing database objects.
+Local readiness reports `agent_routing` as ready when the ADK/Comps path is
+configured. Configuration readiness requires `GOOGLE_API_KEY`,
+`COMPS_SERVICE_URL`, and `COMPS_SERVICE_INTERNAL_TOKEN` in local and production
+modes; production also requires `GOOGLE_ADK_APP_NAME`. Production readiness
+intentionally fails `agent_routing` because public deployment controls remain
+deferred.
 
 Web BFF database readiness also requires the current Alembic schema revision.
 Missing or stale migrations keep the Web BFF not ready.
@@ -79,5 +82,7 @@ Production mode does not accept `DEV_AUTH_*` config. It requires:
 - Comps Service: `ALPHA_VANTAGE_API_KEY`, `COMPS_SERVICE_INTERNAL_TOKEN`
 - All services: `DATABASE_URL`
 
-Missing production configuration fails readiness clearly. The local dev-auth
-identity is not a production fallback.
+Missing production configuration fails readiness clearly. Even with all listed
+configuration, Agent routing remains not ready in production until public
+deployment controls exist. The local dev-auth identity is not a production
+fallback.

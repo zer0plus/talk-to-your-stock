@@ -68,7 +68,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         thread_id = uuid4()
         client = TestClient(app)
 
-        for content in ("Compare AAPL with NVDA", "Now compare it to MSFT"):
+        for content in ("What is EBITDA?", "How is it used in valuation?"):
             response = client.post(
                 "/v1/internal/agent/respond",
                 json={
@@ -94,9 +94,9 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         self.assertEqual(
             [event.content.parts[0].text for event in session.events],
             [
-                "Compare AAPL with NVDA",
+                "What is EBITDA?",
                 "Conversation Response",
-                "Now compare it to MSFT",
+                "How is it used in valuation?",
                 "Conversation Response",
             ],
         )
@@ -133,8 +133,8 @@ class AgentServiceMessageContractTest(unittest.TestCase):
                                 },
                             )
                             for content in (
-                                "Compare AAPL with NVDA",
-                                "Now compare it to MSFT",
+                                "What is EBITDA?",
+                                "How is it used in valuation?",
                             )
                         )
                     )
@@ -163,7 +163,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
                 "user_id": str(uuid4()),
                 "thread_id": str(uuid4()),
                 "user_message_id": str(uuid4()),
-                "content": "Compare AAPL with MSFT",
+                "content": "What is enterprise value?",
             },
         )
 
@@ -190,7 +190,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
                     "user_id": str(uuid4()),
                     "thread_id": str(uuid4()),
                     "user_message_id": str(uuid4()),
-                    "content": "Compare AAPL with MSFT",
+                    "content": "What is enterprise value?",
                 },
             )
 
@@ -210,7 +210,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
                     "user_id": str(uuid4()),
                     "thread_id": str(uuid4()),
                     "user_message_id": str(uuid4()),
-                    "content": "Compare AAPL with MSFT",
+                    "content": "What is enterprise value?",
                 },
             )
 
@@ -227,7 +227,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
                     "user_id": str(uuid4()),
                     "thread_id": str(uuid4()),
                     "user_message_id": str(uuid4()),
-                    "content": "Compare AAPL with MSFT",
+                    "content": "What is enterprise value?",
                 },
             )
 

@@ -28,6 +28,10 @@ _Avoid_: Stock agent, finance bot
 A deterministic capability invoked by the Agent through an explicit contract.
 _Avoid_: Plugin, function unless discussing implementation mechanics
 
+**Service Credential**:
+A shared secret used by one backend service to authenticate an internal call to another backend service. During PRD #10, `COMPS_SERVICE_INTERNAL_TOKEN` authenticates Agent-to-Comps Tool calls; it does not authenticate or authorize a User and is not a claim of public-deployment readiness.
+_Avoid_: User token, login token
+
 **Comps**:
 Trading comparables analysis that compares a target company against peer companies using valuation metrics.
 _Avoid_: Comparable companies analysis, peer table unless user-facing copy requires it

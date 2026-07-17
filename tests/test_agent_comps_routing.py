@@ -138,8 +138,8 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(
             body["content"],
             (
-                "AAPL trades at 10.0x EV/EBITDA versus the peer median of "
-                "25.0x in the generated Comps Table."
+                "Generated the Comps Table for AAPL with MSFT and NVDA "
+                f"(Run {tool_response.run.id})."
             ),
         )
         self.assertEqual(len(comps_client.requests), 1)
@@ -151,6 +151,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(request.peer_tickers, ["MSFT", "NVDA"])
         self.assertEqual(request.peer_selection_mode.value, "user_supplied")
         self.assertEqual(request.analysis_period.value, "latest")
+        self.assertEqual(len(model.responses), 1)
 
         session = asyncio.run(
             self.session_context.get_session(user_id=user_id, thread_id=thread_id)
@@ -171,6 +172,85 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(tool_call.args["target_ticker"], "AAPL")
         self.assertEqual(tool_result.name, "generate_comps_table")
         self.assertEqual(tool_result.response["run"]["id"], str(tool_response.run.id))
+
+    def test_explicit_peer_prompt_fails_if_model_skips_comps_tool(self) -> None:
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                types.Content(
+                    role="model",
+                    parts=[types.Part(text="AAPL looks cheaper than MSFT.")],
+                )
+            ],
+        )
+        agent = FundamentalAnalysisAgent(
+            model=model,
+            comps_client=RecordingCompsClient(),
+        )
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(uuid4()),
+                "user_message_id": str(uuid4()),
+                "content": "Compare Apple to Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["error"]["message"],
+            "An explicit peer comparison requires a successful Comps Tool result.",
+        )
+
+    def test_non_explicit_comparisons_can_return_conversation_or_clarification(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "Compare Apple with what?",
+                "Which Peer Tickers should I compare with Apple?",
+            ),
+            (
+                "Compare EBITDA to revenue",
+                "EBITDA is a profit measure; revenue is top-line sales.",
+            ),
+        )
+
+        for prompt, model_response in cases:
+            with self.subTest(prompt=prompt):
+                model = ScriptedLlm(
+                    model="scripted",
+                    responses=[
+                        types.Content(
+                            role="model",
+                            parts=[types.Part(text=model_response)],
+                        )
+                    ],
+                )
+                comps_client = RecordingCompsClient()
+                agent = FundamentalAnalysisAgent(
+                    model=model,
+                    comps_client=comps_client,
+                )
+                app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+                response = TestClient(app).post(
+                    "/v1/internal/agent/respond",
+                    json={
+                        "user_id": str(uuid4()),
+                        "thread_id": str(uuid4()),
+                        "user_message_id": str(uuid4()),
+                        "content": prompt,
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["content"], model_response)
+                self.assertIsNone(response.json()["run"])
+                self.assertEqual(comps_client.requests, [])
 
     def test_agent_retries_one_pre_run_validation_error_with_corrected_tickers(
         self,
