@@ -15,9 +15,17 @@ The Web BFF and Google ADK persist different views of a Thread:
 - No fixed Message-count truncation is applied. Any future context compaction
   requires an explicit design rather than silently dropping older events.
 
-The current Agent route establishes and persists this ADK session context. Real
-model routing and `generate_comps_table` execution remain separate work; when
-the ADK Runner is wired, it must use the same User and Thread session identity.
+The Agent route runs the Fundamental Analysis Agent through Google ADK. For a
+canonical explicit-peer Message, the Agent converts company language to
+structured Tickers and calls the configured Comps Service through
+`generate_comps_table`. The Runner uses the same User and Thread session
+identity, so the User Message, model Tool call, Tool result, and Assistant
+Message remain visible in ADK-native event history.
+
+The Agent never calculates final Comps Table Metrics. A successful Assistant
+Message can explain only the Run/Table/Trace payload returned by the Tool. A
+pre-Run validation error permits one corrected Tool call; a second validation
+error ends the turn with a concise Ticker clarification.
 
 ## Persistence Flow
 
@@ -35,24 +43,19 @@ sequenceDiagram
     BFF->>Agent: user_id, thread_id, message_id, content
     Agent->>Session: Load or create session for User + Thread
     Agent->>Session: Append User Message
-    rect rgb(245, 245, 245)
-        Note over Agent,Tool: Future ADK Runner flow; not implemented by issue #18
-        Agent->>Tool: Invoke with AAPL and NVDA
-        Tool-->>Agent: Tool result
-        Agent->>Session: Store invocation and result
-        Agent->>Session: Store Assistant response
-        Agent-->>BFF: Assistant response + optional Run
-    end
+    Agent->>Tool: Invoke with AAPL and NVDA
+    Tool-->>Agent: Tool result
+    Agent->>Session: Store invocation and result
+    Agent->>Session: Store Assistant response
+    Agent-->>BFF: Assistant response + optional Run
     BFF->>ProductDB: Persist Assistant Message
 
     User->>BFF: "Now compare it to MSFT"
     BFF->>ProductDB: Persist User Message
     BFF->>Agent: Same user_id + thread_id, new Message
     Agent->>Session: Load complete prior event history
-    rect rgb(245, 245, 245)
-        Note over Agent,Session: Future Runner receives AAPL, NVDA,<br/>Tool invocation, and Tool result
-        Agent-->>BFF: Context-aware response
-    end
+    Note over Agent,Session: Runner receives AAPL, NVDA,<br/>Tool invocation, and Tool result
+    Agent-->>BFF: Context-aware response
 ```
 
 ## Ownership Rules
@@ -60,8 +63,9 @@ sequenceDiagram
 1. The Web BFF persists the User Message before invoking the Agent Service.
 2. `user_id` scopes ADK sessions to a User; the Thread UUID is the ADK session
    ID.
-3. The Agent loads the complete session and appends the current User event
+3. The ADK Runner loads the complete session and appends the current User event
    before response processing.
-4. The Agent appends the Assistant event after response processing. ADK Runner
-   Tool events remain between those events in invocation order.
+4. The Runner appends model Tool calls, Tool results, and the Assistant event in
+   invocation order. After a second validation error, the Agent closes the
+   Runner and appends the deterministic clarification to the same ADK session.
 5. The Web BFF persists the returned Assistant Message and optional Run link.

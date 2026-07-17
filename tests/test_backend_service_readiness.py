@@ -25,7 +25,9 @@ LOCAL_ENV = {
     "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
     "DEV_AUTH_EMAIL": "dev@example.com",
     "AGENT_SERVICE_URL": "http://agent-service:8001",
+    "COMPS_SERVICE_URL": "http://comps-service:8002",
     "COMPS_SERVICE_INTERNAL_TOKEN": "local-comps-token",
+    "GOOGLE_API_KEY": "local-google-key",
     "ALPHA_VANTAGE_API_KEY": "local-alpha-vantage-key",
 }
 
@@ -293,7 +295,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertIn("COMPS_SERVICE_URL", message)
         self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
 
-    def test_production_agent_readiness_fails_until_real_routing_exists(self) -> None:
+    def test_production_agent_readiness_reports_real_routing_ready(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
             "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
@@ -306,12 +308,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
         with database_connects():
             response = self._get_ready(agent_app, env)
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["status"], "ready")
         self.assertEqual(body["checks"]["configuration"]["status"], "ok")
         self.assertEqual(body["checks"]["database"]["status"], "ok")
-        self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
+        self.assertEqual(body["checks"]["agent_routing"]["status"], "ok")
 
     def test_production_comps_readiness_requires_provider_configuration(self) -> None:
         env = {

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -26,16 +25,19 @@ from talk_to_your_stock_shared import (
     ReadinessCheck,
 )
 from talk_to_your_stock_shared.readiness import (
-    ENVIRONMENT_VAR,
-    PRODUCTION_ENVIRONMENT,
     build_readiness_response,
     check_database,
     readiness_http_status,
 )
 from talk_to_your_stock_shared.time import utc_now
 from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
+from agent_service.fundamental_agent import (
+    AgentRoutingUnavailable,
+    FundamentalAnalysisAgent,
+)
 
 logger = logging.getLogger(__name__)
+
 
 @lru_cache(maxsize=1)
 def get_session_context() -> AdkSessionContext:
@@ -43,6 +45,11 @@ def get_session_context() -> AdkSessionContext:
         return AdkSessionContext.from_env()
     except AgentSessionUnavailable as exc:
         return AdkSessionContext.unavailable(str(exc))
+
+
+@lru_cache(maxsize=1)
+def get_fundamental_agent() -> FundamentalAnalysisAgent:
+    return FundamentalAnalysisAgent.from_env()
 
 
 @asynccontextmanager
@@ -70,6 +77,14 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(AgentRoutingUnavailable)
+def agent_routing_exception_handler(
+    _request: object,
+    exc: AgentRoutingUnavailable,
+) -> JSONResponse:
+    return _agent_operation_error(exc)
 
 
 @app.exception_handler(RequestValidationError)
@@ -124,11 +139,6 @@ async def ready(
 
 
 def _agent_routing_readiness_check() -> ReadinessCheck:
-    if os.environ.get(ENVIRONMENT_VAR, "").strip().lower() == PRODUCTION_ENVIRONMENT:
-        return ReadinessCheck(
-            status=DependencyStatus.FAIL,
-            message="Production Agent routing is not implemented.",
-        )
     return ReadinessCheck(status=DependencyStatus.OK)
 
 
@@ -141,45 +151,27 @@ def _agent_routing_readiness_check() -> ReadinessCheck:
 async def respond_to_message(
     request: AgentMessageRequest,
     session_context: Annotated[AdkSessionContext, Depends(get_session_context)],
+    fundamental_agent: Annotated[
+        FundamentalAnalysisAgent,
+        Depends(get_fundamental_agent),
+    ],
 ) -> AgentMessageResponse | JSONResponse:
-    if os.environ.get(ENVIRONMENT_VAR, "").strip().lower() == PRODUCTION_ENVIRONMENT:
-        return JSONResponse(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            content=ErrorResponse(
-                error=ErrorDetail(
-                    code=ErrorCode.UPSTREAM_ERROR,
-                    message="Production Agent routing is not implemented.",
-                )
-            ).model_dump(mode="json"),
-        )
-
     try:
         async with session_context.turn(
             user_id=request.user_id,
             thread_id=request.thread_id,
         ):
-            session = await session_context.begin_turn(
-                user_id=request.user_id,
-                thread_id=request.thread_id,
-                user_message_id=request.user_message_id,
-                user_content=request.content,
+            response = await fundamental_agent.respond(
+                request=request,
+                session_context=session_context,
             )
-            response = AgentMessageResponse(
-                content="Message received. Agent routing is not implemented yet.",
-                run=None,
-            )
-            await session_context.complete_turn(
-                session=session,
-                user_message_id=request.user_message_id,
-                assistant_content=response.content,
-            )
-    except AgentSessionUnavailable as exc:
-        return _agent_session_error(exc)
+    except (AgentRoutingUnavailable, AgentSessionUnavailable) as exc:
+        return _agent_operation_error(exc)
     return response
 
 
-def _agent_session_error(exc: AgentSessionUnavailable) -> JSONResponse:
-    logger.exception("Agent session operation failed.")
+def _agent_operation_error(exc: Exception) -> JSONResponse:
+    logger.error("Agent operation failed: %s", exc)
     return JSONResponse(
         status_code=status.HTTP_502_BAD_GATEWAY,
         content=ErrorResponse(

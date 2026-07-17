@@ -43,6 +43,14 @@ class AdkSessionContext:
         self._turn_lock_ref_counts: dict[tuple[UUID, UUID], int] = {}
         self._turn_locks_guard = asyncio.Lock()
 
+    @property
+    def app_name(self) -> str:
+        return self._app_name
+
+    @property
+    def session_service(self) -> BaseSessionService:
+        return self._require_prepared_service()
+
     @classmethod
     def unavailable(cls, message: str) -> AdkSessionContext:
         return cls(

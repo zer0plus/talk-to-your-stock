@@ -58,8 +58,11 @@ HTTP `503` with `status: "not_ready"`.
 
 Agent Service startup prepares the ADK-owned session/event tables used to retain
 complete Agent and Tool event history for each User and Thread. Readiness
-includes `agent_session` to verify that store without preparing database objects.
-In production, `agent_routing` remains failed until real Agent routing exists.
+includes `agent_session` to verify that store without preparing database objects
+and `agent_routing` to report that the ADK/Comps routing path is implemented.
+Configuration readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and
+`COMPS_SERVICE_INTERNAL_TOKEN` in local and production modes; production also
+requires `GOOGLE_ADK_APP_NAME`.
 
 Web BFF database readiness also requires the current Alembic schema revision.
 Missing or stale migrations keep the Web BFF not ready.

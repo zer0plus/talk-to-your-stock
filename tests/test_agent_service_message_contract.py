@@ -4,16 +4,43 @@ import asyncio
 import os
 import tempfile
 import unittest
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import httpx
 from fastapi.testclient import TestClient
+from google.adk.models.base_llm import BaseLlm
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.adk.sessions import InMemorySessionService
+from google.genai import types
 
-from agent_service.main import app, get_session_context
+from agent_service.fundamental_agent import FundamentalAnalysisAgent
+from agent_service.main import app, get_fundamental_agent, get_session_context
 from agent_service.session_context import AdkSessionContext
+
+
+class ConversationLlm(BaseLlm):
+    async def generate_content_async(
+        self,
+        llm_request: LlmRequest,
+        stream: bool = False,
+    ) -> AsyncGenerator[LlmResponse, None]:
+        del llm_request, stream
+        yield LlmResponse(
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="Conversation Response")],
+            ),
+            partial=False,
+        )
+
+
+class UnexpectedCompsClient:
+    async def generate_comps_table(self, request: object) -> None:
+        raise AssertionError(f"Unexpected Tool call: {request}")
 
 
 class AgentServiceMessageContractTest(unittest.TestCase):
@@ -23,10 +50,18 @@ class AgentServiceMessageContractTest(unittest.TestCase):
             session_service=InMemorySessionService(),
         )
         app.dependency_overrides[get_session_context] = lambda: self.session_context
+        self.fundamental_agent = FundamentalAnalysisAgent(
+            model=ConversationLlm(model="conversation"),
+            comps_client=UnexpectedCompsClient(),
+        )
+        app.dependency_overrides[get_fundamental_agent] = (
+            lambda: self.fundamental_agent
+        )
 
     def tearDown(self) -> None:
         app.dependency_overrides.clear()
         get_session_context.cache_clear()
+        get_fundamental_agent.cache_clear()
 
     def test_agent_service_resumes_complete_thread_message_history(self) -> None:
         user_id = uuid4()
@@ -60,9 +95,9 @@ class AgentServiceMessageContractTest(unittest.TestCase):
             [event.content.parts[0].text for event in session.events],
             [
                 "Compare AAPL with NVDA",
-                "Message received. Agent routing is not implemented yet.",
+                "Conversation Response",
                 "Now compare it to MSFT",
-                "Message received. Agent routing is not implemented yet.",
+                "Conversation Response",
             ],
         )
 
@@ -137,7 +172,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         self.assertEqual(body["run"], None)
         self.assertEqual(
             body["content"],
-            "Message received. Agent routing is not implemented yet.",
+            "Conversation Response",
         )
 
     def test_agent_session_failure_returns_upstream_error(self) -> None:
@@ -162,10 +197,10 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         body = response.json()
         self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
-        self.assertEqual(body["error"]["message"], "Agent session unavailable.")
+        self.assertEqual(body["error"]["message"], "Agent routing unavailable.")
 
     def test_missing_database_configuration_returns_upstream_error(self) -> None:
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_session_context)
         get_session_context.cache_clear()
 
         with patch.dict(os.environ, {}, clear=True), TestClient(app) as client:
@@ -184,7 +219,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
         self.assertEqual(body["error"]["message"], "DATABASE_URL is required.")
 
-    def test_agent_service_production_route_fails_until_real_routing_exists(self) -> None:
+    def test_agent_service_uses_configured_routing_in_production(self) -> None:
         with patch.dict(os.environ, {"TALK_TO_YOUR_STOCK_ENV": "production"}, clear=True):
             response = TestClient(app).post(
                 "/v1/internal/agent/respond",
@@ -196,10 +231,29 @@ class AgentServiceMessageContractTest(unittest.TestCase):
                 },
             )
 
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["content"], "Conversation Response")
+
+    def test_missing_comps_service_configuration_returns_upstream_error(self) -> None:
+        app.dependency_overrides.pop(get_fundamental_agent)
+        get_fundamental_agent.cache_clear()
+
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}, clear=True):
+            response = TestClient(app).post(
+                "/v1/internal/agent/respond",
+                json={
+                    "user_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "user_message_id": str(uuid4()),
+                    "content": "Compare Apple with Microsoft",
+                },
+            )
+
         self.assertEqual(response.status_code, 502)
         body = response.json()
         self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
-        self.assertIn("Production Agent routing is not implemented", body["error"]["message"])
+        self.assertEqual(body["error"]["message"], "COMPS_SERVICE_URL is required.")
 
     def test_agent_service_validation_errors_use_error_response_shape(self) -> None:
         response = TestClient(app).post(
