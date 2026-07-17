@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
-from datetime import datetime, timezone
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from threading import Event
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -172,6 +174,40 @@ class RecordingRepository:
         return any(message.id == message_id for message in self.messages)
 
 
+class DelayedFirstMessageRepository(RecordingRepository):
+    def __init__(
+        self,
+        *,
+        first_content: str,
+        second_agent_invoked: Event,
+    ) -> None:
+        super().__init__()
+        self.first_user_message_saved = Event()
+        self._first_content = first_content
+        self._second_agent_invoked = second_agent_invoked
+
+    def create_message(
+        self,
+        *,
+        thread_id: UUID,
+        role: MessageRole,
+        content: str,
+        status: MessageStatus,
+        run_id: UUID | None = None,
+    ) -> Message:
+        message = super().create_message(
+            thread_id=thread_id,
+            role=role,
+            content=content,
+            status=status,
+            run_id=run_id,
+        )
+        if role == MessageRole.USER and content == self._first_content:
+            self.first_user_message_saved.set()
+            self._second_agent_invoked.wait(timeout=2)
+        return message
+
+
 class WebBffThreadsMessagesTest(unittest.TestCase):
     def tearDown(self) -> None:
         app.dependency_overrides.clear()
@@ -214,6 +250,66 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(
             repository.events,
             ["message.created:user", "agent.invoked", "message.created:assistant"],
+        )
+
+    def test_overlapping_messages_keep_product_and_agent_turns_in_the_same_order(
+        self,
+    ) -> None:
+        first_content = "Compare AAPL with MSFT"
+        second_content = "Now add NVDA"
+        second_agent_invoked = Event()
+        repository = DelayedFirstMessageRepository(
+            first_content=first_content,
+            second_agent_invoked=second_agent_invoked,
+        )
+
+        def respond(user_message: Message) -> ControlledAgentResponse:
+            if user_message.content == second_content:
+                second_agent_invoked.set()
+            return ControlledAgentResponse(content=f"Reply to: {user_message.content}")
+
+        agent = ControlledAgent(repository=repository, response_factory=respond)
+        first_client = self._client(repository=repository, agent=agent)
+        second_client = TestClient(app)
+        thread_id = first_client.post(
+            "/v1/threads",
+            json={"title": "Comps"},
+        ).json()["thread"]["id"]
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first_response = executor.submit(
+                first_client.post,
+                f"/v1/threads/{thread_id}/messages",
+                json={"content": first_content},
+            )
+            self.assertTrue(repository.first_user_message_saved.wait(timeout=2))
+            second_response = executor.submit(
+                second_client.post,
+                f"/v1/threads/{thread_id}/messages",
+                json={"content": second_content},
+            )
+            responses = [
+                first_response.result(timeout=5),
+                second_response.result(timeout=5),
+            ]
+
+        listed_messages = first_client.get(
+            f"/v1/threads/{thread_id}/messages",
+        ).json()["messages"]
+
+        self.assertEqual([response.status_code for response in responses], [201, 201])
+        self.assertEqual(
+            [message["content"] for message in listed_messages],
+            [
+                first_content,
+                f"Reply to: {first_content}",
+                second_content,
+                f"Reply to: {second_content}",
+            ],
+        )
+        self.assertEqual(
+            [invocation["content"] for invocation in agent.invocations],
+            [first_content, second_content],
         )
 
     def test_posting_message_crosses_real_agent_http_boundary(self) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from web_bff.agent_client import AgentServiceUnavailable, HttpAgentClient
 from web_bff.auth import AuthenticationError, authenticate_user
 from web_bff.repository import InvalidCursorError, PostgresWebBffRepository
 from web_bff.readiness import check_agent_service, check_web_bff_database
+from web_bff.turn_coordinator import ThreadTurnCoordinator
 
 app = FastAPI(
     title="TalkToYourStock Web BFF",
@@ -142,6 +144,11 @@ def get_repository() -> PostgresWebBffRepository:
 
 def get_agent_client() -> HttpAgentClient:
     return HttpAgentClient.from_env()
+
+
+@lru_cache(maxsize=1)
+def get_thread_turn_coordinator() -> ThreadTurnCoordinator:
+    return ThreadTurnCoordinator()
 
 
 def get_current_user(
@@ -270,6 +277,10 @@ def create_message(
     request: CreateMessageRequest,
     repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
     agent_client: Annotated[HttpAgentClient, Depends(get_agent_client)],
+    turn_coordinator: Annotated[
+        ThreadTurnCoordinator,
+        Depends(get_thread_turn_coordinator),
+    ],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> CreateMessageResponse:
     user = repository.upsert_user(current_user)
@@ -281,48 +292,49 @@ def create_message(
             message="Thread not found.",
         )
 
-    user_message = repository.create_message(
-        thread_id=thread.id,
-        role=MessageRole.USER,
-        content=request.content,
-        status=MessageStatus.COMPLETE,
-    )
-    try:
-        agent_response = agent_client.respond_to_user_message(
-            user=user,
-            thread=thread,
+    with turn_coordinator.turn(thread_id=thread.id):
+        user_message = repository.create_message(
+            thread_id=thread.id,
+            role=MessageRole.USER,
+            content=request.content,
+            status=MessageStatus.COMPLETE,
+        )
+        try:
+            agent_response = agent_client.respond_to_user_message(
+                user=user,
+                thread=thread,
+                user_message=user_message,
+            )
+        except AgentServiceUnavailable as exc:
+            raise ApiException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                code=ErrorCode.UPSTREAM_ERROR,
+                message=str(exc),
+            ) from exc
+
+        run = agent_response.run
+        if run is not None and (
+            run.thread_id != thread.id or run.trigger_message_id != user_message.id
+        ):
+            raise ApiException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                code=ErrorCode.UPSTREAM_ERROR,
+                message="Agent Service returned invalid Run linkage.",
+            )
+
+        assistant_message = repository.create_message(
+            thread_id=thread.id,
+            role=MessageRole.ASSISTANT,
+            content=agent_response.content,
+            status=MessageStatus.COMPLETE,
+            run_id=run.id if run is not None else None,
+        )
+        return CreateMessageResponse(
             user_message=user_message,
+            assistant_message=assistant_message,
+            run=run,
+            events_url=None,
         )
-    except AgentServiceUnavailable as exc:
-        raise ApiException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            code=ErrorCode.UPSTREAM_ERROR,
-            message=str(exc),
-        ) from exc
-
-    run = agent_response.run
-    if run is not None and (
-        run.thread_id != thread.id or run.trigger_message_id != user_message.id
-    ):
-        raise ApiException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            code=ErrorCode.UPSTREAM_ERROR,
-            message="Agent Service returned invalid Run linkage.",
-        )
-
-    assistant_message = repository.create_message(
-        thread_id=thread.id,
-        role=MessageRole.ASSISTANT,
-        content=agent_response.content,
-        status=MessageStatus.COMPLETE,
-        run_id=run.id if run is not None else None,
-    )
-    return CreateMessageResponse(
-        user_message=user_message,
-        assistant_message=assistant_message,
-        run=run,
-        events_url=None,
-    )
 
 
 def _validation_error_details(exc: RequestValidationError) -> dict[str, object]:
