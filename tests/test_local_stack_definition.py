@@ -42,20 +42,24 @@ class LocalStackDefinitionTest(unittest.TestCase):
         )
 
         for service_name, port in (
-            ("web-bff", "8000:8000"),
-            ("agent-service", "8001:8001"),
-            ("comps-service", "8002:8002"),
+            ("web-bff", "127.0.0.1:8000:8000"),
+            ("agent-service", "127.0.0.1:8001:8001"),
+            ("comps-service", "127.0.0.1:8002:8002"),
         ):
             with self.subTest(service=service_name):
                 service = services[service_name]
                 self.assertEqual(service["depends_on"]["postgres"]["condition"], "service_healthy")
-                self.assertIn(port, service["ports"])
+                self.assertEqual(service["ports"], [port])
                 self.assertIn("DATABASE_URL", service["environment"])
                 self.assertEqual(
                     service["environment"]["TALK_TO_YOUR_STOCK_ENV"],
                     "${TALK_TO_YOUR_STOCK_ENV}",
                 )
 
+        self.assertEqual(
+            services["postgres"]["ports"],
+            ["127.0.0.1:5432:5432"],
+        )
         self.assertIn("healthcheck", services["postgres"])
 
     def test_dockerignore_excludes_local_env_files_but_keeps_examples(self) -> None:

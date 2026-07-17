@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d talk_to_your_stock"]
       interval: 5s
@@ -41,7 +41,7 @@ services:
       MANAGED_AUTH_AUDIENCE: ${MANAGED_AUTH_AUDIENCE:-}
       AGENT_SERVICE_URL: ${AGENT_SERVICE_URL:-http://agent-service:8001}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,7 +61,7 @@ services:
       COMPS_SERVICE_URL: ${COMPS_SERVICE_URL:-http://comps-service:8002}
       COMPS_SERVICE_INTERNAL_TOKEN: ${COMPS_SERVICE_INTERNAL_TOKEN:-}
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,7 +77,7 @@ services:
       ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
       COMPS_SERVICE_INTERNAL_TOKEN: ${COMPS_SERVICE_INTERNAL_TOKEN:-}
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     depends_on:
       postgres:
         condition: service_healthy

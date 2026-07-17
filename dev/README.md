@@ -7,6 +7,17 @@ boundaries:
 - Agent Service: http://localhost:8001
 - Comps Service: http://localhost:8002
 
+## Local-Only Network Boundary
+
+Compose publishes PostgreSQL and all three backend services only on the host's
+IPv4 loopback interface (`127.0.0.1`). The services still listen on `0.0.0.0`
+inside their containers so they can communicate over the private Compose
+network, but other machines cannot reach the published host ports.
+
+Keep the loopback-qualified port mappings in `dev/docker-compose.yml` until the
+public ingress and service-to-service authentication controls required by
+ADR-001 are implemented and validated.
+
 ## Start The Stack
 
 1. Create a local env file:
