@@ -7,6 +7,17 @@ boundaries:
 - Agent Service: http://localhost:8001
 - Comps Service: http://localhost:8002
 
+## Local-Only Network Boundary
+
+Compose publishes PostgreSQL and all three backend services only on the host's
+IPv4 loopback interface (`127.0.0.1`). The services still listen on `0.0.0.0`
+inside their containers so they can communicate over the private Compose
+network, but other machines cannot reach the published host ports.
+
+Keep the loopback-qualified port mappings in `dev/docker-compose.yml` until the
+public ingress and service-to-service authentication controls required by
+ADR-001 are implemented and validated.
+
 ## Start The Stack
 
 1. Create a local env file:
@@ -30,6 +41,9 @@ cp dev/.env.example dev/.env
 docker compose -f dev/docker-compose.yml up --build -d
 ```
 
+Compose waits for PostgreSQL, runs the one-shot `web-bff-migrate` service, and
+starts the Web BFF only after `python -m alembic upgrade head` succeeds.
+
 5. Check readiness:
 
 ```bash
@@ -41,6 +55,14 @@ curl -i http://localhost:8002/v1/ready
 Each readiness response uses the shared contract from `api/openapi.yaml` and
 includes `configuration` and `database` checks. A failed required check returns
 HTTP `503` with `status: "not_ready"`.
+
+Agent Service startup prepares the ADK-owned session/event tables used to retain
+complete Agent and Tool event history for each User and Thread. Readiness
+includes `agent_session` to verify that store without preparing database objects.
+In production, `agent_routing` remains failed until real Agent routing exists.
+
+Web BFF database readiness also requires the current Alembic schema revision.
+Missing or stale migrations keep the Web BFF not ready.
 
 ## Production Mode
 

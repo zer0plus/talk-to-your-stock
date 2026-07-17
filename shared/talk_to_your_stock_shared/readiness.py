@@ -5,6 +5,7 @@ import os
 from collections.abc import Mapping
 from typing import Callable
 from urllib.parse import urlparse
+from uuid import UUID
 
 from talk_to_your_stock_shared.enums import (
     DependencyStatus,
@@ -30,6 +31,8 @@ def build_readiness_response(
     service: ServiceName,
     environ: Mapping[str, str] | None = None,
     database_checker: DatabaseChecker | None = None,
+    additional_checkers: Mapping[str, DatabaseChecker] | None = None,
+    additional_checks: Mapping[str, ReadinessCheck] | None = None,
 ) -> ReadinessResponse:
     env = os.environ if environ is None else environ
     checker = check_database if database_checker is None else database_checker
@@ -38,6 +41,9 @@ def build_readiness_response(
         "configuration": check_configuration(service=service, environ=env),
         "database": checker(env),
     }
+    for name, dependency_checker in (additional_checkers or {}).items():
+        checks[name] = dependency_checker(env)
+    checks.update(additional_checks or {})
     status = (
         ReadinessState.READY
         if all(check.status != DependencyStatus.FAIL for check in checks.values())
@@ -87,10 +93,29 @@ def check_configuration(
             message="DEV_AUTH_* configuration is not allowed in production mode.",
         )
 
+    if service == ServiceName.WEB_BFF and environment in LOCAL_ENVIRONMENTS:
+        try:
+            UUID(environ["DEV_AUTH_USER_ID"].strip())
+        except ValueError:
+            return ReadinessCheck(
+                status=DependencyStatus.FAIL,
+                message="DEV_AUTH_USER_ID must be a valid UUID.",
+            )
+
+    if service == ServiceName.WEB_BFF and environment == PRODUCTION_ENVIRONMENT:
+        return ReadinessCheck(
+            status=DependencyStatus.FAIL,
+            message="Managed JWT verification is not implemented.",
+        )
+
     return ReadinessCheck(status=DependencyStatus.OK)
 
 
-def check_database(environ: Mapping[str, str]) -> ReadinessCheck:
+def check_database(
+    environ: Mapping[str, str],
+    *,
+    required_schema_revision: str | None = None,
+) -> ReadinessCheck:
     database_url = environ.get(DATABASE_URL_VAR, "").strip()
     if not database_url:
         return ReadinessCheck(
@@ -118,6 +143,24 @@ def check_database(environ: Mapping[str, str]) -> ReadinessCheck:
             with connection.cursor() as cursor:
                 cursor.execute("select 1")
                 cursor.fetchone()
+                if required_schema_revision is not None:
+                    try:
+                        cursor.execute("select version_num from alembic_version")
+                        revision = cursor.fetchone()
+                    except Exception:  # pragma: no cover - exact driver errors vary.
+                        logger.exception("PostgreSQL migration readiness check failed.")
+                        return ReadinessCheck(
+                            status=DependencyStatus.FAIL,
+                            message="PostgreSQL database migrations are not applied.",
+                        )
+                    if revision != (required_schema_revision,):
+                        return ReadinessCheck(
+                            status=DependencyStatus.FAIL,
+                            message=(
+                                "PostgreSQL database migration is not at the required "
+                                f"revision {required_schema_revision}."
+                            ),
+                        )
     except Exception as exc:  # pragma: no cover - exact driver errors vary.
         logger.exception("PostgreSQL readiness check failed.")
         message = "PostgreSQL readiness check failed."
@@ -149,6 +192,7 @@ def _required_config_names(
             )
         else:
             required.extend(["DEV_AUTH_USER_ID", "DEV_AUTH_EMAIL"])
+        required.extend(["AGENT_SERVICE_URL"])
     elif service == ServiceName.AGENT_SERVICE:
         if environment == PRODUCTION_ENVIRONMENT:
             required.extend(

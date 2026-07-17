@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 from tests.readiness_fakes import database_connects
@@ -11,12 +12,203 @@ from web_bff.main import app
 
 
 class WebBffReadinessTest(unittest.TestCase):
+    def setUp(self) -> None:
+        agent_response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={
+                "status": "ready",
+                "service": "agent-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+        agent_get_patcher = patch("httpx.get", return_value=agent_response)
+        self.agent_get = agent_get_patcher.start()
+        self.addCleanup(agent_get_patcher.stop)
+
+    def test_readiness_fails_when_agent_service_is_unavailable(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+        self.agent_get.side_effect = httpx.ConnectError("connection refused")
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["agent_service"]["message"],
+            "Agent Service readiness check failed.",
+        )
+        self.agent_get.assert_called_once_with(
+            "http://agent-service:8001/v1/ready",
+            timeout=2,
+        )
+
+    def test_readiness_fails_when_agent_response_is_malformed(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+        self.agent_get.return_value = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={"status": "ready"},
+        )
+
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "fail")
+
+    def test_readiness_fails_when_ready_response_is_from_another_service(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+        self.agent_get.return_value = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={
+                "status": "ready",
+                "service": "comps-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "fail")
+
+    def test_readiness_fails_when_agent_reports_not_ready(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+        self.agent_get.return_value = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={
+                "status": "not_ready",
+                "service": "agent-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "fail")
+
+    def test_readiness_fails_when_migration_configuration_is_invalid(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "web_bff.readiness.required_schema_revision",
+                side_effect=RuntimeError("multiple migration heads"),
+            ),
+            self.assertLogs("web_bff.readiness", level="ERROR"),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["database"]["message"],
+            "Web BFF migration configuration is invalid.",
+        )
+
+    def test_readiness_fails_when_database_schema_revision_is_stale(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(schema_revision="obsolete_revision"),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertIn("required revision", body["checks"]["database"]["message"])
+
+    def test_readiness_fails_when_database_schema_is_not_migrated(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(schema_revision=None),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["database"]["status"], "fail")
+        self.assertIn("migration", body["checks"]["database"]["message"].lower())
+
     def test_local_readiness_accepts_explicit_dev_auth_identity(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "local",
             "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
         }
 
         with (
@@ -37,6 +229,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
         }
 
         with (
@@ -61,6 +254,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "MANAGED_AUTH_JWKS_URL": "https://auth.example.com/.well-known/jwks.json",
             "MANAGED_AUTH_ISSUER": "https://auth.example.com",
             "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
         }
@@ -76,6 +270,48 @@ class WebBffReadinessTest(unittest.TestCase):
         self.assertEqual(body["status"], "not_ready")
         self.assertEqual(body["checks"]["configuration"]["status"], "fail")
         self.assertIn("DEV_AUTH_*", body["checks"]["configuration"]["message"])
+
+    def test_production_readiness_fails_until_jwt_verification_exists(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "production",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "MANAGED_AUTH_JWKS_URL": "https://auth.example.com/.well-known/jwks.json",
+            "MANAGED_AUTH_ISSUER": "https://auth.example.com",
+            "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["configuration"]["status"], "fail")
+        self.assertIn("JWT verification is not implemented", body["checks"]["configuration"]["message"])
+
+    def test_local_readiness_rejects_invalid_dev_auth_user_id(self) -> None:
+        env = {
+            "TALK_TO_YOUR_STOCK_ENV": "local",
+            "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
+            "DEV_AUTH_USER_ID": "dev-user",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
+        }
+
+        with (
+            patch.dict(os.environ, env, clear=True),
+            database_connects(),
+        ):
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["checks"]["configuration"]["status"], "fail")
+        self.assertIn("DEV_AUTH_USER_ID must be a valid UUID", body["checks"]["configuration"]["message"])
 
 
 if __name__ == "__main__":

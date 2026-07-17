@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from google.adk.sessions import InMemorySessionService
 
-from agent_service.main import app as agent_app
+from agent_service.main import app as agent_app, get_session_context
+from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
 from comps_service.main import app as comps_app
+from tests.live_service import running_service
 from tests.readiness_fakes import database_connects, database_unavailable
 from web_bff.main import app as web_bff_app
 
@@ -18,12 +24,36 @@ LOCAL_ENV = {
     "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/talk_to_your_stock",
     "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
     "DEV_AUTH_EMAIL": "dev@example.com",
+    "AGENT_SERVICE_URL": "http://agent-service:8001",
     "COMPS_SERVICE_INTERNAL_TOKEN": "local-comps-token",
     "ALPHA_VANTAGE_API_KEY": "local-alpha-vantage-key",
 }
 
 
 class BackendServiceReadinessTest(unittest.TestCase):
+    def setUp(self) -> None:
+        agent_response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
+            json={
+                "status": "ready",
+                "service": "agent-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+        self.agent_get_patcher = patch("httpx.get", return_value=agent_response)
+        self.agent_get_patcher.start()
+        self.addCleanup(self.agent_get_patcher.stop)
+        self.agent_session_context = AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=InMemorySessionService(),
+        )
+        agent_app.dependency_overrides[get_session_context] = (
+            lambda: self.agent_session_context
+        )
+        self.addCleanup(agent_app.dependency_overrides.clear)
+
     def test_readiness_openapi_documents_503_response(self) -> None:
         for service_name, app in (
             ("web-bff", web_bff_app),
@@ -57,6 +87,19 @@ class BackendServiceReadinessTest(unittest.TestCase):
             self.assertEqual(body["checks"]["configuration"]["status"], "ok")
             self.assertEqual(body["checks"]["database"]["status"], "ok")
 
+    def test_web_bff_checks_agent_readiness_through_real_http_boundary(self) -> None:
+        self.agent_get_patcher.stop()
+
+        with running_service(agent_app) as agent_service_url:
+            env = {**LOCAL_ENV, "AGENT_SERVICE_URL": agent_service_url}
+            with patch.dict(os.environ, env, clear=True), database_connects():
+                response = TestClient(web_bff_app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["checks"]["agent_service"]["status"], "ok")
+
     def test_database_failure_makes_readiness_not_ready(self) -> None:
         with (
             database_unavailable("database unavailable"),
@@ -74,6 +117,98 @@ class BackendServiceReadinessTest(unittest.TestCase):
             any("database unavailable" in message for message in logs.output)
         )
 
+    def test_agent_session_failure_makes_agent_readiness_not_ready(self) -> None:
+        session_service = AsyncMock()
+        session_service.get_session.side_effect = RuntimeError("session database denied")
+        agent_app.dependency_overrides[get_session_context] = lambda: AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=session_service,
+        )
+
+        with database_connects():
+            response = self._get_ready(agent_app, LOCAL_ENV)
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_session"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["agent_session"]["message"],
+            "Agent session readiness check failed.",
+        )
+
+    def test_agent_startup_prepares_database_session_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "agent-session-context.sqlite3"
+            session_context = AdkSessionContext.from_database_url(
+                app_name="talk-to-your-stock",
+                database_url=f"sqlite+aiosqlite:///{database_path}",
+            )
+            agent_app.dependency_overrides[get_session_context] = (
+                lambda: session_context
+            )
+
+            self.assertFalse(database_path.exists())
+            with TestClient(agent_app):
+                self.assertTrue(database_path.exists())
+
+    def test_agent_startup_fails_when_session_schema_cannot_be_prepared(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            blocked_parent = Path(directory) / "not-a-directory"
+            blocked_parent.write_text("blocks SQLite database creation")
+            session_context = AdkSessionContext.from_database_url(
+                app_name="talk-to-your-stock",
+                database_url=(
+                    "sqlite+aiosqlite:///"
+                    f"{blocked_parent / 'agent-session-context.sqlite3'}"
+                ),
+            )
+            agent_app.dependency_overrides[get_session_context] = (
+                lambda: session_context
+            )
+
+            with self.assertRaises(AgentSessionUnavailable):
+                with TestClient(agent_app):
+                    pass
+
+    def test_missing_database_configuration_makes_agent_readiness_not_ready(
+        self,
+    ) -> None:
+        agent_app.dependency_overrides.clear()
+        get_session_context.cache_clear()
+
+        with patch.dict(
+            os.environ,
+            {"TALK_TO_YOUR_STOCK_ENV": "local"},
+            clear=True,
+        ), TestClient(agent_app) as client:
+            response = client.get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_session"]["status"], "fail")
+
+    def test_invalid_database_url_makes_agent_readiness_not_ready(self) -> None:
+        agent_app.dependency_overrides.clear()
+        get_session_context.cache_clear()
+
+        with patch.dict(
+            os.environ,
+            {**LOCAL_ENV, "DATABASE_URL": "not-a-database-url"},
+            clear=True,
+        ), TestClient(agent_app) as client:
+            response = client.get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_session"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["agent_session"]["message"],
+            "Agent session readiness check failed.",
+        )
+
     def test_production_database_failure_uses_sanitized_readiness_message(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
@@ -81,6 +216,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
             "MANAGED_AUTH_JWKS_URL": "https://auth.example.com/.well-known/jwks.json",
             "MANAGED_AUTH_ISSUER": "https://auth.example.com",
             "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
+            "AGENT_SERVICE_URL": "http://agent-service:8001",
         }
 
         with (
@@ -92,7 +228,11 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         body = response.json()
         self.assertEqual(body["status"], "not_ready")
-        self.assertEqual(body["checks"]["configuration"]["status"], "ok")
+        self.assertEqual(body["checks"]["configuration"]["status"], "fail")
+        self.assertIn(
+            "JWT verification is not implemented",
+            body["checks"]["configuration"]["message"],
+        )
         self.assertEqual(body["checks"]["database"]["status"], "fail")
         self.assertEqual(
             body["checks"]["database"]["message"],
@@ -153,7 +293,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertIn("COMPS_SERVICE_URL", message)
         self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
 
-    def test_production_agent_readiness_accepts_required_configuration(self) -> None:
+    def test_production_agent_readiness_fails_until_real_routing_exists(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
             "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
@@ -166,11 +306,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
         with database_connects():
             response = self._get_ready(agent_app, env)
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 503)
         body = response.json()
-        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["status"], "not_ready")
         self.assertEqual(body["checks"]["configuration"]["status"], "ok")
         self.assertEqual(body["checks"]["database"]["status"], "ok")
+        self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
 
     def test_production_comps_readiness_requires_provider_configuration(self) -> None:
         env = {
@@ -202,7 +343,6 @@ class BackendServiceReadinessTest(unittest.TestCase):
     def _get_ready(self, app: FastAPI, env: dict[str, str]):
         with patch.dict(os.environ, env, clear=True):
             return TestClient(app).get("/v1/ready")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,6 +64,10 @@ class PaginationMeta(ContractModel):
     next_cursor: str | None
 
 
+class CreateThreadRequest(ContractModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
 class User(ContractModel):
     id: UUID
     email: str
@@ -84,6 +88,19 @@ class Thread(ContractModel):
     updated_at: datetime
 
 
+class ThreadResponse(ContractModel):
+    thread: Thread
+
+
+class ThreadListResponse(ContractModel):
+    threads: list[Thread]
+    page: PaginationMeta
+
+
+class CreateMessageRequest(ContractModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+
 class Message(ContractModel):
     id: UUID
     thread_id: UUID
@@ -92,6 +109,11 @@ class Message(ContractModel):
     status: MessageStatus
     run_id: UUID | None = None
     created_at: datetime
+
+
+class MessageListResponse(ContractModel):
+    messages: list[Message]
+    page: PaginationMeta
 
 
 class Run(ContractModel):
@@ -211,3 +233,22 @@ class GenerateCompsToolResponse(ContractModel):
     table: RunTableResponse
     trace: TraceResponse
     warnings: list[str] = Field(default_factory=list)
+
+
+class AgentMessageRequest(ContractModel):
+    user_id: UUID
+    thread_id: UUID
+    user_message_id: UUID
+    content: str = Field(min_length=1)
+
+
+class AgentMessageResponse(ContractModel):
+    content: str = Field(min_length=1)
+    run: Run | None = None
+
+
+class CreateMessageResponse(ContractModel):
+    user_message: Message
+    assistant_message: Message
+    run: Run | None = None
+    events_url: str | None = None
