@@ -249,7 +249,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     set(generated_operation["responses"]),
-                    {"200", "400", "404", "503", "422"},
+                    {"200", "400", "404", "503"},
                 )
 
     def test_readback_returns_structured_not_found_and_validation_errors(
