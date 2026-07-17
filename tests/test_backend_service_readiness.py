@@ -182,10 +182,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
         agent_app.dependency_overrides.clear()
         get_session_context.cache_clear()
 
-        response = self._get_ready(
-            agent_app,
+        with patch.dict(
+            os.environ,
             {"TALK_TO_YOUR_STOCK_ENV": "local"},
-        )
+            clear=True,
+        ), TestClient(agent_app) as client:
+            response = client.get("/v1/ready")
 
         self.assertEqual(response.status_code, 503)
         body = response.json()
@@ -196,10 +198,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
         agent_app.dependency_overrides.clear()
         get_session_context.cache_clear()
 
-        response = self._get_ready(
-            agent_app,
+        with patch.dict(
+            os.environ,
             {**LOCAL_ENV, "DATABASE_URL": "not-a-database-url"},
-        )
+            clear=True,
+        ), TestClient(agent_app) as client:
+            response = client.get("/v1/ready")
 
         self.assertEqual(response.status_code, 503)
         body = response.json()

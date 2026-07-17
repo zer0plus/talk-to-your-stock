@@ -101,6 +101,8 @@ class AdkSessionContext:
             raise AgentSessionUnavailable("Agent session unavailable.") from exc
 
     async def prepare(self) -> None:
+        if self._session_service is None and self._unavailable_message is not None:
+            return
         session_service = self._require_service()
         prepare_tables = getattr(session_service, "prepare_tables", None)
         if prepare_tables is not None:

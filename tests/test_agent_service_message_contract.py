@@ -165,8 +165,8 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         app.dependency_overrides.clear()
         get_session_context.cache_clear()
 
-        with patch.dict(os.environ, {}, clear=True):
-            response = TestClient(app).post(
+        with patch.dict(os.environ, {}, clear=True), TestClient(app) as client:
+            response = client.post(
                 "/v1/internal/agent/respond",
                 json={
                     "user_id": str(uuid4()),
