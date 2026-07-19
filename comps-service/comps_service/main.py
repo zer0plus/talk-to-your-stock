@@ -32,7 +32,11 @@ from talk_to_your_stock_shared.readiness import (
 from talk_to_your_stock_shared.time import utc_now
 
 from .readiness import check_comps_database, check_run_data_source
-from .repository import CompsPersistenceUnavailable, PostgresCompsRunRepository
+from .repository import (
+    CompsPersistenceUnavailable,
+    InvalidRunLinkage,
+    PostgresCompsRunRepository,
+)
 from .run_service import (
     CompanyDataSource,
     CompanyDataUnavailable,
@@ -58,6 +62,18 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+
+@app.exception_handler(InvalidRunLinkage)
+def invalid_run_linkage_exception_handler(
+    _request: object,
+    exc: InvalidRunLinkage,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=ErrorCode.VALIDATION_ERROR,
+        message=str(exc),
+    )
 
 
 @app.exception_handler(CompsPersistenceUnavailable)

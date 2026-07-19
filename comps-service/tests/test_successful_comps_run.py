@@ -17,7 +17,7 @@ from comps_service.main import (
     get_repository,
     get_ticker_validator,
 )
-from comps_service.repository import CompsPersistenceUnavailable
+from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
 from talk_to_your_stock_shared import Run, RunTableResponse
 
 
@@ -90,6 +90,18 @@ class InMemoryCompsRunRepository:
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
+
+
+class InvalidLinkageCompsRunRepository(InMemoryCompsRunRepository):
+    def save_succeeded_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
+        table: RunTableResponse,
+    ) -> None:
+        del invocation_id, run, table
+        raise InvalidRunLinkage("Run must reference its persisted trigger Message.")
 
 
 class SuccessfulCompsRunTest(unittest.TestCase):
@@ -199,6 +211,37 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertIn("Real provider and FX", response.json()["error"]["message"])
         self.assertEqual(self.repository.runs, {})
         self.assertEqual(self.repository.tables, {})
+
+    def test_invalid_run_linkage_returns_validation_error_without_artifacts(
+        self,
+    ) -> None:
+        repository = InvalidLinkageCompsRunRepository()
+        app.dependency_overrides[get_repository] = lambda: repository
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+        self.assertIn("trigger Message", response.json()["error"]["message"])
+        self.assertEqual(repository.runs, {})
+        self.assertEqual(repository.tables, {})
 
     def test_company_input_order_does_not_change_deterministic_table_order(
         self,

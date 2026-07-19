@@ -20,6 +20,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.create_unique_constraint(
+        "web_bff_messages_id_thread_unique",
+        "web_bff_messages",
+        ["id", "thread_id"],
+    )
     op.create_table(
         "comps_runs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
@@ -61,6 +66,12 @@ def upgrade() -> None:
             "char_length(currency) = 3",
             name="comps_runs_currency_length",
         ),
+        sa.ForeignKeyConstraint(
+            ["trigger_message_id", "thread_id"],
+            ["web_bff_messages.id", "web_bff_messages.thread_id"],
+            name="comps_runs_trigger_message_linkage_fk",
+            ondelete="RESTRICT",
+        ),
     )
     op.create_table(
         "comps_tables",
@@ -96,3 +107,8 @@ def downgrade() -> None:
     op.drop_index("comps_runs_thread_created_idx", table_name="comps_runs")
     op.drop_table("comps_tables")
     op.drop_table("comps_runs")
+    op.drop_constraint(
+        "web_bff_messages_id_thread_unique",
+        "web_bff_messages",
+        type_="unique",
+    )

@@ -12,9 +12,14 @@ from talk_to_your_stock_shared.time import utc_now
 
 
 logger = logging.getLogger(__name__)
+RUN_TRIGGER_MESSAGE_LINKAGE_CONSTRAINT = "comps_runs_trigger_message_linkage_fk"
 
 
 class CompsPersistenceUnavailable(RuntimeError):
+    pass
+
+
+class InvalidRunLinkage(ValueError):
     pass
 
 
@@ -145,8 +150,16 @@ class PostgresCompsRunRepository:
         return dict_row
 
     def _raise_unavailable(self, exc: Exception) -> NoReturn:
-        if isinstance(exc, CompsPersistenceUnavailable):
+        if isinstance(exc, (CompsPersistenceUnavailable, InvalidRunLinkage)):
             raise exc
+        diagnostics = getattr(exc, "diag", None)
+        if (
+            getattr(diagnostics, "constraint_name", None)
+            == RUN_TRIGGER_MESSAGE_LINKAGE_CONSTRAINT
+        ):
+            raise InvalidRunLinkage(
+                "Run must reference a persisted trigger Message in its Thread."
+            ) from exc
         logger.exception("Comps persistence operation failed.")
         raise CompsPersistenceUnavailable(
             "Comps persistence is unavailable."
