@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +14,7 @@ from uuid import UUID, uuid4
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from comps_service.calculator import CompanyCompsInput
 from comps_service.main import (
@@ -55,6 +58,21 @@ class ControlledCompanyDataSource:
             )
             for ticker in tickers
         ]
+
+
+class SynchronizedCompanyDataSource(ControlledCompanyDataSource):
+    def __init__(self, barrier: threading.Barrier) -> None:
+        self._barrier = barrier
+
+    def load_companies(
+        self,
+        *,
+        tickers: list[str],
+        currency: str,
+    ) -> list[CompanyCompsInput]:
+        companies = super().load_companies(tickers=tickers, currency=currency)
+        self._barrier.wait(timeout=5)
+        return companies
 
 
 class CompsMigrationsTest(unittest.TestCase):
@@ -156,6 +174,55 @@ class CompsMigrationsTest(unittest.TestCase):
                     run_id,
                 )
 
+                race_request = _generate_request(
+                    thread_id=thread_id,
+                    trigger_message_id=trigger_message_id,
+                )
+                synchronized_source = SynchronizedCompanyDataSource(
+                    threading.Barrier(2)
+                )
+                app.dependency_overrides[get_company_data_source] = (
+                    lambda: synchronized_source
+                )
+
+                def post_racing_invocation() -> Response:
+                    return TestClient(app).post(
+                        "/v1/internal/tools/generate-comps-table",
+                        json=race_request,
+                        headers={
+                            "Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"
+                        },
+                    )
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = [
+                        executor.submit(post_racing_invocation) for _index in range(2)
+                    ]
+                    racing_responses = [future.result() for future in futures]
+
+                self.assertEqual(
+                    sorted(response.status_code for response in racing_responses),
+                    [200, 409],
+                )
+                successful_race_response = next(
+                    response
+                    for response in racing_responses
+                    if response.status_code == 200
+                )
+                conflicting_race_response = next(
+                    response
+                    for response in racing_responses
+                    if response.status_code == 409
+                )
+                self.assertEqual(
+                    conflicting_race_response.json()["error"]["details"]
+                    ["existing_run_id"],
+                    successful_race_response.json()["run"]["id"],
+                )
+                app.dependency_overrides[get_company_data_source] = (
+                    ControlledCompanyDataSource
+                )
+
                 for trigger_message_id_value in (
                     uuid4(),
                     other_trigger_message_id,
@@ -204,7 +271,7 @@ class CompsMigrationsTest(unittest.TestCase):
                 self.assertEqual(table_readback.json(), created.json()["table"])
                 self.assertEqual(
                     _linked_record_counts(database_url, trigger_message_id),
-                    (1, 1, 1),
+                    (1, 2, 2),
                 )
             finally:
                 app.dependency_overrides.clear()
