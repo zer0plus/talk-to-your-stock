@@ -23,6 +23,13 @@ class CompsRunExecutionError(RuntimeError):
     pass
 
 
+class DuplicateToolInvocation(RuntimeError):
+    def __init__(self, *, invocation_id: UUID, existing_run_id: UUID) -> None:
+        super().__init__("Tool invocation has already produced a Run.")
+        self.invocation_id = invocation_id
+        self.existing_run_id = existing_run_id
+
+
 class CompanyDataSource(Protocol):
     def load_companies(
         self,
@@ -44,6 +51,8 @@ class CompsRunRepository(Protocol):
     def get_run(self, run_id: UUID) -> Run | None: ...
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None: ...
+
+    def get_run_id_by_invocation_id(self, invocation_id: UUID) -> UUID | None: ...
 
 
 class UnavailableCompanyDataSource:
@@ -72,6 +81,15 @@ class CompsRunService:
         self._calculator = calculator or CompsCalculator()
 
     def generate(self, request: GenerateCompsToolRequest) -> GenerateCompsToolResponse:
+        existing_run_id = self._repository.get_run_id_by_invocation_id(
+            request.invocation_id
+        )
+        if existing_run_id is not None:
+            raise DuplicateToolInvocation(
+                invocation_id=request.invocation_id,
+                existing_run_id=existing_run_id,
+            )
+
         target_ticker = request.target_ticker.upper()
         peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
         requested_tickers = [target_ticker, *peer_tickers]

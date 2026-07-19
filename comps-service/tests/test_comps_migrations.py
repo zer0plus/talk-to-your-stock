@@ -83,7 +83,10 @@ class CompsMigrationsTest(unittest.TestCase):
         sql = " ".join(result.stdout.lower().split())
         self.assertIn("create table comps_runs", sql)
         self.assertIn("create table comps_tables", sql)
-        self.assertIn("unique (invocation_id)", sql)
+        self.assertIn(
+            "constraint comps_runs_invocation_id_unique unique (invocation_id)",
+            sql,
+        )
         self.assertIn(
             "unique (id, thread_id)",
             sql,
@@ -129,16 +132,29 @@ class CompsMigrationsTest(unittest.TestCase):
                     SupportedTickerValidator
                 )
                 client = TestClient(app)
+                generate_request = _generate_request(
+                    thread_id=thread_id,
+                    trigger_message_id=trigger_message_id,
+                )
                 created = client.post(
                     "/v1/internal/tools/generate-comps-table",
-                    json=_generate_request(
-                        thread_id=thread_id,
-                        trigger_message_id=trigger_message_id,
-                    ),
+                    json=generate_request,
                     headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
                 )
                 self.assertEqual(created.status_code, 200, created.text)
                 run_id = created.json()["run"]["id"]
+
+                repeated = client.post(
+                    "/v1/internal/tools/generate-comps-table",
+                    json=generate_request,
+                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                )
+                self.assertEqual(repeated.status_code, 409, repeated.text)
+                self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
+                self.assertEqual(
+                    repeated.json()["error"]["details"]["existing_run_id"],
+                    run_id,
+                )
 
                 for trigger_message_id_value in (
                     uuid4(),

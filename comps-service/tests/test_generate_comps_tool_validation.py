@@ -119,7 +119,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 503)
-        self.assertIn("Real provider and FX", response.json()["error"]["message"])
+        self.assertIn("DATABASE_URL", response.json()["error"]["message"])
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:

@@ -18,6 +18,7 @@ from comps_service.main import (
     get_ticker_validator,
 )
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
+from comps_service.run_service import CompanyDataUnavailable
 from talk_to_your_stock_shared import Run, RunTableResponse
 
 
@@ -69,10 +70,22 @@ class ReverseOrderCompanyDataSource(ControlledCompanyDataSource):
         )
 
 
+class UnavailableCompanyDataSource:
+    def load_companies(
+        self,
+        *,
+        tickers: list[str],
+        currency: str,
+    ) -> list[CompanyCompsInput]:
+        del tickers, currency
+        raise CompanyDataUnavailable("Company data should not be loaded for a retry.")
+
+
 class InMemoryCompsRunRepository:
     def __init__(self) -> None:
         self.runs: dict[UUID, Run] = {}
         self.tables: dict[UUID, RunTableResponse] = {}
+        self.invocations: dict[UUID, UUID] = {}
 
     def save_succeeded_run(
         self,
@@ -81,9 +94,14 @@ class InMemoryCompsRunRepository:
         run: Run,
         table: RunTableResponse,
     ) -> None:
-        del invocation_id
+        if invocation_id in self.invocations:
+            raise CompsPersistenceUnavailable("Duplicate invocation.")
+        self.invocations[invocation_id] = run.id
         self.runs[run.id] = run
         self.tables[run.id] = table
+
+    def get_run_id_by_invocation_id(self, invocation_id: UUID) -> UUID | None:
+        return self.invocations.get(invocation_id)
 
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)
@@ -181,6 +199,49 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(table_response.status_code, 200, table_response.text)
         self.assertEqual(run_response.json()["run"], created.json()["run"])
         self.assertEqual(table_response.json(), created.json()["table"])
+
+    def test_repeated_invocation_returns_conflict_without_reexecution(self) -> None:
+        invocation_id = uuid4()
+        request = {
+            "invocation_id": str(invocation_id),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            created = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            app.dependency_overrides[get_company_data_source] = (
+                UnavailableCompanyDataSource
+            )
+
+            repeated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(repeated.status_code, 409, repeated.text)
+        self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
+        self.assertEqual(
+            repeated.json()["error"]["details"]["existing_run_id"],
+            created.json()["run"]["id"],
+        )
+        self.assertEqual(len(self.repository.runs), 1)
+        self.assertEqual(len(self.repository.tables), 1)
 
     def test_runtime_path_fails_clearly_without_real_company_data_source(
         self,
@@ -298,6 +359,21 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         trace_path = "/v1/runs/{run_id}/trace"
         self.assertNotIn(trace_path, source_contract["paths"])
         self.assertNotIn(trace_path, generated_contract["paths"])
+
+    def test_generate_contract_declares_invocation_conflict(self) -> None:
+        source_contract = yaml.safe_load(
+            (REPO_ROOT / "api" / "openapi.yaml").read_text()
+        )
+        generated_contract = TestClient(app).get("/openapi.json").json()
+        path = "/v1/internal/tools/generate-comps-table"
+
+        self.assertIn("409", source_contract["paths"][path]["post"]["responses"])
+        self.assertIn("409", generated_contract["paths"][path]["post"]["responses"])
+        self.assertIn(
+            "CONFLICT",
+            source_contract["components"]["schemas"]["ErrorResponse"]["properties"]
+            ["error"]["properties"]["code"]["enum"],
+        )
 
     def test_readback_returns_structured_not_found_and_validation_errors(
         self,

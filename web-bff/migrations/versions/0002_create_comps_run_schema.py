@@ -32,7 +32,6 @@ def upgrade() -> None:
             "invocation_id",
             postgresql.UUID(as_uuid=True),
             nullable=False,
-            unique=True,
         ),
         sa.Column("thread_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column(
@@ -65,6 +64,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "char_length(currency) = 3",
             name="comps_runs_currency_length",
+        ),
+        sa.UniqueConstraint(
+            "invocation_id",
+            name="comps_runs_invocation_id_unique",
         ),
         sa.ForeignKeyConstraint(
             ["trigger_message_id", "thread_id"],

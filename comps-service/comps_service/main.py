@@ -43,6 +43,7 @@ from .run_service import (
     CompsRunExecutionError,
     CompsRunRepository,
     CompsRunService,
+    DuplicateToolInvocation,
     UnavailableCompanyDataSource,
 )
 from .tool_validation import (
@@ -85,6 +86,19 @@ def persistence_exception_handler(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code=ErrorCode.INTERNAL_ERROR,
         message=str(exc),
+    )
+
+
+@app.exception_handler(DuplicateToolInvocation)
+def duplicate_tool_invocation_exception_handler(
+    _request: object,
+    exc: DuplicateToolInvocation,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.CONFLICT,
+        message=str(exc),
+        details={"existing_run_id": str(exc.existing_run_id)},
     )
 
 
@@ -165,6 +179,7 @@ def get_ticker_validator() -> AlphaVantageTickerValidator:
     responses={
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
         501: {"model": ErrorResponse},
