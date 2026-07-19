@@ -18,7 +18,7 @@ from comps_service.main import (
     get_ticker_validator,
 )
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
-from comps_service.run_service import CompanyDataUnavailable
+from comps_service.run_service import DuplicateToolInvocation
 from talk_to_your_stock_shared import Run, RunTableResponse
 
 
@@ -70,17 +70,6 @@ class ReverseOrderCompanyDataSource(ControlledCompanyDataSource):
         )
 
 
-class UnavailableCompanyDataSource:
-    def load_companies(
-        self,
-        *,
-        tickers: list[str],
-        currency: str,
-    ) -> list[CompanyCompsInput]:
-        del tickers, currency
-        raise CompanyDataUnavailable("Company data should not be loaded for a retry.")
-
-
 class InMemoryCompsRunRepository:
     def __init__(self) -> None:
         self.runs: dict[UUID, Run] = {}
@@ -95,13 +84,12 @@ class InMemoryCompsRunRepository:
         table: RunTableResponse,
     ) -> None:
         if invocation_id in self.invocations:
-            raise CompsPersistenceUnavailable("Duplicate invocation.")
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a Run."
+            )
         self.invocations[invocation_id] = run.id
         self.runs[run.id] = run
         self.tables[run.id] = table
-
-    def get_run_id_by_invocation_id(self, invocation_id: UUID) -> UUID | None:
-        return self.invocations.get(invocation_id)
 
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)
@@ -200,7 +188,9 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(run_response.json()["run"], created.json()["run"])
         self.assertEqual(table_response.json(), created.json()["table"])
 
-    def test_repeated_invocation_returns_conflict_without_reexecution(self) -> None:
+    def test_repeated_invocation_returns_conflict_without_duplicate_artifacts(
+        self,
+    ) -> None:
         invocation_id = uuid4()
         request = {
             "invocation_id": str(invocation_id),
@@ -223,10 +213,6 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 json=request,
                 headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
             )
-            app.dependency_overrides[get_company_data_source] = (
-                UnavailableCompanyDataSource
-            )
-
             repeated = client.post(
                 "/v1/internal/tools/generate-comps-table",
                 json=request,
@@ -236,10 +222,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(created.status_code, 200, created.text)
         self.assertEqual(repeated.status_code, 409, repeated.text)
         self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
-        self.assertEqual(
-            repeated.json()["error"]["details"]["existing_run_id"],
-            created.json()["run"]["id"],
-        )
+        self.assertIsNone(repeated.json()["error"]["details"])
         self.assertEqual(len(self.repository.runs), 1)
         self.assertEqual(len(self.repository.tables), 1)
 
@@ -369,25 +352,17 @@ class SuccessfulCompsRunTest(unittest.TestCase):
 
         self.assertEqual(
             source_contract["paths"][path]["post"]["responses"]["409"],
-            {"$ref": "#/components/responses/InvocationConflict"},
+            {"$ref": "#/components/responses/Conflict"},
         )
         self.assertEqual(
-            source_contract["components"]["responses"]["InvocationConflict"]
+            source_contract["components"]["responses"]["Conflict"]
             ["content"]["application/json"]["schema"]["$ref"],
-            "#/components/schemas/InvocationConflictResponse",
+            "#/components/schemas/ErrorResponse",
         )
         self.assertEqual(
             generated_contract["paths"][path]["post"]["responses"]["409"]
             ["content"]["application/json"]["schema"]["$ref"],
-            "#/components/schemas/InvocationConflictResponse",
-        )
-        conflict_details = source_contract["components"]["schemas"][
-            "InvocationConflictDetails"
-        ]
-        self.assertIn("existing_run_id", conflict_details["required"])
-        self.assertEqual(
-            conflict_details["properties"]["existing_run_id"]["format"],
-            "uuid",
+            "#/components/schemas/ErrorResponse",
         )
         self.assertIn(
             "CONFLICT",

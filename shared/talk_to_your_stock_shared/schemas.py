@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -57,21 +57,6 @@ class ErrorDetail(ContractModel):
 
 class ErrorResponse(ContractModel):
     error: ErrorDetail
-
-
-class InvocationConflictDetails(ContractModel):
-    existing_run_id: UUID
-
-
-class InvocationConflictErrorDetail(ContractModel):
-    code: Literal[ErrorCode.CONFLICT] = ErrorCode.CONFLICT
-    message: str
-    details: InvocationConflictDetails
-    request_id: str | None = None
-
-
-class InvocationConflictResponse(ContractModel):
-    error: InvocationConflictErrorDetail
 
 
 class PaginationMeta(ContractModel):

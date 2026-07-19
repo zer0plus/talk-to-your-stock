@@ -99,7 +99,7 @@ class PostgresCompsRunRepository:
                         ),
                     )
         except Exception as exc:
-            self._raise_unavailable(exc, invocation_id=invocation_id)
+            self._raise_unavailable(exc)
 
     def get_run(self, run_id: UUID) -> Run | None:
         try:
@@ -137,23 +137,6 @@ class PostgresCompsRunRepository:
             self._raise_unavailable(exc)
         return RunTableResponse.model_validate(row) if row is not None else None
 
-    def get_run_id_by_invocation_id(self, invocation_id: UUID) -> UUID | None:
-        try:
-            with self._connect() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        select id
-                        from comps_runs
-                        where invocation_id = %s
-                        """,
-                        (invocation_id,),
-                    )
-                    row = cursor.fetchone()
-        except Exception as exc:
-            self._raise_unavailable(exc)
-        return row[0] if row is not None else None
-
     def _connect(self):
         if not self._database_url:
             raise CompsPersistenceUnavailable(
@@ -169,12 +152,7 @@ class PostgresCompsRunRepository:
 
         return dict_row
 
-    def _raise_unavailable(
-        self,
-        exc: Exception,
-        *,
-        invocation_id: UUID | None = None,
-    ) -> NoReturn:
+    def _raise_unavailable(self, exc: Exception) -> NoReturn:
         if isinstance(
             exc,
             (CompsPersistenceUnavailable, DuplicateToolInvocation, InvalidRunLinkage),
@@ -182,16 +160,10 @@ class PostgresCompsRunRepository:
             raise exc
         diagnostics = getattr(exc, "diag", None)
         constraint_name = getattr(diagnostics, "constraint_name", None)
-        if (
-            constraint_name == RUN_INVOCATION_ID_UNIQUE_CONSTRAINT
-            and invocation_id is not None
-        ):
-            existing_run_id = self.get_run_id_by_invocation_id(invocation_id)
-            if existing_run_id is not None:
-                raise DuplicateToolInvocation(
-                    invocation_id=invocation_id,
-                    existing_run_id=existing_run_id,
-                ) from exc
+        if constraint_name == RUN_INVOCATION_ID_UNIQUE_CONSTRAINT:
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a Run."
+            ) from exc
         if (
             constraint_name == RUN_TRIGGER_MESSAGE_LINKAGE_CONSTRAINT
         ):
