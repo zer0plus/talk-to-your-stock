@@ -69,13 +69,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
             schema = ready_responses["503"]["content"]["application/json"]["schema"]
             self.assertEqual(schema["$ref"], "#/components/schemas/ReadinessResponse")
 
-    def test_local_stack_services_report_ready_when_configuration_and_database_pass(
+    def test_local_stack_does_not_claim_comps_run_readiness_before_provider_path(
         self,
     ) -> None:
         for service_name, app in (
             ("web-bff", web_bff_app),
             ("agent-service", agent_app),
-            ("comps-service", comps_app),
         ):
             with self.subTest(service=service_name), database_connects():
                 response = self._get_ready(app, LOCAL_ENV)
@@ -86,6 +85,15 @@ class BackendServiceReadinessTest(unittest.TestCase):
             self.assertEqual(body["status"], "ready")
             self.assertEqual(body["checks"]["configuration"]["status"], "ok")
             self.assertEqual(body["checks"]["database"]["status"], "ok")
+
+        with database_connects():
+            comps_response = self._get_ready(comps_app, LOCAL_ENV)
+
+        self.assertEqual(comps_response.status_code, 503)
+        comps_body = comps_response.json()
+        self.assertEqual(comps_body["checks"]["configuration"]["status"], "ok")
+        self.assertEqual(comps_body["checks"]["database"]["status"], "ok")
+        self.assertEqual(comps_body["checks"]["run_data_source"]["status"], "fail")
 
     def test_web_bff_checks_agent_readiness_through_real_http_boundary(self) -> None:
         self.agent_get_patcher.stop()

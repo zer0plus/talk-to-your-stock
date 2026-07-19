@@ -1,9 +1,10 @@
 # Database Schema Migrations
 
 This document explains the Alembic migration implementation for TalkToYourStock.
-The Web BFF schema is owned by versioned Alembic migrations that run before the
-Web BFF accepts traffic. Repository request paths perform data access only and
-never create or alter database objects.
+One versioned migration chain manages the shared PostgreSQL database while table
+names and repositories preserve service ownership. Migrations run before Web BFF
+or Comps Service accepts traffic. Repository request paths perform data access
+only and never create or alter database objects.
 
 ## What Alembic Does
 
@@ -52,8 +53,8 @@ sequenceDiagram
     Note over API: Only starts after schema is ready
 ```
 
-If migration execution fails, startup should stop rather than allow the Web BFF
-to report ready against an incompatible database.
+If migration execution fails, startup should stop rather than allow a service to
+report ready against an incompatible database.
 
 ## Request Sequence
 
@@ -94,10 +95,10 @@ flowchart TD
     P["PostgreSQL starts"] --> H{"Healthy?"}
     H -- No --> W["Wait"]
     W --> H
-    H -- Yes --> M["web-bff-migrate<br/>alembic upgrade head"]
+    H -- Yes --> M["database-migrate<br/>alembic upgrade head"]
     M --> S{"Migration succeeded?"}
     S -- No --> F["Stop: schema is invalid"]
-    S -- Yes --> B["Start Web BFF"]
+    S -- Yes --> B["Start Web BFF + Comps Service"]
     B --> R["Accept requests"]
 ```
 
@@ -114,15 +115,17 @@ web-bff/
     env.py
     versions/
       0001_create_web_bff_schema.py
+      0002_create_comps_run_schema.py
 alembic.ini
 ```
 
 The implementation includes:
 
 - Python dependencies: add Alembic and SQLAlchemy.
-- Migration files: create the Web BFF Users, Threads, Messages, and indexes.
+- Migration files: create service-owned Web BFF and Comps Service tables and
+  indexes in one ordered database chain.
 - Web BFF repository: remove `_schema_ready`, `_ensure_schema()`, and calls to it.
-- Docker Compose: add the one-shot migration service and startup dependency.
+- Docker Compose: run one migration job before both schema-owning services.
 - Migration tests: render the upgrade through Alembic's CLI, with an opt-in real
   PostgreSQL HTTP-boundary test.
 - Readiness: fail clearly when the expected database schema is unavailable.
@@ -174,16 +177,22 @@ python -m alembic current
 python -m alembic history
 ```
 
-Docker Compose runs `upgrade head` automatically through `web-bff-migrate`.
-The Web BFF depends on that job completing successfully.
+Docker Compose runs `upgrade head` automatically through `database-migrate`.
+Web BFF and Comps Service depend on that job completing successfully.
 
-The real PostgreSQL migration test is opt-in because it upgrades and then
-downgrades a dedicated disposable database:
+The real PostgreSQL migration tests are opt-in because they upgrade and then
+downgrade dedicated disposable databases:
 
 ```bash
 WEB_BFF_MIGRATION_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost/web_bff_migration_test \
 PYTHONPATH=shared:web-bff \
 python -m pytest -q tests/test_web_bff_migrations.py
+```
+
+```bash
+COMPS_MIGRATION_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost/comps_migration_test \
+PYTHONPATH=shared:comps-service \
+python -m pytest -q comps-service/tests/test_comps_migrations.py
 ```
 
 Never point this test at a database containing data that must be preserved.
