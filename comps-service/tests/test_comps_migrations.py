@@ -103,6 +103,8 @@ class CompsMigrationsTest(unittest.TestCase):
         f"{MIGRATION_DATABASE_URL_VAR} is required for PostgreSQL integration.",
     )
     def test_migrated_database_enforces_linkage_and_persists_artifacts(self) -> None:
+        import psycopg
+
         database_url = os.environ[MIGRATION_DATABASE_URL_VAR]
         migration_config = Config(str(REPO_ROOT / "alembic.ini"))
         env = {
@@ -161,6 +163,15 @@ class CompsMigrationsTest(unittest.TestCase):
                             "VALIDATION_ERROR",
                         )
 
+                with psycopg.connect(database_url) as connection:
+                    with connection.cursor() as cursor:
+                        with self.assertRaises(psycopg.errors.ForeignKeyViolation):
+                            cursor.execute(
+                                "delete from web_bff_messages where id = %s",
+                                (trigger_message_id,),
+                            )
+                        connection.rollback()
+
                 app.dependency_overrides.clear()
                 app.dependency_overrides[get_company_data_source] = (
                     ControlledCompanyDataSource
@@ -175,7 +186,10 @@ class CompsMigrationsTest(unittest.TestCase):
                 self.assertEqual(table_readback.status_code, 200, table_readback.text)
                 self.assertEqual(run_readback.json()["run"], created.json()["run"])
                 self.assertEqual(table_readback.json(), created.json()["table"])
-                self.assertEqual(_artifact_counts(database_url), (1, 1))
+                self.assertEqual(
+                    _linked_record_counts(database_url, trigger_message_id),
+                    (1, 1, 1),
+                )
             finally:
                 app.dependency_overrides.clear()
                 command.downgrade(migration_config, "base")
@@ -244,16 +258,24 @@ def _generate_request(
     }
 
 
-def _artifact_counts(database_url: str) -> tuple[int, int]:
+def _linked_record_counts(
+    database_url: str,
+    trigger_message_id: UUID,
+) -> tuple[int, int, int]:
     import psycopg
 
     with psycopg.connect(database_url) as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                "select count(*) from web_bff_messages where id = %s",
+                (trigger_message_id,),
+            )
+            message_count = cursor.fetchone()[0]
             cursor.execute("select count(*) from comps_runs")
             run_count = cursor.fetchone()[0]
             cursor.execute("select count(*) from comps_tables")
             table_count = cursor.fetchone()[0]
-    return run_count, table_count
+    return message_count, run_count, table_count
 
 
 if __name__ == "__main__":
