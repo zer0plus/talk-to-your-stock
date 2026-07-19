@@ -15,7 +15,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-  database-migrate:
+  web-bff-migrate:
     build:
       context: ..
       dockerfile: dev/Dockerfile
@@ -45,7 +45,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      database-migrate:
+      web-bff-migrate:
         condition: service_completed_successfully
 
   agent-service:
@@ -81,8 +81,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      database-migrate:
-        condition: service_completed_successfully
 
 volumes:
   postgres-data:

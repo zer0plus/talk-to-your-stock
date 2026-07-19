@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -132,10 +132,6 @@ class Run(ContractModel):
     completed_at: datetime | None = None
 
 
-class RunResponse(ContractModel):
-    run: Run
-
-
 class CompsRow(ContractModel):
     ticker: Ticker
     company_name: str | None = None
@@ -217,6 +213,7 @@ class GenerateCompsToolRequest(ContractModel):
     peer_selection_mode: PeerSelectionMode
     analysis_period: AnalysisPeriod
     currency: Currency = Field(default="USD", min_length=3, max_length=3)
+    as_of_date: date | None = None
 
     @model_validator(mode="after")
     def require_peers_for_user_supplied_mode(self) -> GenerateCompsToolRequest:

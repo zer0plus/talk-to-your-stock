@@ -62,8 +62,7 @@ export DEV_AUTH_EMAIL=dev@example.com
 export AGENT_SERVICE_URL=http://localhost:8001
 ```
 
-Apply the shared database migration chain before starting Web BFF or Comps
-Service:
+Apply the Web BFF database migrations before starting the Web BFF:
 
 ```bash
 python -m alembic upgrade head

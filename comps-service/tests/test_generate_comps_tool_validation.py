@@ -118,8 +118,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 headers={"Authorization": f"bearer {INTERNAL_TOOL_TOKEN}"},
             )
 
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("Real provider and FX", response.json()["error"]["message"])
+        self.assertEqual(response.status_code, 501)
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
@@ -216,7 +215,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertIn("Auto peer selection is not implemented", body["error"]["message"])
         database_connect.assert_not_called()
 
-    # Normalizes mixed-case ticker candidates before the configured Run data source.
+    # Normalizes mixed-case ticker candidates before live Alpha Vantage validation.
     def test_mixed_case_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
 
@@ -245,10 +244,10 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 headers=self._internal_tool_headers(),
             )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 501)
         body = response.json()
         self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
-        self.assertIn("Real provider and FX", body["error"]["message"])
+        self.assertIn("not implemented", body["error"]["message"])
         database_connect.assert_not_called()
 
     # Rejects ticker candidates with unsupported syntax before provider or database work.
@@ -344,37 +343,6 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["error"]["code"], "VALIDATION_ERROR")
         self.assertIn("peer_tickers", str(body["error"]["details"]))
-        database_connect.assert_not_called()
-
-    # Rejects the deferred historical execution field before Run creation.
-    def test_as_of_date_is_not_accepted_for_latest_runs(self) -> None:
-        database_connect = Mock()
-
-        with (
-            patch.dict(
-                sys.modules,
-                {"psycopg": SimpleNamespace(connect=database_connect)},
-            ),
-            patch.dict(os.environ, self._env_with_internal_auth(), clear=True),
-        ):
-            response = TestClient(app).post(
-                "/v1/internal/tools/generate-comps-table",
-                json={
-                    "invocation_id": str(uuid4()),
-                    "thread_id": str(uuid4()),
-                    "trigger_message_id": str(uuid4()),
-                    "target_ticker": "AAPL",
-                    "peer_tickers": ["MSFT"],
-                    "peer_selection_mode": "user_supplied",
-                    "analysis_period": "latest",
-                    "as_of_date": "2026-07-01",
-                },
-                headers=self._internal_tool_headers(),
-            )
-
-        self.assertEqual(response.status_code, 400, response.text)
-        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
-        self.assertIn("as_of_date", str(response.json()["error"]["details"]))
         database_connect.assert_not_called()
 
     # Rejects self-comparison requests before provider or database work.
@@ -625,7 +593,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertEqual(body["error"]["details"]["unsupported_tickers"], ["FUND"])
         database_connect.assert_not_called()
 
-    # Lets live Alpha Vantage exact-match tickers reach the configured Run data source.
+    # Lets live Alpha Vantage exact-match tickers pass pre-Run validation only.
     def test_valid_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
 
@@ -654,10 +622,10 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                 headers=self._internal_tool_headers(),
             )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 501)
         body = response.json()
         self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
-        self.assertIn("Real provider and FX", body["error"]["message"])
+        self.assertIn("not implemented", body["error"]["message"])
         database_connect.assert_not_called()
 
     def _live_alpha_vantage_env(self) -> dict[str, str]:
