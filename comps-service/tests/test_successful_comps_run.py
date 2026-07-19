@@ -232,7 +232,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             ["AAPL", "MSFT", "GOOG"],
         )
 
-    def test_readback_contract_documents_local_error_behavior(self) -> None:
+    def test_readback_contract_exposes_only_persisted_run_artifacts(self) -> None:
         source_contract = yaml.safe_load(
             (REPO_ROOT / "api" / "openapi.yaml").read_text()
         )
@@ -251,6 +251,10 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                     set(generated_operation["responses"]),
                     {"200", "400", "404", "503"},
                 )
+
+        trace_path = "/v1/runs/{run_id}/trace"
+        self.assertNotIn(trace_path, source_contract["paths"])
+        self.assertNotIn(trace_path, generated_contract["paths"])
 
     def test_readback_returns_structured_not_found_and_validation_errors(
         self,

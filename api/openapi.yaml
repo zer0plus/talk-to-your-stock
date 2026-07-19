@@ -332,24 +332,6 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
-  /v1/runs/{run_id}/trace:
-    get:
-      tags: [Runs]
-      summary: Get audit trace of formulas and source inputs
-      parameters:
-        - $ref: '#/components/parameters/RunIdParam'
-      responses:
-        '200':
-          description: Formula trace
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TraceResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
   /v1/runs/{run_id}/export.csv:
     get:
       tags: [Exports]
