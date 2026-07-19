@@ -367,8 +367,28 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         generated_contract = TestClient(app).get("/openapi.json").json()
         path = "/v1/internal/tools/generate-comps-table"
 
-        self.assertIn("409", source_contract["paths"][path]["post"]["responses"])
-        self.assertIn("409", generated_contract["paths"][path]["post"]["responses"])
+        self.assertEqual(
+            source_contract["paths"][path]["post"]["responses"]["409"],
+            {"$ref": "#/components/responses/InvocationConflict"},
+        )
+        self.assertEqual(
+            source_contract["components"]["responses"]["InvocationConflict"]
+            ["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/InvocationConflictResponse",
+        )
+        self.assertEqual(
+            generated_contract["paths"][path]["post"]["responses"]["409"]
+            ["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/InvocationConflictResponse",
+        )
+        conflict_details = source_contract["components"]["schemas"][
+            "InvocationConflictDetails"
+        ]
+        self.assertIn("existing_run_id", conflict_details["required"])
+        self.assertEqual(
+            conflict_details["properties"]["existing_run_id"]["format"],
+            "uuid",
+        )
         self.assertIn(
             "CONFLICT",
             source_contract["components"]["schemas"]["ErrorResponse"]["properties"]

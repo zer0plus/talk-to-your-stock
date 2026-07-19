@@ -18,6 +18,9 @@ from talk_to_your_stock_shared import (
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     HealthResponse,
+    InvocationConflictDetails,
+    InvocationConflictErrorDetail,
+    InvocationConflictResponse,
     PeerSelectionMode,
     ReadinessResponse,
     RunResponse,
@@ -94,11 +97,16 @@ def duplicate_tool_invocation_exception_handler(
     _request: object,
     exc: DuplicateToolInvocation,
 ) -> JSONResponse:
-    return _error_response(
+    return JSONResponse(
         status_code=status.HTTP_409_CONFLICT,
-        code=ErrorCode.CONFLICT,
-        message=str(exc),
-        details={"existing_run_id": str(exc.existing_run_id)},
+        content=InvocationConflictResponse(
+            error=InvocationConflictErrorDetail(
+                message=str(exc),
+                details=InvocationConflictDetails(
+                    existing_run_id=exc.existing_run_id,
+                ),
+            )
+        ).model_dump(mode="json"),
     )
 
 
@@ -179,7 +187,7 @@ def get_ticker_validator() -> AlphaVantageTickerValidator:
     responses={
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
+        409: {"model": InvocationConflictResponse},
         502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
         501: {"model": ErrorResponse},

@@ -393,7 +393,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/InvocationConflict'
         '429':
           $ref: '#/components/responses/RateLimited'
         '501':
@@ -483,12 +483,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-    Conflict:
-      description: Request conflicts with an existing resource
+    InvocationConflict:
+      description: Tool invocation has already produced a Run
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/InvocationConflictResponse'
     RateLimited:
       description: Rate limited
       content:
@@ -555,6 +555,35 @@ components:
               additionalProperties: true
             request_id:
               type: [string, 'null']
+
+    InvocationConflictDetails:
+      type: object
+      required: [existing_run_id]
+      properties:
+        existing_run_id:
+          type: string
+          format: uuid
+
+    InvocationConflictErrorDetail:
+      type: object
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+          enum: [CONFLICT]
+        message:
+          type: string
+        details:
+          $ref: '#/components/schemas/InvocationConflictDetails'
+        request_id:
+          type: [string, 'null']
+
+    InvocationConflictResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/InvocationConflictErrorDetail'
 
     PaginationMeta:
       type: object
