@@ -192,6 +192,22 @@ class AlphaVantageCompanyDataSource:
             field="netIncome",
             ticker=ticker,
         )
+        quote_as_of = self._required_quote_date(quote, ticker=ticker)
+        balance_as_of = self._report_date(
+            balance_report,
+            provider_function="BALANCE_SHEET",
+            ticker=ticker,
+        )
+        income_as_of = self._report_date(
+            income_reports[0],
+            provider_function="INCOME_STATEMENT",
+            ticker=ticker,
+        )
+        shares_as_of = (
+            balance_as_of
+            if ".balance_sheet." in shares_source
+            else self._overview_date(overview, ticker=ticker)
+        )
         sources = {
             "share_price": f"alpha_vantage.global_quote.{ticker}.05. price",
             "shares_outstanding": shares_source,
@@ -227,6 +243,16 @@ class AlphaVantageCompanyDataSource:
             "net_income_ltm",
         ):
             sources[field] = f"{sources[field]}; {currency_source}"
+        source_as_of = {
+            "share_price": quote_as_of,
+            "shares_outstanding": shares_as_of,
+            "cash": balance_as_of,
+            "total_debt": balance_as_of,
+            "revenue_ltm": income_as_of,
+            "ebit_ltm": income_as_of,
+            "ebitda_ltm": income_as_of,
+            "net_income_ltm": income_as_of,
+        }
         raw_evidence: dict[str, object] = {
             "global_quote": quote_payload,
             "overview": overview,
@@ -270,8 +296,9 @@ class AlphaVantageCompanyDataSource:
             ebit_ltm=ebit_ltm,
             ebitda_ltm=ebitda_ltm,
             net_income_ltm=net_income_ltm,
-            as_of=self._required_quote_date(quote, ticker=ticker),
+            as_of=quote_as_of,
             sources=sources,
+            source_as_of=source_as_of,
         )
         return company, raw_evidence
 
@@ -671,6 +698,33 @@ class AlphaVantageCompanyDataSource:
         value = self._parse_date(
             quote.get("07. latest trading day"),
             field="GLOBAL_QUOTE.07. latest trading day",
+            ticker=ticker,
+        )
+        return datetime.combine(value, time.min, tzinfo=UTC)
+
+    def _overview_date(
+        self,
+        overview: dict[str, Any],
+        *,
+        ticker: str,
+    ) -> datetime:
+        value = self._parse_date(
+            overview.get("LatestQuarter"),
+            field="OVERVIEW.LatestQuarter",
+            ticker=ticker,
+        )
+        return datetime.combine(value, time.min, tzinfo=UTC)
+
+    def _report_date(
+        self,
+        report: dict[str, Any],
+        *,
+        provider_function: str,
+        ticker: str,
+    ) -> datetime:
+        value = self._parse_date(
+            report.get("fiscalDateEnding"),
+            field=f"{provider_function}.fiscalDateEnding",
             ticker=ticker,
         )
         return datetime.combine(value, time.min, tzinfo=UTC)

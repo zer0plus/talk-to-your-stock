@@ -24,6 +24,7 @@ class NormalizedCompanyInput(InternalArtifactModel):
     net_income_ltm: float
     as_of: datetime
     sources: dict[str, str]
+    source_as_of: dict[str, datetime]
 
 
 class SourceSnapshot(InternalArtifactModel):

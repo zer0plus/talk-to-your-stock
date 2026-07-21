@@ -81,6 +81,19 @@ class ControlledCompanyDataSource:
                             f"alpha_vantage.income_statement.{ticker}.net_income_ltm"
                         ),
                     },
+                    source_as_of={
+                        field: datetime(2026, 7, 17, tzinfo=UTC)
+                        for field in (
+                            "share_price",
+                            "shares_outstanding",
+                            "cash",
+                            "total_debt",
+                            "revenue_ltm",
+                            "ebit_ltm",
+                            "ebitda_ltm",
+                            "net_income_ltm",
+                        )
+                    },
                 )
                 for ticker in tickers
             ],
@@ -305,6 +318,31 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 if field != "shares_outstanding"
             )
         )
+        trace_inputs = {
+            trace_input["field"]: trace_input
+            for formula in response.json()["trace"]["formulas"]
+            if formula["ticker"] == "AAPL"
+            for trace_input in formula["inputs"]
+            if not trace_input["source"].startswith("calculated.")
+        }
+        self.assertEqual(
+            trace_inputs["share_price"]["as_of"],
+            "2026-07-17T00:00:00Z",
+        )
+        for field in (
+            "shares_outstanding",
+            "cash",
+            "total_debt",
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(
+                    trace_inputs[field]["as_of"],
+                    "2026-06-30T00:00:00Z",
+                )
 
     def test_explicit_fx_evidence_converts_every_monetary_input(self) -> None:
         company_fixture = json.loads(
