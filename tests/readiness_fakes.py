@@ -48,7 +48,7 @@ class FakeConnection:
 @contextmanager
 def database_connects(
     *,
-    schema_revision: str | None = "0002_comps_run_schema",
+    schema_revision: str | None = "0003_comps_audit_artifacts",
 ) -> Iterator[Mock]:
     connect = Mock(return_value=FakeConnection(schema_revision=schema_revision))
     with patch.dict(sys.modules, {"psycopg": SimpleNamespace(connect=connect)}):

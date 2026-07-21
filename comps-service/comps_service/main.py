@@ -24,6 +24,7 @@ from talk_to_your_stock_shared import (
     RunTableResponse,
     ServiceName,
     ServiceStatus,
+    TraceResponse,
 )
 from talk_to_your_stock_shared.readiness import (
     build_readiness_response,
@@ -293,6 +294,30 @@ def get_run_table(
             message="Comps Table not found.",
         )
     return table
+
+
+@app.get(
+    "/v1/runs/{run_id}/trace",
+    response_model=TraceResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run_trace(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+) -> TraceResponse | JSONResponse:
+    trace = repository.get_trace(run_id)
+    if trace is None:
+        return _error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=ErrorCode.NOT_FOUND,
+            message="Trace not found.",
+        )
+    return trace
 
 
 def _error_response(

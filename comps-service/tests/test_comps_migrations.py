@@ -19,6 +19,8 @@ from comps_service.main import (
     get_company_data_source,
     get_ticker_validator,
 )
+from comps_service.repository import PostgresCompsRunRepository
+from comps_service.run_service import LoadedCompanyData
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,33 +34,42 @@ class SupportedTickerValidator:
 
 
 class ControlledCompanyDataSource:
-    def load_companies(
+    def load(
         self,
         *,
         tickers: list[str],
         currency: str,
-    ) -> list[CompanyCompsInput]:
-        return [
-            CompanyCompsInput(
-                ticker=ticker,
-                company_name=f"{ticker} Inc.",
-                currency=currency,
-                share_price=10.0,
-                shares_outstanding=100.0,
-                cash=200.0,
-                total_debt=500.0,
-                revenue_ltm=250.0,
-                ebit_ltm=100.0,
-                ebitda_ltm=125.0,
-                net_income_ltm=50.0,
-                as_of=datetime(2026, 7, 17, tzinfo=UTC),
-            )
-            for ticker in tickers
-        ]
+    ) -> LoadedCompanyData:
+        return LoadedCompanyData(
+            companies=[
+                CompanyCompsInput(
+                    ticker=ticker,
+                    company_name=f"{ticker} Inc.",
+                    currency=currency,
+                    share_price=10.0,
+                    shares_outstanding=100.0,
+                    cash=200.0,
+                    total_debt=500.0,
+                    revenue_ltm=250.0,
+                    ebit_ltm=100.0,
+                    ebitda_ltm=125.0,
+                    net_income_ltm=50.0,
+                    as_of=datetime(2026, 7, 17, tzinfo=UTC),
+                    sources={
+                        "share_price": f"alpha_vantage.quote.{ticker}.price",
+                    },
+                )
+                for ticker in tickers
+            ],
+            raw_provider_evidence={
+                ticker: {"raw_marker": f"raw-provider-{ticker}"}
+                for ticker in tickers
+            },
+        )
 
 
 class CompsMigrationsTest(unittest.TestCase):
-    def test_upgrade_renders_comps_run_and_table_schema(self) -> None:
+    def test_upgrade_renders_comps_run_audit_schema(self) -> None:
         result = subprocess.run(
             [
                 sys.executable,
@@ -83,6 +94,8 @@ class CompsMigrationsTest(unittest.TestCase):
         sql = " ".join(result.stdout.lower().split())
         self.assertIn("create table comps_runs", sql)
         self.assertIn("create table comps_tables", sql)
+        self.assertIn("create table comps_traces", sql)
+        self.assertIn("create table comps_source_snapshots", sql)
         self.assertIn(
             "constraint comps_runs_invocation_id_unique unique (invocation_id)",
             sql,
@@ -98,6 +111,16 @@ class CompsMigrationsTest(unittest.TestCase):
         )
         self.assertIn(
             "foreign key(run_id) references comps_runs (id) on delete cascade",
+            sql,
+        )
+        self.assertIn(
+            "constraint comps_traces_run_fk foreign key(run_id) references "
+            "comps_runs (id) on delete cascade",
+            sql,
+        )
+        self.assertIn(
+            "constraint comps_source_snapshots_run_fk foreign key(run_id) "
+            "references comps_runs (id) on delete cascade",
             sql,
         )
 
@@ -193,14 +216,26 @@ class CompsMigrationsTest(unittest.TestCase):
                 )
                 run_readback = TestClient(app).get(f"/v1/runs/{run_id}")
                 table_readback = TestClient(app).get(f"/v1/runs/{run_id}/table")
+                trace_readback = TestClient(app).get(f"/v1/runs/{run_id}/trace")
+                source_snapshot = PostgresCompsRunRepository(
+                    database_url=database_url
+                ).get_source_snapshot(UUID(run_id))
 
                 self.assertEqual(run_readback.status_code, 200, run_readback.text)
                 self.assertEqual(table_readback.status_code, 200, table_readback.text)
+                self.assertEqual(trace_readback.status_code, 200, trace_readback.text)
                 self.assertEqual(run_readback.json()["run"], created.json()["run"])
                 self.assertEqual(table_readback.json(), created.json()["table"])
+                self.assertEqual(trace_readback.json(), created.json()["trace"])
+                self.assertIsNotNone(source_snapshot)
+                assert source_snapshot is not None
+                self.assertEqual(
+                    source_snapshot.raw_provider_evidence["AAPL"],
+                    {"raw_marker": "raw-provider-AAPL"},
+                )
                 self.assertEqual(
                     _linked_record_counts(database_url, trigger_message_id),
-                    (1, 1, 1),
+                    (1, 1, 1, 1, 1),
                 )
             finally:
                 app.dependency_overrides.clear()
@@ -273,7 +308,7 @@ def _generate_request(
 def _linked_record_counts(
     database_url: str,
     trigger_message_id: UUID,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int, int]:
     import psycopg
 
     with psycopg.connect(database_url) as connection:
@@ -287,7 +322,11 @@ def _linked_record_counts(
             run_count = cursor.fetchone()[0]
             cursor.execute("select count(*) from comps_tables")
             table_count = cursor.fetchone()[0]
-    return message_count, run_count, table_count
+            cursor.execute("select count(*) from comps_traces")
+            trace_count = cursor.fetchone()[0]
+            cursor.execute("select count(*) from comps_source_snapshots")
+            source_snapshot_count = cursor.fetchone()[0]
+    return message_count, run_count, table_count, trace_count, source_snapshot_count
 
 
 if __name__ == "__main__":

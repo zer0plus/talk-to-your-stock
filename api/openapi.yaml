@@ -332,6 +332,27 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /v1/runs/{run_id}/trace:
+    get:
+      tags: [Runs]
+      summary: Get auditable comps calculation trace
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      responses:
+        '200':
+          description: Trace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /v1/runs/{run_id}/export.csv:
     get:
       tags: [Exports]
