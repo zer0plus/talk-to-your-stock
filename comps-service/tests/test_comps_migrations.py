@@ -57,6 +57,25 @@ class ControlledCompanyDataSource:
                     as_of=datetime(2026, 7, 17, tzinfo=UTC),
                     sources={
                         "share_price": f"alpha_vantage.quote.{ticker}.price",
+                        "shares_outstanding": (
+                            f"alpha_vantage.overview.{ticker}.shares_outstanding"
+                        ),
+                        "cash": f"alpha_vantage.balance_sheet.{ticker}.cash",
+                        "total_debt": (
+                            f"alpha_vantage.balance_sheet.{ticker}.total_debt"
+                        ),
+                        "revenue_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.revenue_ltm"
+                        ),
+                        "ebit_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.ebit_ltm"
+                        ),
+                        "ebitda_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.ebitda_ltm"
+                        ),
+                        "net_income_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.net_income_ltm"
+                        ),
                     },
                 )
                 for ticker in tickers

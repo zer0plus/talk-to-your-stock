@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import os
-import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
+import os
 from pathlib import Path
+import unittest
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -59,6 +60,22 @@ class ControlledCompanyDataSource:
                         "shares_outstanding": (
                             f"alpha_vantage.overview.{ticker}.shares_outstanding"
                         ),
+                        "cash": f"alpha_vantage.balance_sheet.{ticker}.cash",
+                        "total_debt": (
+                            f"alpha_vantage.balance_sheet.{ticker}.total_debt"
+                        ),
+                        "revenue_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.revenue_ltm"
+                        ),
+                        "ebit_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.ebit_ltm"
+                        ),
+                        "ebitda_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.ebitda_ltm"
+                        ),
+                        "net_income_ltm": (
+                            f"alpha_vantage.income_statement.{ticker}.net_income_ltm"
+                        ),
                     },
                 )
                 for ticker in tickers
@@ -83,6 +100,26 @@ class ReverseOrderCompanyDataSource(ControlledCompanyDataSource):
         loaded = super().load(tickers=tickers, currency=currency)
         return LoadedCompanyData(
             companies=list(reversed(loaded.companies)),
+            raw_provider_evidence=loaded.raw_provider_evidence,
+        )
+
+
+class MissingSourceCompanyDataSource(ControlledCompanyDataSource):
+    def load(
+        self,
+        *,
+        tickers: list[str],
+        currency: str,
+    ) -> LoadedCompanyData:
+        loaded = super().load(tickers=tickers, currency=currency)
+        first, *remaining = loaded.companies
+        incomplete_sources = dict(first.sources)
+        incomplete_sources.pop("cash")
+        return LoadedCompanyData(
+            companies=[
+                replace(first, sources=incomplete_sources),
+                *remaining,
+            ],
             raw_provider_evidence=loaded.raw_provider_evidence,
         )
 
@@ -254,6 +291,32 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             "alpha_vantage.quote.AAPL.price",
         )
         self.assertEqual(equity_value["inputs"][0]["as_of"], "2026-07-17T00:00:00Z")
+        target_external_inputs = [
+            trace_input
+            for formula in trace_response.json()["formulas"]
+            if formula["ticker"] == "AAPL"
+            for trace_input in formula["inputs"]
+            if not trace_input["source"].startswith("calculated.")
+        ]
+        self.assertEqual(
+            {trace_input["field"] for trace_input in target_external_inputs},
+            {
+                "share_price",
+                "shares_outstanding",
+                "cash",
+                "total_debt",
+                "revenue_ltm",
+                "ebit_ltm",
+                "ebitda_ltm",
+                "net_income_ltm",
+            },
+        )
+        self.assertTrue(
+            all(
+                trace_input["source"].startswith("alpha_vantage.")
+                for trace_input in target_external_inputs
+            )
+        )
 
     def test_source_snapshot_preserves_evidence_without_public_exposure(self) -> None:
         with patch.dict(
@@ -294,6 +357,38 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertNotIn("source_snapshot", created.json())
         self.assertNotIn("raw-provider", created.text)
         self.assertNotIn("raw-provider", trace_readback.text)
+
+    def test_missing_trace_source_reference_does_not_persist_artifacts(self) -> None:
+        app.dependency_overrides[get_company_data_source] = (
+            MissingSourceCompanyDataSource
+        )
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
+        self.assertIn("AAPL.cash", response.json()["error"]["message"])
+        self.assertEqual(self.repository.runs, {})
+        self.assertEqual(self.repository.tables, {})
+        self.assertEqual(self.repository.traces, {})
+        self.assertEqual(self.repository.source_snapshots, {})
 
     def test_repeated_invocation_returns_conflict_without_duplicate_artifacts(
         self,
