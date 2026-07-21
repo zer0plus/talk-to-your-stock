@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
+import unittest
 from uuid import uuid4
 
 from comps_service.calculator import (
@@ -109,6 +110,22 @@ class CompsCalculatorTest(unittest.TestCase):
                 run_id=uuid4(),
                 target_ticker="AAPL",
                 companies=[],
+                currency="USD",
+            )
+
+    def test_missing_trace_source_reference_raises(self) -> None:
+        company = self._company("AAPL")
+        incomplete_sources = dict(company.sources)
+        incomplete_sources.pop("cash")
+
+        with self.assertRaisesRegex(
+            CompsCalculationError,
+            r"Source reference is required for AAPL\.cash",
+        ):
+            self.calculator.generate(
+                run_id=uuid4(),
+                target_ticker="AAPL",
+                companies=[replace(company, sources=incomplete_sources)],
                 currency="USD",
             )
 

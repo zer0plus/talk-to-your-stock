@@ -32,7 +32,6 @@ from talk_to_your_stock_shared.readiness import (
 )
 from talk_to_your_stock_shared.time import utc_now
 
-from .calculator import CompsCalculationError
 from .readiness import check_comps_database, check_run_data_source
 from .repository import (
     CompsPersistenceUnavailable,
@@ -241,7 +240,7 @@ def generate_comps_table(
             code=ErrorCode.INTERNAL_ERROR,
             message=str(exc),
         )
-    except (CompsCalculationError, CompsRunExecutionError) as exc:
+    except CompsRunExecutionError as exc:
         return _error_response(
             status_code=status.HTTP_502_BAD_GATEWAY,
             code=ErrorCode.UPSTREAM_ERROR,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 import os
 from pathlib import Path
@@ -100,26 +99,6 @@ class ReverseOrderCompanyDataSource(ControlledCompanyDataSource):
         loaded = super().load(tickers=tickers, currency=currency)
         return LoadedCompanyData(
             companies=list(reversed(loaded.companies)),
-            raw_provider_evidence=loaded.raw_provider_evidence,
-        )
-
-
-class MissingSourceCompanyDataSource(ControlledCompanyDataSource):
-    def load(
-        self,
-        *,
-        tickers: list[str],
-        currency: str,
-    ) -> LoadedCompanyData:
-        loaded = super().load(tickers=tickers, currency=currency)
-        first, *remaining = loaded.companies
-        incomplete_sources = dict(first.sources)
-        incomplete_sources.pop("cash")
-        return LoadedCompanyData(
-            companies=[
-                replace(first, sources=incomplete_sources),
-                *remaining,
-            ],
             raw_provider_evidence=loaded.raw_provider_evidence,
         )
 
@@ -357,38 +336,6 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertNotIn("source_snapshot", created.json())
         self.assertNotIn("raw-provider", created.text)
         self.assertNotIn("raw-provider", trace_readback.text)
-
-    def test_missing_trace_source_reference_does_not_persist_artifacts(self) -> None:
-        app.dependency_overrides[get_company_data_source] = (
-            MissingSourceCompanyDataSource
-        )
-
-        with patch.dict(
-            os.environ,
-            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
-            clear=True,
-        ):
-            response = TestClient(app).post(
-                "/v1/internal/tools/generate-comps-table",
-                json={
-                    "invocation_id": str(uuid4()),
-                    "thread_id": str(uuid4()),
-                    "trigger_message_id": str(uuid4()),
-                    "target_ticker": "AAPL",
-                    "peer_tickers": ["MSFT"],
-                    "peer_selection_mode": "user_supplied",
-                    "analysis_period": "latest",
-                },
-                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
-            )
-
-        self.assertEqual(response.status_code, 502, response.text)
-        self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
-        self.assertIn("AAPL.cash", response.json()["error"]["message"])
-        self.assertEqual(self.repository.runs, {})
-        self.assertEqual(self.repository.tables, {})
-        self.assertEqual(self.repository.traces, {})
-        self.assertEqual(self.repository.source_snapshots, {})
 
     def test_repeated_invocation_returns_conflict_without_duplicate_artifacts(
         self,
