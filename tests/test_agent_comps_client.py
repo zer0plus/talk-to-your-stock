@@ -116,7 +116,7 @@ class HttpCompsToolClientTest(unittest.TestCase):
 
         self.assertEqual(
             str(context.exception),
-            "Comps Service returned HTTP 501.",
+            "Comps Service returned HTTP 503.",
         )
         self.assertEqual(ticker_validator.is_supported.call_count, 2)
 

@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from functools import lru_cache
-from pathlib import Path
 
 import httpx
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from talk_to_your_stock_shared import (
     DependencyStatus,
     ReadinessCheck,
@@ -15,6 +11,7 @@ from talk_to_your_stock_shared import (
     ReadinessState,
     ServiceName,
 )
+from talk_to_your_stock_shared.migrations import required_schema_revision
 from talk_to_your_stock_shared.readiness import check_database
 from web_bff.agent_client import AGENT_SERVICE_URL_VAR
 
@@ -66,13 +63,3 @@ def check_web_bff_database(environ: Mapping[str, str]) -> ReadinessCheck:
         environ,
         required_schema_revision=revision,
     )
-
-
-@lru_cache(maxsize=1)
-def required_schema_revision() -> str:
-    repository_root = Path(__file__).resolve().parents[2]
-    config = Config(str(repository_root / "alembic.ini"))
-    revision = ScriptDirectory.from_config(config).get_current_head()
-    if revision is None:
-        raise RuntimeError("Web BFF migrations must define exactly one head revision.")
-    return revision

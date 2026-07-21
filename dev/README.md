@@ -42,8 +42,9 @@ cp dev/.env.example dev/.env
 docker compose -f dev/docker-compose.yml up --build -d
 ```
 
-Compose waits for PostgreSQL, runs the one-shot `web-bff-migrate` service, and
-starts the Web BFF only after `python -m alembic upgrade head` succeeds.
+Compose waits for PostgreSQL, runs the one-shot `database-migrate` service, and
+starts Web BFF and Comps Service only after `python -m alembic upgrade head`
+succeeds.
 
 5. Check readiness:
 
@@ -57,6 +58,10 @@ Each readiness response uses the shared contract from `api/openapi.yaml` and
 includes `configuration`, `database`, and relevant service capability checks. A
 failed required check returns HTTP `503` with `status: "not_ready"`.
 
+Until issue #15 connects real provider and FX inputs, Comps Service also reports
+`run_data_source: fail`. Controlled company inputs exist only in automated tests;
+the local runtime does not fall back to fixtures or synthetic values.
+
 Agent Service startup prepares the ADK-owned session/event tables used to retain
 complete Agent and Tool event history for each User and Thread. Readiness
 includes `agent_session` to verify that store without preparing database objects.
@@ -69,8 +74,8 @@ readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and
 requires `GOOGLE_ADK_APP_NAME`. Production readiness intentionally fails
 `agent_routing` because public deployment controls remain deferred.
 
-Web BFF database readiness also requires the current Alembic schema revision.
-Missing or stale migrations keep the Web BFF not ready.
+Web BFF and Comps Service database readiness also require the current Alembic
+schema revision. Missing or stale migrations keep either schema owner not ready.
 
 ## Production Mode
 

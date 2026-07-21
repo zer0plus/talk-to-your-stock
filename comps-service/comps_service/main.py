@@ -3,13 +3,15 @@ from __future__ import annotations
 import hmac
 import os
 from collections.abc import Awaitable, Callable
+from typing import Annotated
+from uuid import UUID
 
-from fastapi import FastAPI, Request, Response, status
+from fastapi import Depends, FastAPI, Path, Request, Response, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from talk_to_your_stock_shared import (
-    DependencyStatus,
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
@@ -17,19 +19,35 @@ from talk_to_your_stock_shared import (
     GenerateCompsToolResponse,
     HealthResponse,
     PeerSelectionMode,
-    ReadinessCheck,
     ReadinessResponse,
+    RunResponse,
+    RunTableResponse,
     ServiceName,
     ServiceStatus,
 )
 from talk_to_your_stock_shared.readiness import (
     build_readiness_response,
-    check_database,
     readiness_http_status,
 )
 from talk_to_your_stock_shared.time import utc_now
 
+from .readiness import check_comps_database, check_run_data_source
+from .repository import (
+    CompsPersistenceUnavailable,
+    InvalidRunLinkage,
+    PostgresCompsRunRepository,
+)
+from .run_service import (
+    CompanyDataSource,
+    CompanyDataUnavailable,
+    CompsRunExecutionError,
+    CompsRunRepository,
+    CompsRunService,
+    DuplicateToolInvocation,
+    UnavailableCompanyDataSource,
+)
 from .tool_validation import (
+    AlphaVantageTickerValidator,
     RuntimeConfigurationError,
     ToolValidationError,
     UpstreamValidationError,
@@ -45,6 +63,42 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+
+@app.exception_handler(InvalidRunLinkage)
+def invalid_run_linkage_exception_handler(
+    _request: object,
+    exc: InvalidRunLinkage,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=ErrorCode.VALIDATION_ERROR,
+        message=str(exc),
+    )
+
+
+@app.exception_handler(CompsPersistenceUnavailable)
+def persistence_exception_handler(
+    _request: object,
+    exc: CompsPersistenceUnavailable,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code=ErrorCode.INTERNAL_ERROR,
+        message=str(exc),
+    )
+
+
+@app.exception_handler(DuplicateToolInvocation)
+def duplicate_tool_invocation_exception_handler(
+    _request: object,
+    exc: DuplicateToolInvocation,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.CONFLICT,
+        message=str(exc),
+    )
 
 
 @app.middleware("http")
@@ -97,16 +151,25 @@ def health() -> HealthResponse:
 def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.COMPS_SERVICE,
-        database_checker=check_database,
-        additional_checks={
-            "run_execution": ReadinessCheck(
-                status=DependencyStatus.FAIL,
-                message="Comps run execution is not implemented yet.",
-            )
-        },
+        database_checker=check_comps_database,
+        additional_checks={"run_data_source": check_run_data_source()},
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
+
+
+def get_repository() -> CompsRunRepository:
+    return PostgresCompsRunRepository.from_env()
+
+
+def get_company_data_source() -> CompanyDataSource:
+    return UnavailableCompanyDataSource()
+
+
+def get_ticker_validator() -> AlphaVantageTickerValidator:
+    from . import tool_validation
+
+    return tool_validation.AlphaVantageTickerValidator()
 
 
 @app.post(
@@ -115,6 +178,7 @@ def ready(response: Response) -> ReadinessResponse:
     responses={
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
         501: {"model": ErrorResponse},
@@ -122,9 +186,18 @@ def ready(response: Response) -> ReadinessResponse:
     tags=["Internal"],
 )
 def generate_comps_table(
-    _request: GenerateCompsToolRequest,
-) -> JSONResponse:
-    if _request.peer_selection_mode == PeerSelectionMode.AUTO:
+    request: GenerateCompsToolRequest,
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+    company_data_source: Annotated[
+        CompanyDataSource,
+        Depends(get_company_data_source),
+    ],
+    ticker_validator: Annotated[
+        AlphaVantageTickerValidator,
+        Depends(get_ticker_validator),
+    ],
+) -> GenerateCompsToolResponse | JSONResponse:
+    if request.peer_selection_mode == PeerSelectionMode.AUTO:
         return _error_response(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             code=ErrorCode.INTERNAL_ERROR,
@@ -132,7 +205,7 @@ def generate_comps_table(
         )
 
     try:
-        validate_generate_comps_request(_request)
+        validate_generate_comps_request(request, ticker_validator=ticker_validator)
     except ToolValidationError as exc:
         return _error_response(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -155,15 +228,71 @@ def generate_comps_table(
             details=exc.details,
         )
 
-    return JSONResponse(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        content=ErrorResponse(
-            error=ErrorDetail(
-                code=ErrorCode.INTERNAL_ERROR,
-                message="Comps run execution is not implemented yet.",
-            )
-        ).model_dump(mode="json"),
-    )
+    try:
+        return CompsRunService(
+            repository=repository,
+            company_data_source=company_data_source,
+        ).generate(request)
+    except CompanyDataUnavailable as exc:
+        return _error_response(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=ErrorCode.INTERNAL_ERROR,
+            message=str(exc),
+        )
+    except CompsRunExecutionError as exc:
+        return _error_response(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code=ErrorCode.UPSTREAM_ERROR,
+            message=str(exc),
+        )
+
+
+@app.get(
+    "/v1/runs/{run_id}",
+    response_model=RunResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+) -> RunResponse | JSONResponse:
+    run = repository.get_run(run_id)
+    if run is None:
+        return _error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=ErrorCode.NOT_FOUND,
+            message="Run not found.",
+        )
+    return RunResponse(run=run)
+
+
+@app.get(
+    "/v1/runs/{run_id}/table",
+    response_model=RunTableResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run_table(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+) -> RunTableResponse | JSONResponse:
+    table = repository.get_table(run_id)
+    if table is None:
+        return _error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=ErrorCode.NOT_FOUND,
+            message="Comps Table not found.",
+        )
+    return table
 
 
 def _error_response(
@@ -234,3 +363,23 @@ def _validation_error_details(exc: RequestValidationError) -> dict[str, object]:
             }
         )
     return {"errors": errors}
+
+
+def _custom_openapi() -> dict[str, object]:
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version="0.1.0",
+        routes=app.routes,
+    )
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if isinstance(operation, dict):
+                operation.get("responses", {}).pop("422", None)
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
