@@ -20,6 +20,18 @@ class CompsCalculationError(RuntimeError):
     pass
 
 
+TRACE_SOURCE_INPUT_FIELDS = (
+    "share_price",
+    "shares_outstanding",
+    "cash",
+    "total_debt",
+    "revenue_ltm",
+    "ebit_ltm",
+    "ebitda_ltm",
+    "net_income_ltm",
+)
+
+
 @dataclass(frozen=True)
 class CompanyCompsInput:
     ticker: str
@@ -130,6 +142,11 @@ class CompsCalculator:
             if ticker in seen:
                 raise CompsCalculationError(f"Duplicate ticker input: {ticker}.")
             seen.add(ticker)
+            for field_name in TRACE_SOURCE_INPUT_FIELDS:
+                if not company.sources.get(field_name, "").strip():
+                    raise CompsCalculationError(
+                        f"Source reference is required for {ticker}.{field_name}."
+                    )
 
         if target_ticker.upper() not in seen:
             raise CompsCalculationError(
@@ -256,7 +273,7 @@ class CompsCalculator:
         return TraceInput(
             field=field_name,
             value=getattr(company, field_name),
-            source=company.sources.get(field_name, f"input.{field_name}"),
+            source=company.sources[field_name],
             as_of=company.as_of,
         )
 

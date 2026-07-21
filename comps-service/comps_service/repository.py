@@ -6,10 +6,11 @@ from collections.abc import Mapping
 from typing import NoReturn
 from uuid import UUID
 
-from talk_to_your_stock_shared import Run, RunTableResponse
+from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
 from talk_to_your_stock_shared.readiness import DATABASE_URL_VAR
 from talk_to_your_stock_shared.time import utc_now
 
+from .artifacts import SourceSnapshot
 from .run_service import DuplicateToolInvocation
 
 
@@ -44,6 +45,8 @@ class PostgresCompsRunRepository:
         invocation_id: UUID,
         run: Run,
         table: RunTableResponse,
+        trace: TraceResponse,
+        source_snapshot: SourceSnapshot,
     ) -> None:
         from psycopg.types.json import Jsonb
 
@@ -98,6 +101,42 @@ class PostgresCompsRunRepository:
                             utc_now(),
                         ),
                     )
+                    cursor.execute(
+                        """
+                        insert into comps_traces (run_id, formulas, created_at)
+                        values (%s, %s, %s)
+                        """,
+                        (
+                            trace.run_id,
+                            Jsonb(
+                                [
+                                    formula.model_dump(mode="json")
+                                    for formula in trace.formulas
+                                ]
+                            ),
+                            utc_now(),
+                        ),
+                    )
+                    cursor.execute(
+                        """
+                        insert into comps_source_snapshots (
+                            run_id, raw_provider_evidence, normalized_inputs,
+                            created_at
+                        )
+                        values (%s, %s, %s, %s)
+                        """,
+                        (
+                            source_snapshot.run_id,
+                            Jsonb(source_snapshot.raw_provider_evidence),
+                            Jsonb(
+                                [
+                                    company.model_dump(mode="json")
+                                    for company in source_snapshot.normalized_inputs
+                                ]
+                            ),
+                            source_snapshot.created_at,
+                        ),
+                    )
         except Exception as exc:
             self._raise_unavailable(exc)
 
@@ -136,6 +175,41 @@ class PostgresCompsRunRepository:
         except Exception as exc:
             self._raise_unavailable(exc)
         return RunTableResponse.model_validate(row) if row is not None else None
+
+    def get_trace(self, run_id: UUID) -> TraceResponse | None:
+        try:
+            with self._connect() as connection:
+                with connection.cursor(row_factory=self._dict_row()) as cursor:
+                    cursor.execute(
+                        """
+                        select run_id, formulas
+                        from comps_traces
+                        where run_id = %s
+                        """,
+                        (run_id,),
+                    )
+                    row = cursor.fetchone()
+        except Exception as exc:
+            self._raise_unavailable(exc)
+        return TraceResponse.model_validate(row) if row is not None else None
+
+    def get_source_snapshot(self, run_id: UUID) -> SourceSnapshot | None:
+        try:
+            with self._connect() as connection:
+                with connection.cursor(row_factory=self._dict_row()) as cursor:
+                    cursor.execute(
+                        """
+                        select run_id, raw_provider_evidence, normalized_inputs,
+                            created_at
+                        from comps_source_snapshots
+                        where run_id = %s
+                        """,
+                        (run_id,),
+                    )
+                    row = cursor.fetchone()
+        except Exception as exc:
+            self._raise_unavailable(exc)
+        return SourceSnapshot.model_validate(row) if row is not None else None
 
     def _connect(self):
         if not self._database_url:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -9,9 +10,11 @@ from talk_to_your_stock_shared import (
     Run,
     RunStatus,
     RunTableResponse,
+    TraceResponse,
 )
 from talk_to_your_stock_shared.time import utc_now
 
+from .artifacts import SourceSnapshot
 from .calculator import CompanyCompsInput, CompsCalculator
 
 
@@ -27,13 +30,19 @@ class DuplicateToolInvocation(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class LoadedCompanyData:
+    companies: list[CompanyCompsInput]
+    raw_provider_evidence: dict[str, object]
+
+
 class CompanyDataSource(Protocol):
-    def load_companies(
+    def load(
         self,
         *,
         tickers: list[str],
         currency: str,
-    ) -> list[CompanyCompsInput]: ...
+    ) -> LoadedCompanyData: ...
 
 
 class CompsRunRepository(Protocol):
@@ -43,19 +52,26 @@ class CompsRunRepository(Protocol):
         invocation_id: UUID,
         run: Run,
         table: RunTableResponse,
+        trace: TraceResponse,
+        source_snapshot: SourceSnapshot,
     ) -> None: ...
 
     def get_run(self, run_id: UUID) -> Run | None: ...
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None: ...
 
+    def get_trace(self, run_id: UUID) -> TraceResponse | None: ...
+
+    def get_source_snapshot(self, run_id: UUID) -> SourceSnapshot | None: ...
+
+
 class UnavailableCompanyDataSource:
-    def load_companies(
+    def load(
         self,
         *,
         tickers: list[str],
         currency: str,
-    ) -> list[CompanyCompsInput]:
+    ) -> LoadedCompanyData:
         del tickers, currency
         raise CompanyDataUnavailable(
             "Real provider and FX company inputs are not implemented yet."
@@ -78,12 +94,13 @@ class CompsRunService:
         target_ticker = request.target_ticker.upper()
         peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
         requested_tickers = [target_ticker, *peer_tickers]
+        loaded = self._company_data_source.load(
+            tickers=requested_tickers,
+            currency=request.currency.upper(),
+        )
         companies = self._order_requested_companies(
             requested_tickers=requested_tickers,
-            companies=self._company_data_source.load_companies(
-                tickers=requested_tickers,
-                currency=request.currency.upper(),
-            ),
+            companies=loaded.companies,
         )
 
         run_id = uuid4()
@@ -107,10 +124,18 @@ class CompsRunService:
             started_at=now,
             completed_at=now,
         )
+        source_snapshot = SourceSnapshot(
+            run_id=run_id,
+            raw_provider_evidence=loaded.raw_provider_evidence,
+            normalized_inputs=companies,
+            created_at=now,
+        )
         self._repository.save_succeeded_run(
             invocation_id=request.invocation_id,
             run=run,
             table=table,
+            trace=trace,
+            source_snapshot=source_snapshot,
         )
         return GenerateCompsToolResponse(
             run=run,
