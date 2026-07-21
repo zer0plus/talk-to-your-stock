@@ -43,7 +43,7 @@ Notes:
 * Google ADK owns orchestration behavior.
 * Google ADK-native observability is the primary surface for agent internals, including tool-call history and model/tool traces.
 * This ADR describes agent behavior and tool boundaries.
-* The Fundamental Analysis Agent may explain results, but it does not invent or recalculate final comps metrics.
+* The Fundamental Analysis Agent is instructed to use the Tool rather than invent or recalculate final comps metrics. A deterministic Comps Table exists only when the Tool returns a Run.
 
 ### Agent Observability
 
@@ -62,12 +62,14 @@ Agent-internal observability should build around ADK-native capabilities such as
 
 ### Intent Handling
 
-Intent handling is primarily expressed through the agent system instructions, but the result must be treated as a product decision, not just prose.
+For the initial MVP, intent handling is expressed through the agent system instructions. The Agent Service trusts the model's routing decision and does not maintain a second application-level natural-language classifier.
 
 The agent decides whether a message is:
-* **Conversational**: answer directly, no run created.
-* **Fundamental/comps analysis**: call `generate_comps_table`, create a run, and return table-backed analysis.
+* **Conversational or no Tool selected**: answer directly, no run created.
+* **Fundamental/comps analysis with Tool selected**: call `generate_comps_table`, create a run, and return table-backed analysis.
 * **Ambiguous**: ask a short clarifying question before tool execution.
+
+If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. Tool success remains the only path that may claim or link a deterministic Comps Table.
 
 If the Comps Service rejects a tool call before creating a Run because the structured input is invalid, the Agent may perform one internal correction retry. If the corrected tool call is still invalid, the Agent surfaces a concise clarification or error to the User instead of looping.
 
@@ -113,7 +115,7 @@ When auto peer selection is supported, it remains a Comps Service responsibility
   * The old prototype did not implement deterministic comps.
 * Non-goals:
   * Multi-agent routing across news/sentiment and technical analysis in MVP.
-  * Letting the LLM calculate final financial metrics without tool-backed data.
+  * Presenting model-only output as a deterministic Comps Table or linking it to a Run.
 
 ---
 
@@ -124,12 +126,12 @@ When auto peer selection is supported, it remains a Comps Service responsibility
 * Keeps agent behavior product-focused and understandable.
 * Separates conversational reasoning from deterministic financial computation.
 * Allows future agents without changing the initial comps workflow.
-* Gives a clean place to enforce tool-use rules and refusal/clarification behavior.
+* Keeps initial tool-use routing inside the ADK Agent instructions.
 * Avoids duplicating ADK's session/event/trace model in application persistence.
 
 ### Negative / Trade-offs
 
-* System prompt quality matters for routing until more structured classifiers are added.
+* System prompt quality determines routing until more structured classifiers are added; the model can skip the Tool for a comps request and return a non-Run answer.
 * Auto peer selection remains a product/design problem inside the Comps Service.
 * Tool contract may evolve once the exact data fields needed for comps are validated.
 * Agent debugging depends on ADK observability surfaces being available and understood in local and production-like environments.
