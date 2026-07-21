@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from talk_to_your_stock_shared import (
+    DependencyStatus,
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
@@ -16,6 +17,7 @@ from talk_to_your_stock_shared import (
     GenerateCompsToolResponse,
     HealthResponse,
     PeerSelectionMode,
+    ReadinessCheck,
     ReadinessResponse,
     ServiceName,
     ServiceStatus,
@@ -96,6 +98,12 @@ def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.COMPS_SERVICE,
         database_checker=check_database,
+        additional_checks={
+            "run_execution": ReadinessCheck(
+                status=DependencyStatus.FAIL,
+                message="Comps run execution is not implemented yet.",
+            )
+        },
     )
     response.status_code = readiness_http_status(readiness)
     return readiness

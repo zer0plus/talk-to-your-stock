@@ -47,6 +47,23 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.agent_get_patcher = patch("httpx.get", return_value=agent_response)
         self.agent_get_patcher.start()
         self.addCleanup(self.agent_get_patcher.stop)
+        comps_response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://comps-service:8002/v1/ready"),
+            json={
+                "status": "ready",
+                "service": "comps-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+        self.comps_get_patcher = patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=comps_response,
+        )
+        self.comps_get_patcher.start()
+        self.addCleanup(self.comps_get_patcher.stop)
         self.agent_session_context = AdkSessionContext(
             app_name="talk-to-your-stock",
             session_service=InMemorySessionService(),
@@ -71,13 +88,42 @@ class BackendServiceReadinessTest(unittest.TestCase):
             schema = ready_responses["503"]["content"]["application/json"]["schema"]
             self.assertEqual(schema["$ref"], "#/components/schemas/ReadinessResponse")
 
-    def test_local_stack_services_report_ready_when_configuration_and_database_pass(
+    def test_comps_readiness_fails_until_run_execution_exists(self) -> None:
+        with database_connects():
+            response = self._get_ready(comps_app, LOCAL_ENV)
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["run_execution"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["run_execution"]["message"],
+            "Comps run execution is not implemented yet.",
+        )
+
+    def test_agent_readiness_propagates_comps_execution_failure(self) -> None:
+        self.comps_get_patcher.stop()
+
+        with running_service(comps_app) as comps_service_url:
+            env = {**LOCAL_ENV, "COMPS_SERVICE_URL": comps_service_url}
+            with patch.dict(os.environ, env, clear=True), database_connects():
+                response = TestClient(agent_app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["agent_routing"]["message"],
+            "Comps Service is not ready.",
+        )
+
+    def test_local_web_and_agent_services_report_ready_when_dependencies_pass(
         self,
     ) -> None:
         for service_name, app in (
             ("web-bff", web_bff_app),
             ("agent-service", agent_app),
-            ("comps-service", comps_app),
         ):
             with self.subTest(service=service_name), database_connects():
                 response = self._get_ready(app, LOCAL_ENV)

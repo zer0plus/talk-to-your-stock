@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, FastAPI, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -21,6 +22,7 @@ from talk_to_your_stock_shared import (
     ErrorResponse,
     HealthResponse,
     ReadinessResponse,
+    ReadinessState,
     ServiceName,
     ServiceStatus,
     ReadinessCheck,
@@ -31,6 +33,7 @@ from talk_to_your_stock_shared.readiness import (
     readiness_http_status,
 )
 from talk_to_your_stock_shared.time import utc_now
+from agent_service.comps_client import COMPS_SERVICE_URL_VAR
 from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
 from agent_service.fundamental_agent import (
     AgentRoutingUnavailable,
@@ -132,14 +135,14 @@ async def ready(
         database_checker=check_database,
         additional_checks={
             "agent_session": agent_session_check,
-            "agent_routing": _agent_routing_readiness_check(),
+            "agent_routing": await _agent_routing_readiness_check(),
         },
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
 
 
-def _agent_routing_readiness_check() -> ReadinessCheck:
+async def _agent_routing_readiness_check() -> ReadinessCheck:
     if os.environ.get("TALK_TO_YOUR_STOCK_ENV", "").strip().lower() == "production":
         return ReadinessCheck(
             status=DependencyStatus.FAIL,
@@ -148,7 +151,33 @@ def _agent_routing_readiness_check() -> ReadinessCheck:
                 "are implemented."
             ),
         )
+
+    base_url = os.environ.get(COMPS_SERVICE_URL_VAR, "").strip().rstrip("/")
+    if not base_url:
+        return _failed_comps_service_check()
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            response = await client.get(f"{base_url}/v1/ready")
+        readiness = ReadinessResponse.model_validate(response.json())
+    except (httpx.HTTPError, ValueError):
+        logger.exception("Comps Service readiness check failed.")
+        return _failed_comps_service_check()
+
+    if (
+        response.status_code != status.HTTP_200_OK
+        or readiness.service != ServiceName.COMPS_SERVICE
+        or readiness.status != ReadinessState.READY
+    ):
+        return _failed_comps_service_check()
+
     return ReadinessCheck(status=DependencyStatus.OK)
+
+
+def _failed_comps_service_check() -> ReadinessCheck:
+    return ReadinessCheck(
+        status=DependencyStatus.FAIL,
+        message="Comps Service is not ready.",
+    )
 
 
 @app.post(
