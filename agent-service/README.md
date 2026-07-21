@@ -22,12 +22,12 @@ structured Tickers and calls the configured Comps Service through
 identity, so the User Message, model Tool call, Tool result, and Assistant
 Message remain visible in ADK-native event history.
 
-The Agent never calculates final Comps Table Metrics. After Tool success, the
-route stops further model generation and returns a deterministic confirmation
-built only from the returned Run. This prevents an unconstrained model response
-from inventing or recalculating Metrics. A pre-Run validation error permits one
-corrected Tool call; a second validation error ends the turn with a concise
-Ticker clarification.
+The Agent instruction directs the model to use the Tool rather than calculate
+final Comps Table Metrics. After Tool success, the route stops further model
+generation and returns a deterministic confirmation built only from the returned
+Run. When the model answers without calling the Tool, the route returns that
+answer with no Run. A pre-Run validation error permits one corrected Tool call;
+a second validation error ends the turn with a concise Ticker clarification.
 
 ## Persistence Flow
 

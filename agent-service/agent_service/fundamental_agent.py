@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -59,47 +58,6 @@ For a request that compares one company with explicit peer companies:
 If a comparison request does not identify both the Target and explicit Peers,
 ask one concise clarification question before calling the Tool.
 """.strip()
-
-EXPLICIT_PEER_COMPARISON_PATTERN = re.compile(
-    (
-        r"^\s*(?:please\s+)?compare\s+(?P<target>.+?)\s+"
-        r"(?:with|to|against|versus)\s+(?P<peers>.+?)\s*$"
-    ),
-    flags=re.IGNORECASE | re.DOTALL,
-)
-AMBIGUOUS_COMPARISON_SUBJECTS = {
-    "companies",
-    "it",
-    "its peers",
-    "peer companies",
-    "peers",
-    "that",
-    "them",
-    "those",
-    "what",
-    "which",
-    "who",
-    "whom",
-}
-CONVERSATIONAL_COMPARISON_SUBJECTS = {
-    "cash flow",
-    "earnings",
-    "ebit",
-    "ebitda",
-    "enterprise value",
-    "free cash flow",
-    "market cap",
-    "market capitalization",
-    "metric",
-    "metrics",
-    "p e",
-    "pe",
-    "price to earnings",
-    "revenue",
-    "valuation multiple",
-    "valuation multiples",
-}
-
 
 class AgentRoutingUnavailable(RuntimeError):
     pass
@@ -218,11 +176,6 @@ class FundamentalAnalysisAgent:
                 run=successful_tool_response.run,
             )
 
-        if _requires_comps_tool(request.content):
-            raise AgentRoutingUnavailable(
-                "An explicit peer comparison requires a successful Comps Tool result."
-            )
-
         if not final_text:
             raise AgentRoutingUnavailable("Agent returned no response.")
         return AgentMessageResponse(content=final_text, run=None)
@@ -299,27 +252,6 @@ def _is_terminal_validation_error(event: Any) -> bool:
         ):
             return True
     return False
-
-
-def _requires_comps_tool(content: str) -> bool:
-    match = EXPLICIT_PEER_COMPARISON_PATTERN.match(content)
-    if match is None:
-        return False
-    subjects = [
-        match.group("target"),
-        *re.split(r"\s*(?:,|\band\b)\s*", match.group("peers"), flags=re.I),
-    ]
-    normalized_subjects = [_normalize_comparison_subject(value) for value in subjects]
-    return all(
-        subject
-        and subject not in AMBIGUOUS_COMPARISON_SUBJECTS
-        and subject not in CONVERSATIONAL_COMPARISON_SUBJECTS
-        for subject in normalized_subjects
-    )
-
-
-def _normalize_comparison_subject(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
 
 
 def _tool_backed_content(response: GenerateCompsToolResponse) -> str:

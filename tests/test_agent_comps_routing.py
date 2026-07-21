@@ -173,7 +173,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(tool_result.name, "generate_comps_table")
         self.assertEqual(tool_result.response["run"]["id"], str(tool_response.run.id))
 
-    def test_explicit_peer_prompt_fails_if_model_skips_comps_tool(self) -> None:
+    def test_model_response_is_returned_when_model_skips_comps_tool(self) -> None:
         model = ScriptedLlm(
             model="scripted",
             responses=[
@@ -199,11 +199,9 @@ class AgentCompsRoutingTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(
-            response.json()["error"]["message"],
-            "An explicit peer comparison requires a successful Comps Tool result.",
-        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["content"], "AAPL looks cheaper than MSFT.")
+        self.assertIsNone(response.json()["run"])
 
     def test_non_explicit_comparisons_can_return_conversation_or_clarification(
         self,
