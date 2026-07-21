@@ -35,7 +35,7 @@ class CompsReadinessTest(unittest.TestCase):
             response.json()["checks"]["database"]["message"],
         )
 
-    def test_readiness_fails_while_real_run_data_source_is_unavailable(self) -> None:
+    def test_readiness_reports_real_run_data_source_available(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "local",
             "DATABASE_URL": (
@@ -48,13 +48,13 @@ class CompsReadinessTest(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True), database_connects():
             response = TestClient(app).get("/v1/ready")
 
-        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "ready")
         self.assertEqual(response.json()["checks"]["configuration"]["status"], "ok")
         self.assertEqual(response.json()["checks"]["database"]["status"], "ok")
-        self.assertEqual(response.json()["checks"]["run_data_source"]["status"], "fail")
-        self.assertIn(
-            "Real provider and FX",
-            response.json()["checks"]["run_data_source"]["message"],
+        self.assertEqual(
+            response.json()["checks"]["run_data_source"],
+            {"status": "ok", "message": None},
         )
 
 

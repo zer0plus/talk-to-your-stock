@@ -65,19 +65,6 @@ class CompsRunRepository(Protocol):
     def get_source_snapshot(self, run_id: UUID) -> SourceSnapshot | None: ...
 
 
-class UnavailableCompanyDataSource:
-    def load(
-        self,
-        *,
-        tickers: list[str],
-        currency: str,
-    ) -> LoadedCompanyData:
-        del tickers, currency
-        raise CompanyDataUnavailable(
-            "Real provider and FX company inputs are not implemented yet."
-        )
-
-
 class CompsRunService:
     def __init__(
         self,

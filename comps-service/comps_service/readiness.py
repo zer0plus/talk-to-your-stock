@@ -25,6 +25,5 @@ def check_comps_database(environ: Mapping[str, str]) -> ReadinessCheck:
 
 def check_run_data_source() -> ReadinessCheck:
     return ReadinessCheck(
-        status=DependencyStatus.FAIL,
-        message="Real provider and FX Run data is not implemented yet.",
+        status=DependencyStatus.OK,
     )

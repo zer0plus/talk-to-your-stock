@@ -58,17 +58,13 @@ Each readiness response uses the shared contract from `api/openapi.yaml` and
 includes `configuration`, `database`, and relevant service capability checks. A
 failed required check returns HTTP `503` with `status: "not_ready"`.
 
-Until issue #15 connects real provider and FX inputs, Comps Service also reports
-`run_data_source: fail`. Controlled company inputs exist only in automated tests;
-the local runtime does not fall back to fixtures or synthetic values.
-
 Agent Service startup prepares the ADK-owned session/event tables used to retain
 complete Agent and Tool event history for each User and Thread. Readiness
 includes `agent_session` to verify that store without preparing database objects.
-Comps Service readiness reports `run_data_source` as failed until real provider
-and FX Run data is implemented. Agent Service readiness checks the configured
-Comps Service and propagates that failure through `agent_routing`, so the local
-stack does not report ready while canonical Comps requests would fail.
+Comps Service readiness reports `run_data_source: ok` when its real provider and
+FX adapter is installed; configuration readiness independently fails when the
+Alpha Vantage API key is missing. Agent Service readiness checks the configured
+Comps Service and propagates any failure through `agent_routing`.
 Configuration readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and
 `COMPS_SERVICE_INTERNAL_TOKEN` in local and production modes; production also
 requires `GOOGLE_ADK_APP_NAME`. Production readiness intentionally fails
@@ -76,6 +72,56 @@ requires `GOOGLE_ADK_APP_NAME`. Production readiness intentionally fails
 
 Web BFF and Comps Service database readiness also require the current Alembic
 schema revision. Missing or stale migrations keep either schema owner not ready.
+
+## Real Provider And FX Smoke Check
+
+This opt-in check calls current Alpha Vantage payloads with your real credential.
+It requests IBM provider evidence in USD and normalizes it into CAD, which forces
+the explicit `CURRENCY_EXCHANGE_RATE` path. It does not use the database or
+persist a Run. The check makes five provider calls, so account for your plan's
+request quota.
+
+```bash
+export ALPHA_VANTAGE_API_KEY="your-real-key"
+export ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS="1.1"
+PYTHONPATH=shared:comps-service python - <<'PY'
+from comps_service.provider import AlphaVantageCompanyDataSource
+
+loaded = AlphaVantageCompanyDataSource().load(
+    tickers=["IBM"],
+    currency="CAD",
+)
+company = loaded.companies[0]
+evidence = loaded.raw_provider_evidence["IBM"]
+fx = evidence["currency_exchange_rate"]["Realtime Currency Exchange Rate"]
+
+assert company.ticker == "IBM"
+assert company.currency == "CAD"
+assert evidence["overview"]["Currency"] == "USD"
+assert fx["1. From_Currency Code"] == "USD"
+assert fx["3. To_Currency Code"] == "CAD"
+assert float(fx["5. Exchange Rate"]) > 0
+assert all(
+    "currency_exchange_rate.USD_CAD" in source
+    for field, source in company.sources.items()
+    if field != "shares_outstanding"
+)
+
+print(
+    {
+        "ticker": company.ticker,
+        "table_currency": company.currency,
+        "as_of": company.as_of.isoformat(),
+        "fx_last_refreshed": fx["6. Last Refreshed"],
+    }
+)
+PY
+```
+
+Set `ALPHA_VANTAGE_QUOTE_ENTITLEMENT=realtime` or `delayed` only when the API
+key has that entitlement. A missing field, provider informational/rate-limit
+payload, mismatched Ticker/currency, or unusable FX rate makes the check fail;
+there is no fixture, stale-value, or 1:1 FX fallback in this runtime path.
 
 ## Production Mode
 

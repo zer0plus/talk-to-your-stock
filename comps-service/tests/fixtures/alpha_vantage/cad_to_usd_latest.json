@@ -1,0 +1,13 @@
+{
+  "Realtime Currency Exchange Rate": {
+    "1. From_Currency Code": "CAD",
+    "2. From_Currency Name": "Canadian Dollar",
+    "3. To_Currency Code": "USD",
+    "4. To_Currency Name": "United States Dollar",
+    "5. Exchange Rate": "0.75000000",
+    "6. Last Refreshed": "2026-07-17 21:59:01",
+    "7. Time Zone": "UTC",
+    "8. Bid Price": "0.74990000",
+    "9. Ask Price": "0.75010000"
+  }
+}

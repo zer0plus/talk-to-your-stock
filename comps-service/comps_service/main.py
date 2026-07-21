@@ -33,6 +33,7 @@ from talk_to_your_stock_shared.readiness import (
 from talk_to_your_stock_shared.time import utc_now
 
 from .readiness import check_comps_database, check_run_data_source
+from .provider import AlphaVantageCompanyDataSource
 from .repository import (
     CompsPersistenceUnavailable,
     InvalidRunLinkage,
@@ -45,7 +46,6 @@ from .run_service import (
     CompsRunRepository,
     CompsRunService,
     DuplicateToolInvocation,
-    UnavailableCompanyDataSource,
 )
 from .tool_validation import (
     AlphaVantageTickerValidator,
@@ -164,7 +164,7 @@ def get_repository() -> CompsRunRepository:
 
 
 def get_company_data_source() -> CompanyDataSource:
-    return UnavailableCompanyDataSource()
+    return AlphaVantageCompanyDataSource()
 
 
 def get_ticker_validator() -> AlphaVantageTickerValidator:
