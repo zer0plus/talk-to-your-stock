@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -31,11 +32,18 @@ from .session_context import AdkSessionContext, FUNDAMENTAL_ANALYSIS_AGENT_NAME
 GEMINI_MODEL_VAR = "GEMINI_MODEL"
 GOOGLE_API_KEY_VAR = "GOOGLE_API_KEY"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
-VALIDATION_FAILURE_COUNT_STATE_KEY = "temp:generate_comps_validation_failures"
 VALIDATION_CLARIFICATION = (
     "I couldn't validate those Tickers after one correction. "
     "Please confirm the Target Ticker and Peer Tickers."
 )
+
+
+class _ToolInvocationGate:
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.validation_failures = 0
+        self.completed = False
+
 
 FUNDAMENTAL_ANALYSIS_INSTRUCTION = """
 You are the Fundamental Analysis Agent for TalkToYourStock.
@@ -71,6 +79,7 @@ class FundamentalAnalysisAgent:
         comps_client: CompsToolClient,
     ) -> None:
         self._comps_client = comps_client
+        self._tool_invocation_gates: dict[str, _ToolInvocationGate] = {}
         self._agent = Agent(
             name=FUNDAMENTAL_ANALYSIS_AGENT_NAME,
             description="Routes fundamental analysis Messages to deterministic Tools.",
@@ -102,6 +111,9 @@ class FundamentalAnalysisAgent:
         request: AgentMessageRequest,
         session_context: AdkSessionContext,
     ) -> AgentMessageResponse:
+        invocation_key = str(request.user_message_id)
+        invocation_gate = _ToolInvocationGate()
+        self._tool_invocation_gates[invocation_key] = invocation_gate
         runner = Runner(
             app_name=session_context.app_name,
             agent=self._agent,
@@ -143,6 +155,8 @@ class FundamentalAnalysisAgent:
         finally:
             if terminal_validation_error or tool_succeeded:
                 await event_stream.aclose()
+            if self._tool_invocation_gates.get(invocation_key) is invocation_gate:
+                self._tool_invocation_gates.pop(invocation_key)
 
         if terminal_validation_error:
             session = await session_context.get_session(
@@ -196,18 +210,28 @@ class FundamentalAnalysisAgent:
             peer_selection_mode=PeerSelectionMode.USER_SUPPLIED,
             analysis_period=AnalysisPeriod.LATEST,
         )
-        try:
-            response = await self._comps_client.generate_comps_table(request)
-        except CompsToolValidationError as exc:
-            failure_count = int(
-                tool_context.state.get(VALIDATION_FAILURE_COUNT_STATE_KEY, 0)
-            )
-            tool_context.state[VALIDATION_FAILURE_COUNT_STATE_KEY] = failure_count + 1
-            return {
-                "error": exc.error.error.model_dump(mode="json"),
-                "retry_allowed": failure_count == 0,
-            }
-        return response.model_dump(mode="json")
+        invocation_gate = self._tool_invocation_gates[str(tool_context.invocation_id)]
+        async with invocation_gate.lock:
+            if invocation_gate.completed:
+                return {
+                    "error": {
+                        "code": "CONFLICT",
+                        "message": "The Comps Tool invocation limit was reached.",
+                    },
+                    "retry_allowed": False,
+                }
+            try:
+                response = await self._comps_client.generate_comps_table(request)
+            except CompsToolValidationError as exc:
+                invocation_gate.validation_failures += 1
+                retry_allowed = invocation_gate.validation_failures == 1
+                invocation_gate.completed = not retry_allowed
+                return {
+                    "error": exc.error.error.model_dump(mode="json"),
+                    "retry_allowed": retry_allowed,
+                }
+            invocation_gate.completed = True
+            return response.model_dump(mode="json")
 
 
 def _tool_response_from_event(event: Any) -> GenerateCompsToolResponse | None:

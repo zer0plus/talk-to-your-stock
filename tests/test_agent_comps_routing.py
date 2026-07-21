@@ -173,6 +173,50 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(tool_result.name, "generate_comps_table")
         self.assertEqual(tool_result.response["run"]["id"], str(tool_response.run.id))
 
+    def test_multiple_tool_calls_in_one_model_response_create_one_run(self) -> None:
+        user_id = uuid4()
+        thread_id = uuid4()
+        user_message_id = uuid4()
+        tool_response = _successful_tool_response(
+            thread_id=thread_id,
+            trigger_message_id=user_message_id,
+        )
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                types.Content(
+                    role="model",
+                    parts=[
+                        _tool_call_part(
+                            target_ticker="AAPL",
+                            peer_tickers=["MSFT", "NVDA", "AMD"],
+                        ),
+                        _tool_call_part(
+                            target_ticker="AAPL",
+                            peer_tickers=["MSFT", "NVDA", "AMD"],
+                        ),
+                    ],
+                )
+            ],
+        )
+        comps_client = RecordingCompsClient(tool_response, tool_response)
+        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(user_id),
+                "thread_id": str(thread_id),
+                "user_message_id": str(user_message_id),
+                "content": "Compare Apple with Microsoft, Nvidia, and AMD",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
+        self.assertEqual(len(comps_client.requests), 1)
+
     def test_model_response_is_returned_when_model_skips_comps_tool(self) -> None:
         model = ScriptedLlm(
             model="scripted",
@@ -396,6 +440,60 @@ class AgentCompsRoutingTest(unittest.TestCase):
             response.json()["content"],
         )
 
+    def test_multiple_correction_calls_stop_after_the_second_validation(self) -> None:
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                _tool_call(target_ticker="AAPLL", peer_tickers=["MSFT"]),
+                types.Content(
+                    role="model",
+                    parts=[
+                        _tool_call_part("APPLE", ["MSFT"]),
+                        _tool_call_part("APPL", ["MSFT"]),
+                    ],
+                ),
+            ],
+        )
+        validation_errors = [
+            CompsToolValidationError(
+                ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.VALIDATION_ERROR,
+                        message=f"Unsupported ticker: {ticker}.",
+                        details={"unsupported_tickers": [ticker]},
+                    )
+                )
+            )
+            for ticker in ("AAPLL", "APPLE", "APPL")
+        ]
+        comps_client = RecordingCompsClient(*validation_errors)
+        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(uuid4()),
+                "user_message_id": str(uuid4()),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["run"])
+        self.assertEqual(
+            response.json()["content"],
+            (
+                "I couldn't validate those Tickers after one correction. "
+                "Please confirm the Target Ticker and Peer Tickers."
+            ),
+        )
+        self.assertEqual(
+            [request.target_ticker for request in comps_client.requests],
+            ["AAPLL", "APPLE"],
+        )
+
     def test_comps_service_unavailability_is_reported_clearly(self) -> None:
         model = ScriptedLlm(
             model="scripted",
@@ -492,15 +590,20 @@ def _tool_call(
 ) -> types.Content:
     return types.Content(
         role="model",
-        parts=[
-            types.Part.from_function_call(
-                name="generate_comps_table",
-                args={
-                    "target_ticker": target_ticker,
-                    "peer_tickers": peer_tickers,
-                },
-            )
-        ],
+        parts=[_tool_call_part(target_ticker, peer_tickers)],
+    )
+
+
+def _tool_call_part(
+    target_ticker: str,
+    peer_tickers: list[str],
+) -> types.Part:
+    return types.Part.from_function_call(
+        name="generate_comps_table",
+        args={
+            "target_ticker": target_ticker,
+            "peer_tickers": peer_tickers,
+        },
     )
 
 
