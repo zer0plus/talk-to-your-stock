@@ -65,11 +65,11 @@ the local runtime does not fall back to fixtures or synthetic values.
 Agent Service startup prepares the ADK-owned session/event tables used to retain
 complete Agent and Tool event history for each User and Thread. Readiness
 includes `agent_session` to verify that store without preparing database objects.
-Comps Service readiness reports `run_execution` as failed until Comps Run
-execution is implemented. Agent Service readiness checks the configured Comps
-Service and propagates that failure through `agent_routing`, so the local stack
-does not report ready while canonical Comps requests would fail. Configuration
-readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and
+Comps Service readiness reports `run_data_source` as failed until real provider
+and FX Run data is implemented. Agent Service readiness checks the configured
+Comps Service and propagates that failure through `agent_routing`, so the local
+stack does not report ready while canonical Comps requests would fail.
+Configuration readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and
 `COMPS_SERVICE_INTERNAL_TOKEN` in local and production modes; production also
 requires `GOOGLE_ADK_APP_NAME`. Production readiness intentionally fails
 `agent_routing` because public deployment controls remain deferred.
