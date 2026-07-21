@@ -3,18 +3,24 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from threading import Event
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+from google.adk.models.base_llm import BaseLlm
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.adk.sessions import InMemorySessionService
+from google.genai import types
 from pydantic import BaseModel
 from unittest.mock import patch
 
+from agent_service.fundamental_agent import FundamentalAnalysisAgent
 from agent_service.main import app as agent_app
+from agent_service.main import get_fundamental_agent
 from agent_service.main import get_session_context as get_agent_session_context
 from agent_service.session_context import AdkSessionContext
 from talk_to_your_stock_shared import (
@@ -49,6 +55,27 @@ LOCAL_ENV = {
 class ControlledAgentResponse(BaseModel):
     content: str
     run: Run | None = None
+
+
+class BoundaryConversationLlm(BaseLlm):
+    async def generate_content_async(
+        self,
+        llm_request: LlmRequest,
+        stream: bool = False,
+    ) -> AsyncGenerator[LlmResponse, None]:
+        del llm_request, stream
+        yield LlmResponse(
+            content=types.Content(
+                role="model",
+                parts=[types.Part(text="Conversation Response")],
+            ),
+            partial=False,
+        )
+
+
+class UnexpectedBoundaryCompsClient:
+    async def generate_comps_table(self, request: object) -> None:
+        raise AssertionError(f"Unexpected Tool call: {request}")
 
 
 class ControlledAgent:
@@ -326,8 +353,16 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
             session_service=InMemorySessionService(),
         )
         agent_app.dependency_overrides[get_agent_session_context] = lambda: session_context
+        fundamental_agent = FundamentalAnalysisAgent(
+            model=BoundaryConversationLlm(model="boundary-conversation"),
+            comps_client=UnexpectedBoundaryCompsClient(),
+        )
+        agent_app.dependency_overrides[get_fundamental_agent] = (
+            lambda: fundamental_agent
+        )
         self.addCleanup(agent_app.dependency_overrides.clear)
         self.addCleanup(get_agent_session_context.cache_clear)
+        self.addCleanup(get_fundamental_agent.cache_clear)
 
         with running_service(agent_app) as agent_service_url:
             repository = RecordingRepository()
@@ -343,7 +378,7 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
             response = client.post(
                 f"/v1/threads/{thread_id}/messages",
-                json={"content": "Compare AAPL with MSFT"},
+                json={"content": "What is enterprise value?"},
             )
 
             self.assertEqual(response.status_code, 201)
@@ -362,7 +397,7 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         )
         self.assertEqual(
             [event.content.parts[0].text for event in session.events],
-            ["Compare AAPL with MSFT", body["assistant_message"]["content"]],
+            ["What is enterprise value?", body["assistant_message"]["content"]],
         )
         self.assertEqual(
             [message.role for message in repository.messages],

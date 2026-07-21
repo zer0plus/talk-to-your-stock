@@ -25,7 +25,9 @@ LOCAL_ENV = {
     "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
     "DEV_AUTH_EMAIL": "dev@example.com",
     "AGENT_SERVICE_URL": "http://agent-service:8001",
+    "COMPS_SERVICE_URL": "http://comps-service:8002",
     "COMPS_SERVICE_INTERNAL_TOKEN": "local-comps-token",
+    "GOOGLE_API_KEY": "local-google-key",
     "ALPHA_VANTAGE_API_KEY": "local-alpha-vantage-key",
 }
 
@@ -45,6 +47,23 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.agent_get_patcher = patch("httpx.get", return_value=agent_response)
         self.agent_get_patcher.start()
         self.addCleanup(self.agent_get_patcher.stop)
+        comps_response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://comps-service:8002/v1/ready"),
+            json={
+                "status": "ready",
+                "service": "comps-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+        self.comps_get_patcher = patch(
+            "httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=comps_response,
+        )
+        self.comps_get_patcher.start()
+        self.addCleanup(self.comps_get_patcher.stop)
         self.agent_session_context = AdkSessionContext(
             app_name="talk-to-your-stock",
             session_service=InMemorySessionService(),
@@ -68,6 +87,23 @@ class BackendServiceReadinessTest(unittest.TestCase):
             self.assertIn("503", ready_responses)
             schema = ready_responses["503"]["content"]["application/json"]["schema"]
             self.assertEqual(schema["$ref"], "#/components/schemas/ReadinessResponse")
+
+    def test_agent_readiness_propagates_comps_data_source_failure(self) -> None:
+        self.comps_get_patcher.stop()
+
+        with running_service(comps_app) as comps_service_url:
+            env = {**LOCAL_ENV, "COMPS_SERVICE_URL": comps_service_url}
+            with patch.dict(os.environ, env, clear=True), database_connects():
+                response = TestClient(agent_app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503)
+        body = response.json()
+        self.assertEqual(body["status"], "not_ready")
+        self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
+        self.assertEqual(
+            body["checks"]["agent_routing"]["message"],
+            "Comps Service is not ready.",
+        )
 
     def test_local_stack_does_not_claim_comps_run_readiness_before_provider_path(
         self,
@@ -301,7 +337,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertIn("COMPS_SERVICE_URL", message)
         self.assertIn("COMPS_SERVICE_INTERNAL_TOKEN", message)
 
-    def test_production_agent_readiness_fails_until_real_routing_exists(self) -> None:
+    def test_production_agent_readiness_rejects_local_only_routing(self) -> None:
         env = {
             "TALK_TO_YOUR_STOCK_ENV": "production",
             "DATABASE_URL": LOCAL_ENV["DATABASE_URL"],
@@ -320,6 +356,10 @@ class BackendServiceReadinessTest(unittest.TestCase):
         self.assertEqual(body["checks"]["configuration"]["status"], "ok")
         self.assertEqual(body["checks"]["database"]["status"], "ok")
         self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
+        self.assertIn(
+            "local-only",
+            body["checks"]["agent_routing"]["message"],
+        )
 
     def test_production_comps_readiness_requires_provider_configuration(self) -> None:
         env = {

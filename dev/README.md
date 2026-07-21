@@ -15,8 +15,9 @@ inside their containers so they can communicate over the private Compose
 network, but other machines cannot reach the published host ports.
 
 Keep the loopback-qualified port mappings in `dev/docker-compose.yml` until the
-public ingress and service-to-service authentication controls required by
-ADR-001 are implemented and validated.
+public ingress and production-grade service identity controls required by
+ADR-001 are implemented and validated. The shared Agent-to-Comps Service
+Credential is local defense in depth, not a public deployment boundary.
 
 ## Start The Stack
 
@@ -54,8 +55,8 @@ curl -i http://localhost:8002/v1/ready
 ```
 
 Each readiness response uses the shared contract from `api/openapi.yaml` and
-includes `configuration` and `database` checks. A failed required check returns
-HTTP `503` with `status: "not_ready"`.
+includes `configuration`, `database`, and relevant service capability checks. A
+failed required check returns HTTP `503` with `status: "not_ready"`.
 
 Until issue #15 connects real provider and FX inputs, Comps Service also reports
 `run_data_source: fail`. Controlled company inputs exist only in automated tests;
@@ -64,7 +65,14 @@ the local runtime does not fall back to fixtures or synthetic values.
 Agent Service startup prepares the ADK-owned session/event tables used to retain
 complete Agent and Tool event history for each User and Thread. Readiness
 includes `agent_session` to verify that store without preparing database objects.
-In production, `agent_routing` remains failed until real Agent routing exists.
+Comps Service readiness reports `run_data_source` as failed until real provider
+and FX Run data is implemented. Agent Service readiness checks the configured
+Comps Service and propagates that failure through `agent_routing`, so the local
+stack does not report ready while canonical Comps requests would fail.
+Configuration readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and
+`COMPS_SERVICE_INTERNAL_TOKEN` in local and production modes; production also
+requires `GOOGLE_ADK_APP_NAME`. Production readiness intentionally fails
+`agent_routing` because public deployment controls remain deferred.
 
 Web BFF and Comps Service database readiness also require the current Alembic
 schema revision. Missing or stale migrations keep either schema owner not ready.
@@ -81,5 +89,7 @@ Production mode does not accept `DEV_AUTH_*` config. It requires:
 - Comps Service: `ALPHA_VANTAGE_API_KEY`, `COMPS_SERVICE_INTERNAL_TOKEN`
 - All services: `DATABASE_URL`
 
-Missing production configuration fails readiness clearly. The local dev-auth
-identity is not a production fallback.
+Missing production configuration fails readiness clearly. Even with all listed
+configuration, Agent routing remains not ready in production until public
+deployment controls exist. The local dev-auth identity is not a production
+fallback.

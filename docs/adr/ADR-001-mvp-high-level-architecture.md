@@ -54,7 +54,7 @@ flowchart LR
 Notes:
 
 * `Comps Service` owns the domain capability and its execution mode. The Agent calls the `generate_comps_table` tool contract and does not enqueue jobs or depend on worker mechanics.
-* During PRD #10, the backend is a local-only, single-user system and must not be exposed to an untrusted network. Public deployment controls and route-level service authentication are deferred with the rest of the authentication work.
+* During PRD #10, the backend is a local-only, single-user system and must not be exposed to an untrusted network. The Agent-to-Comps internal Tool route uses a shared Service Credential as local defense in depth. Public deployment controls and production-grade service identity are deferred with the rest of the authentication work.
 * MVP CSV/XLSX exports are owned by `Comps Service` because they are direct representations of comps table results.
 * Implementation should keep exports in an internal `exports/` module so the boundary can become a standalone service later if exports become async, template-heavy, multi-artifact, or independently scalable.
 * MVP source snapshots are stored in PostgreSQL JSONB as separate run-bound records, not in object storage. They remain conceptually and schematically separate from the reusable Fundamental Cache.
@@ -64,9 +64,10 @@ Notes:
 
 * PRD #10 and all of its child issues target a local, single-user demo. They do not implement user authentication or authorization.
 * The Web BFF uses one deterministic local User identity to associate Threads, Messages, and Runs with the local operator. This identity is product-state ownership, not proof of identity.
-* Login, OAuth, JWT issuance or verification, bearer-token handling, sessions, tenant enforcement, dev-auth modes, and route-level service authentication are all deferred.
+* Login, OAuth, user JWT issuance or verification, user sessions, tenant enforcement, and user authorization are all deferred.
+* `COMPS_SERVICE_INTERNAL_TOKEN` is a narrow Service Credential for authenticating the Agent Service to the Comps Service. It does not authenticate or authorize a User and does not make the local stack ready for an untrusted network.
 * Authentication work begins only after PRD #10 and all child issues under it are complete.
-* A follow-up PRD must define the authentication provider, user identity mapping, authorization boundaries, internal service authentication, production readiness requirements, and deployment threat model before any of those contracts are exposed.
+* A follow-up PRD must define the authentication provider, user identity mapping, authorization boundaries, production-grade service identity, production readiness requirements, and deployment threat model before any public authentication contracts are exposed.
 * Until that follow-up work is implemented, TalkToYourStock is local-only and must not claim readiness for public or untrusted-network deployment.
 
 ### Repository Layout
@@ -113,7 +114,7 @@ under a separate folder later if deployment-specific artifacts are needed.
   * Non-comps conversational replies must not create runs.
 * Non-goals:
   * Multi-provider abstraction in MVP.
-  * User authentication, authorization, tenant isolation, and internal service authentication during PRD #10.
+  * User authentication, authorization, tenant isolation, and production-grade service identity during PRD #10.
   * Multi-client API optimization in MVP.
   * Fully distributed microservice platform from day one.
 
