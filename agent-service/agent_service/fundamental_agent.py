@@ -86,6 +86,7 @@ class FundamentalAnalysisAgent:
             model=model,
             instruction=FUNDAMENTAL_ANALYSIS_INSTRUCTION,
             tools=[self.generate_comps_table],
+            after_model_callback=_keep_first_comps_tool_call,
         )
 
     @classmethod
@@ -114,6 +115,21 @@ class FundamentalAnalysisAgent:
         invocation_key = str(request.user_message_id)
         invocation_gate = _ToolInvocationGate()
         self._tool_invocation_gates[invocation_key] = invocation_gate
+        try:
+            return await self._run_turn(
+                request=request,
+                session_context=session_context,
+            )
+        finally:
+            if self._tool_invocation_gates.get(invocation_key) is invocation_gate:
+                self._tool_invocation_gates.pop(invocation_key)
+
+    async def _run_turn(
+        self,
+        *,
+        request: AgentMessageRequest,
+        session_context: AdkSessionContext,
+    ) -> AgentMessageResponse:
         runner = Runner(
             app_name=session_context.app_name,
             agent=self._agent,
@@ -155,8 +171,6 @@ class FundamentalAnalysisAgent:
         finally:
             if terminal_validation_error or tool_succeeded:
                 await event_stream.aclose()
-            if self._tool_invocation_gates.get(invocation_key) is invocation_gate:
-                self._tool_invocation_gates.pop(invocation_key)
 
         if terminal_validation_error:
             session = await session_context.get_session(
@@ -232,6 +246,29 @@ class FundamentalAnalysisAgent:
                 }
             invocation_gate.completed = True
             return response.model_dump(mode="json")
+
+
+def _keep_first_comps_tool_call(callback_context: Any, llm_response: Any) -> Any:
+    del callback_context
+    content = llm_response.content
+    if content is None or not content.parts:
+        return llm_response
+
+    found_tool_call = False
+    parts = []
+    for part in content.parts:
+        function_call = part.function_call
+        if function_call is None or function_call.name != "generate_comps_table":
+            parts.append(part)
+        elif not found_tool_call:
+            found_tool_call = True
+            parts.append(part)
+
+    if len(parts) == len(content.parts):
+        return llm_response
+    return llm_response.model_copy(
+        update={"content": content.model_copy(update={"parts": parts})}
+    )
 
 
 def _tool_response_from_event(event: Any) -> GenerateCompsToolResponse | None:

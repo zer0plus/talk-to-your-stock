@@ -217,6 +217,72 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
         self.assertEqual(len(comps_client.requests), 1)
 
+    def test_parallel_sibling_does_not_consume_validation_retry(self) -> None:
+        user_id = uuid4()
+        thread_id = uuid4()
+        user_message_id = uuid4()
+        tool_response = _successful_tool_response(
+            thread_id=thread_id,
+            trigger_message_id=user_message_id,
+        )
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                types.Content(
+                    role="model",
+                    parts=[
+                        _tool_call_part("AAPLL", ["MSFT"]),
+                        _tool_call_part("MSFT", ["AAPL"]),
+                    ],
+                ),
+                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+            ],
+        )
+        validation_error = CompsToolValidationError(
+            ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.VALIDATION_ERROR,
+                    message="Unsupported ticker: AAPLL.",
+                    details={"unsupported_tickers": ["AAPLL"]},
+                )
+            )
+        )
+        comps_client = RecordingCompsClient(validation_error, tool_response)
+        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(user_id),
+                "thread_id": str(thread_id),
+                "user_message_id": str(user_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
+        self.assertEqual(
+            [request.target_ticker for request in comps_client.requests],
+            ["AAPLL", "AAPL"],
+        )
+
+        session = asyncio.run(
+            self.session_context.get_session(user_id=user_id, thread_id=thread_id)
+        )
+        assert session is not None
+        tool_results = [
+            part.function_response.response
+            for event in session.events
+            for part in event.content.parts
+            if part.function_response is not None
+        ]
+        self.assertEqual(len(tool_results), 2)
+        self.assertEqual(tool_results[0]["error"]["code"], "VALIDATION_ERROR")
+        self.assertTrue(tool_results[0]["retry_allowed"])
+        self.assertEqual(tool_results[1]["run"]["id"], str(tool_response.run.id))
+
     def test_model_response_is_returned_when_model_skips_comps_tool(self) -> None:
         model = ScriptedLlm(
             model="scripted",
