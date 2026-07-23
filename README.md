@@ -9,7 +9,7 @@
 <h1 align="center">Talk to Your Stock</h1>
 
 <p align="center">
-  <strong>Chat-first fundamental analysis with deterministic, auditable trading comps.</strong>
+  <strong>Fundamental analysis with deterministic, auditable trading comps.</strong>
 </p>
 
 <p align="center">
