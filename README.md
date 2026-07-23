@@ -69,7 +69,11 @@ Real Alpha Vantage and FX inputs are not wired into Run execution yet. The runti
 
 Automated tests exercise the end-to-end service contracts with controlled company data, including deterministic output, persistence, duplicate-call protection, and evidence readback.
 
-## Architecture
+## Evolving architecture
+
+This diagram captures the backend shape implemented today. It is a working design, not a claim that the service boundaries or data flow are final.
+
+As the product moves from controlled data to real providers and a web experience, the architecture will evolve with what those milestones teach.
 
 ```mermaid
 flowchart LR
@@ -90,14 +94,14 @@ flowchart LR
     PROVIDER["Alpha Vantage + FX<br/>current milestone"] -.-> COMPS
 ```
 
-The boundaries are deliberate:
+Current responsibilities:
 
-- **Web BFF** owns the user-facing API, local identity, Threads, and Messages.
-- **Agent Service** owns conversation, intent, Tool routing, and ADK session history.
-- **Comps Service** owns validation, calculations, Runs, tables, traces, and evidence.
-- **Shared** contains small cross-service contracts, never domain business logic.
+- **Web BFF** currently owns the user-facing API, local identity, Threads, and Messages.
+- **Agent Service** currently owns conversation, intent, Tool routing, and ADK session history.
+- **Comps Service** currently owns validation, calculations, Runs, tables, traces, and evidence.
+- **Shared** currently contains small cross-service contracts rather than domain business logic.
 
-See the [architecture decisions](docs/adr/) for the trade-offs behind this design.
+The [architecture decisions](docs/adr/) record the reasoning behind the current shape. They will be revised when new product evidence changes the design.
 
 ## Engineering decisions I care about
 
