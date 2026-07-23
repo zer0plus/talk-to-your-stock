@@ -91,6 +91,27 @@ class CompsReadinessTest(unittest.TestCase):
                     {"status": "fail", "message": message},
                 )
 
+    def test_readiness_rejects_non_finite_provider_runtime_settings(self) -> None:
+        for name in (
+            "ALPHA_VANTAGE_TIMEOUT_SECONDS",
+            "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS",
+        ):
+            for value in ("nan", "inf"):
+                with self.subTest(name=name, value=value):
+                    env = {**COMPS_ENV, name: value}
+                    with patch.dict(os.environ, env, clear=True), database_connects():
+                        response = TestClient(app).get("/v1/ready")
+
+                    self.assertEqual(response.status_code, 503, response.text)
+                    self.assertEqual(response.json()["status"], "not_ready")
+                    self.assertEqual(
+                        response.json()["checks"]["run_data_source"],
+                        {
+                            "status": "fail",
+                            "message": f"{name} must be finite.",
+                        },
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

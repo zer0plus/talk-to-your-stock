@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 
@@ -25,6 +26,11 @@ def seconds_setting(
             name=name,
             message=f"{name} must be a number of seconds.",
         ) from exc
+    if not math.isfinite(value):
+        raise InvalidProviderConfiguration(
+            name=name,
+            message=f"{name} must be finite.",
+        )
     if value < 0:
         raise InvalidProviderConfiguration(
             name=name,
