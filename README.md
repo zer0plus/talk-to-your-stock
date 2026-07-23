@@ -63,12 +63,6 @@ The Agent never invents a Comps Table. A deterministic table exists only after t
 | Operational truth | Health and dependency-aware readiness checks that fail closed |
 | Local environment | Docker Compose for PostgreSQL, migrations, Web BFF, Agent Service, and Comps Service |
 
-### Current milestone
-
-Real Alpha Vantage and FX inputs are not wired into Run execution yet. The runtime reports this through readiness instead of silently substituting fixtures or claiming to be ready.
-
-Automated tests exercise the end-to-end service contracts with controlled company data, including deterministic output, persistence, duplicate-call protection, and evidence readback.
-
 ## Evolving architecture
 
 This diagram captures the backend shape implemented today. It is a working design, not a claim that the service boundaries or data flow are final.
@@ -91,7 +85,7 @@ flowchart LR
     TRACE --> PG
     SNAPSHOT --> PG
 
-    PROVIDER["Alpha Vantage + FX<br/>current milestone"] -.-> COMPS
+    DATA["Financial statements<br/>Stock prices + FX rates"] -.-> COMPS
 ```
 
 Current responsibilities:
@@ -168,7 +162,7 @@ PYTHONPATH=shared:comps-service \
   python -m unittest discover -s comps-service/tests -p 'test_*.py'
 ```
 
-Live Alpha Vantage tests are opt-in so the default suite remains deterministic.
+Live provider tests are opt-in so the default suite remains deterministic.
 
 ## Repository guide
 
