@@ -443,6 +443,166 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         self.assertEqual(fx_requests, 1)
 
+    def test_trace_references_the_provider_reports_used_for_inputs(self) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        income_reports = fixture["INCOME_STATEMENT"]["quarterlyReports"]
+        oldest_report = deepcopy(income_reports[-1])
+        oldest_report.update(
+            {
+                "fiscalDateEnding": "2025-06-30",
+                "totalRevenue": "999",
+                "ebit": "999",
+                "ebitda": "999",
+                "netIncome": "999",
+            }
+        )
+        fixture["INCOME_STATEMENT"]["quarterlyReports"] = [
+            oldest_report,
+            income_reports[0],
+            income_reports[3],
+            income_reports[1],
+            income_reports[2],
+        ]
+        fixture["OVERVIEW"]["SharesOutstanding"] = "None"
+        latest_balance_report = fixture["BALANCE_SHEET"]["quarterlyReports"][0]
+        older_balance_report = deepcopy(latest_balance_report)
+        older_balance_report.update(
+            {
+                "fiscalDateEnding": "2026-03-31",
+                "cashAndCashEquivalentsAtCarryingValue": "999",
+                "shortLongTermDebtTotal": "999",
+                "commonStockSharesOutstanding": "999",
+            }
+        )
+        fixture["BALANCE_SHEET"]["quarterlyReports"] = [
+            older_balance_report,
+            latest_balance_report,
+        ]
+
+        def respond(request):
+            function = request.url.params["function"]
+            symbol = request.url.params["symbol"]
+            payload = deepcopy(fixture[function])
+            if function == "GLOBAL_QUOTE":
+                payload["Global Quote"]["01. symbol"] = symbol
+            else:
+                symbol_field = "Symbol" if function == "OVERVIEW" else "symbol"
+                payload[symbol_field] = symbol
+            return httpx.Response(200, json=payload)
+
+        source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": "fixture-key",
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(respond),
+        )
+        app.dependency_overrides[get_company_data_source] = lambda: source
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                    "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        aapl_row = next(
+            row for row in body["table"]["rows"] if row["ticker"] == "AAPL"
+        )
+        self.assertEqual(aapl_row["revenue_ltm"], 1000.0)
+        trace_inputs = {
+            trace_input["field"]: trace_input
+            for formula in body["trace"]["formulas"]
+            if formula["ticker"] == "AAPL"
+            for trace_input in formula["inputs"]
+        }
+        for input_field, provider_field in {
+            "revenue_ltm": "totalRevenue",
+            "ebit_ltm": "ebit",
+            "ebitda_ltm": "ebitda",
+            "net_income_ltm": "netIncome",
+        }.items():
+            with self.subTest(input_field=input_field):
+                report_sources = " + ".join(
+                    "alpha_vantage.income_statement.AAPL."
+                    f"quarterlyReports[{raw_index}].{provider_field}"
+                    for raw_index in (1, 3, 4, 2)
+                )
+                self.assertEqual(
+                    trace_inputs[input_field]["source"],
+                    f"{report_sources}; "
+                    "alpha_vantage.overview.AAPL.Currency=USD",
+                )
+        expected_balance_sources = {
+            "shares_outstanding": (
+                "alpha_vantage.balance_sheet.AAPL.quarterlyReports[1]."
+                "commonStockSharesOutstanding"
+            ),
+            "cash": (
+                "alpha_vantage.balance_sheet.AAPL.quarterlyReports[1]."
+                "cashAndCashEquivalentsAtCarryingValue; "
+                "alpha_vantage.overview.AAPL.Currency=USD"
+            ),
+            "total_debt": (
+                "alpha_vantage.balance_sheet.AAPL.quarterlyReports[1]."
+                "shortLongTermDebtTotal; "
+                "alpha_vantage.overview.AAPL.Currency=USD"
+            ),
+        }
+        for input_field, expected_source in expected_balance_sources.items():
+            with self.subTest(input_field=input_field):
+                self.assertEqual(
+                    trace_inputs[input_field]["source"],
+                    expected_source,
+                )
+
+        snapshot = self.repository.get_source_snapshot(UUID(body["run"]["id"]))
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        normalized_input = next(
+            company
+            for company in snapshot.normalized_inputs
+            if company.ticker == "AAPL"
+        )
+        for input_field in (
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+            *expected_balance_sources,
+        ):
+            with self.subTest(persisted_input_field=input_field):
+                self.assertEqual(
+                    normalized_input.sources[input_field],
+                    trace_inputs[input_field]["source"],
+                )
+        self.assertEqual(
+            [
+                report["fiscalDateEnding"]
+                for report in snapshot.raw_provider_evidence["AAPL"][
+                    "balance_sheet"
+                ]["quarterlyReports"]
+            ],
+            ["2026-03-31", "2026-06-30"],
+        )
+
     def test_succeeded_run_and_table_are_available_through_readback_contracts(
         self,
     ) -> None:

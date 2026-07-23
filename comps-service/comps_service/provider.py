@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -27,6 +28,13 @@ from .tool_validation import (
 )
 
 ALPHA_VANTAGE_QUOTE_ENTITLEMENT_VAR = "ALPHA_VANTAGE_QUOTE_ENTITLEMENT"
+
+
+@dataclass(frozen=True)
+class _SelectedQuarterlyReport:
+    raw_index: int
+    fiscal_date: date
+    report: dict[str, Any]
 
 
 class AlphaVantageCompanyDataSource:
@@ -120,14 +128,22 @@ class AlphaVantageCompanyDataSource:
             provider_function="INCOME_STATEMENT",
             required_count=4,
         )
-        balance_report = self._latest_reports(
+        balance_report_selection = self._latest_reports(
             balance_sheet,
             ticker=ticker,
             provider_function="BALANCE_SHEET",
             required_count=1,
         )[0]
+        balance_report = balance_report_selection.report
+        balance_source_prefix = (
+            f"alpha_vantage.balance_sheet.{ticker}."
+            f"quarterlyReports[{balance_report_selection.raw_index}]."
+        )
         self._require_report_currency(
-            reports=[*income_reports, balance_report],
+            reports=[
+                *(selection.report for selection in income_reports),
+                balance_report,
+            ],
             expected=source_currency,
             ticker=ticker,
         )
@@ -144,8 +160,7 @@ class AlphaVantageCompanyDataSource:
                     overview.get("SharesOutstanding"),
                 ),
                 (
-                    f"alpha_vantage.balance_sheet.{ticker}.quarterlyReports[0]."
-                    "commonStockSharesOutstanding",
+                    f"{balance_source_prefix}commonStockSharesOutstanding",
                     balance_report.get("commonStockSharesOutstanding"),
                 ),
             ],
@@ -155,13 +170,12 @@ class AlphaVantageCompanyDataSource:
         cash, cash_source = self._first_number(
             [
                 (
-                    f"alpha_vantage.balance_sheet.{ticker}.quarterlyReports[0]."
+                    f"{balance_source_prefix}"
                     "cashAndCashEquivalentsAtCarryingValue",
                     balance_report.get("cashAndCashEquivalentsAtCarryingValue"),
                 ),
                 (
-                    f"alpha_vantage.balance_sheet.{ticker}.quarterlyReports[0]."
-                    "cashAndShortTermInvestments",
+                    f"{balance_source_prefix}cashAndShortTermInvestments",
                     balance_report.get("cashAndShortTermInvestments"),
                 ),
             ],
@@ -171,6 +185,7 @@ class AlphaVantageCompanyDataSource:
         total_debt, debt_source = self._total_debt(
             balance_report,
             ticker=ticker,
+            raw_index=balance_report_selection.raw_index,
         )
         revenue_ltm = self._sum_reports(
             income_reports,
@@ -199,7 +214,7 @@ class AlphaVantageCompanyDataSource:
             ticker=ticker,
         )
         income_as_of = self._report_date(
-            income_reports[0],
+            income_reports[0].report,
             provider_function="INCOME_STATEMENT",
             ticker=ticker,
         )
@@ -213,21 +228,25 @@ class AlphaVantageCompanyDataSource:
             "shares_outstanding": shares_source,
             "cash": cash_source,
             "total_debt": debt_source,
-            "revenue_ltm": (
-                f"alpha_vantage.income_statement.{ticker}."
-                "quarterlyReports[0:4].totalRevenue"
+            "revenue_ltm": self._income_statement_source(
+                reports=income_reports,
+                ticker=ticker,
+                field="totalRevenue",
             ),
-            "ebit_ltm": (
-                f"alpha_vantage.income_statement.{ticker}."
-                "quarterlyReports[0:4].ebit"
+            "ebit_ltm": self._income_statement_source(
+                reports=income_reports,
+                ticker=ticker,
+                field="ebit",
             ),
-            "ebitda_ltm": (
-                f"alpha_vantage.income_statement.{ticker}."
-                "quarterlyReports[0:4].ebitda"
+            "ebitda_ltm": self._income_statement_source(
+                reports=income_reports,
+                ticker=ticker,
+                field="ebitda",
             ),
-            "net_income_ltm": (
-                f"alpha_vantage.income_statement.{ticker}."
-                "quarterlyReports[0:4].netIncome"
+            "net_income_ltm": self._income_statement_source(
+                reports=income_reports,
+                ticker=ticker,
+                field="netIncome",
             ),
         }
         currency_source = (
@@ -468,15 +487,15 @@ class AlphaVantageCompanyDataSource:
         ticker: str,
         provider_function: str,
         required_count: int,
-    ) -> list[dict[str, Any]]:
+    ) -> list[_SelectedQuarterlyReport]:
         reports = payload.get("quarterlyReports")
         if not isinstance(reports, list):
             raise CompsRunExecutionError(
                 f"Alpha Vantage {provider_function} is missing quarterlyReports "
                 f"for {ticker}."
             )
-        dated_reports: list[tuple[date, dict[str, Any]]] = []
-        for report in reports:
+        dated_reports: list[_SelectedQuarterlyReport] = []
+        for raw_index, report in enumerate(reports):
             if not isinstance(report, dict):
                 continue
             fiscal_date = self._parse_date(
@@ -484,29 +503,51 @@ class AlphaVantageCompanyDataSource:
                 field=f"{provider_function}.fiscalDateEnding",
                 ticker=ticker,
             )
-            dated_reports.append((fiscal_date, report))
-        dated_reports.sort(key=lambda item: item[0], reverse=True)
+            dated_reports.append(
+                _SelectedQuarterlyReport(
+                    raw_index=raw_index,
+                    fiscal_date=fiscal_date,
+                    report=report,
+                )
+            )
+        dated_reports.sort(
+            key=lambda selection: selection.fiscal_date,
+            reverse=True,
+        )
         if len(dated_reports) < required_count:
             raise CompsRunExecutionError(
                 f"Alpha Vantage {provider_function} requires at least "
                 f"{required_count} quarterly reports for {ticker}."
             )
-        return [report for _, report in dated_reports[:required_count]]
+        return dated_reports[:required_count]
 
     def _sum_reports(
         self,
-        reports: list[dict[str, Any]],
+        reports: list[_SelectedQuarterlyReport],
         *,
         field: str,
         ticker: str,
     ) -> float:
         return sum(
             self._required_number(
-                report.get(field),
+                selection.report.get(field),
                 field=f"INCOME_STATEMENT.quarterlyReports.{field}",
                 ticker=ticker,
             )
-            for report in reports
+            for selection in reports
+        )
+
+    def _income_statement_source(
+        self,
+        *,
+        reports: list[_SelectedQuarterlyReport],
+        ticker: str,
+        field: str,
+    ) -> str:
+        return " + ".join(
+            f"alpha_vantage.income_statement.{ticker}."
+            f"quarterlyReports[{selection.raw_index}].{field}"
+            for selection in reports
         )
 
     def _total_debt(
@@ -514,9 +555,11 @@ class AlphaVantageCompanyDataSource:
         report: dict[str, Any],
         *,
         ticker: str,
+        raw_index: int,
     ) -> tuple[float, str]:
         source_prefix = (
-            f"alpha_vantage.balance_sheet.{ticker}.quarterlyReports[0]."
+            f"alpha_vantage.balance_sheet.{ticker}."
+            f"quarterlyReports[{raw_index}]."
         )
         direct_debt, direct_source = self._first_number(
             [
