@@ -9,7 +9,7 @@
 <h1 align="center">Talk to Your Stock</h1>
 
 <p align="center">
-  <strong>Chat-first fundamental analysis with deterministic, auditable trading comps.</strong>
+  <strong>Fundamental analysis with deterministic, auditable trading comps.</strong>
 </p>
 
 <p align="center">
@@ -63,13 +63,11 @@ The Agent never invents a Comps Table. A deterministic table exists only after t
 | Operational truth | Health and dependency-aware readiness checks that fail closed |
 | Local environment | Docker Compose for PostgreSQL, migrations, Web BFF, Agent Service, and Comps Service |
 
-### Current milestone
+## Evolving architecture
 
-Real Alpha Vantage and FX inputs are not wired into Run execution yet. The runtime reports this through readiness instead of silently substituting fixtures or claiming to be ready.
+This diagram captures the backend shape implemented today. It is a working design, not a claim that the service boundaries or data flow are final.
 
-Automated tests exercise the end-to-end service contracts with controlled company data, including deterministic output, persistence, duplicate-call protection, and evidence readback.
-
-## Architecture
+As the product moves from controlled data to real providers and a web experience, the architecture will evolve with what those milestones teach.
 
 ```mermaid
 flowchart LR
@@ -87,17 +85,17 @@ flowchart LR
     TRACE --> PG
     SNAPSHOT --> PG
 
-    PROVIDER["Alpha Vantage + FX<br/>current milestone"] -.-> COMPS
+    DATA["Financial statements<br/>Stock prices + FX rates"] -.-> COMPS
 ```
 
-The boundaries are deliberate:
+Current responsibilities:
 
-- **Web BFF** owns the user-facing API, local identity, Threads, and Messages.
-- **Agent Service** owns conversation, intent, Tool routing, and ADK session history.
-- **Comps Service** owns validation, calculations, Runs, tables, traces, and evidence.
-- **Shared** contains small cross-service contracts, never domain business logic.
+- **Web BFF** currently owns the user-facing API, local identity, Threads, and Messages.
+- **Agent Service** currently owns conversation, intent, Tool routing, and ADK session history.
+- **Comps Service** currently owns validation, calculations, Runs, tables, traces, and evidence.
+- **Shared** currently contains small cross-service contracts rather than domain business logic.
 
-See the [architecture decisions](docs/adr/) for the trade-offs behind this design.
+The [architecture decisions](docs/adr/) record the reasoning behind the current shape. They will be revised when new product evidence changes the design.
 
 ## Engineering decisions I care about
 
@@ -108,10 +106,6 @@ The Agent converts natural language into a validated Tool request. It cannot ove
 ### Audit data is product data
 
 Each calculated value can point back to its formula, inputs, source field, and as-of time. Raw provider evidence and normalized inputs are captured in a Run-specific Source Snapshot.
-
-### Duplicate work is a correctness bug
-
-ADK may emit sibling Tool calls or retry invalid input. Invocation gates and persisted uniqueness constraints prevent one User Message from creating multiple successful Runs.
 
 ### Readiness must tell the truth
 
@@ -168,15 +162,7 @@ PYTHONPATH=shared:comps-service \
   python -m unittest discover -s comps-service/tests -p 'test_*.py'
 ```
 
-Live Alpha Vantage tests are opt-in so the default suite remains deterministic.
-
-## Roadmap
-
-- Connect real provider and FX inputs to the Comps Run path.
-- Add deterministic automatic Peer selection.
-- Build the web chat and Comps Table experience.
-- Stream Run progress and add CSV/XLSX exports.
-- Design authentication and public-deployment controls after the local MVP is complete.
+Live provider tests are opt-in so the default suite remains deterministic.
 
 ## Repository guide
 
