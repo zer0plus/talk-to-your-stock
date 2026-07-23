@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from .calculator import CompanyCompsInput
+from .provider_config import InvalidProviderConfiguration, seconds_setting
 from .run_service import (
     CompanyDataUnavailable,
     CompsRunExecutionError,
@@ -467,18 +468,14 @@ class AlphaVantageCompanyDataSource:
         return api_key
 
     def _float_setting(self, name: str, default: float) -> float:
-        raw_value = self._environ.get(name, "").strip()
-        if not raw_value:
-            return default
         try:
-            value = float(raw_value)
-        except ValueError as exc:
-            raise CompanyDataUnavailable(
-                f"{name} must be a number of seconds."
-            ) from exc
-        if value < 0:
-            raise CompanyDataUnavailable(f"{name} must not be negative.")
-        return value
+            return seconds_setting(
+                self._environ,
+                name=name,
+                default=default,
+            )
+        except InvalidProviderConfiguration as exc:
+            raise CompanyDataUnavailable(str(exc)) from exc
 
     def _latest_reports(
         self,

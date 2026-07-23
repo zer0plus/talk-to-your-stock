@@ -11,6 +11,8 @@ import httpx
 
 from talk_to_your_stock_shared import GenerateCompsToolRequest
 
+from .provider_config import InvalidProviderConfiguration, seconds_setting
+
 ALPHA_VANTAGE_API_KEY_VAR = "ALPHA_VANTAGE_API_KEY"
 ALPHA_VANTAGE_BASE_URL_VAR = "ALPHA_VANTAGE_BASE_URL"
 ALPHA_VANTAGE_TIMEOUT_SECONDS_VAR = "ALPHA_VANTAGE_TIMEOUT_SECONDS"
@@ -171,14 +173,15 @@ class AlphaVantageTickerValidator:
         self._request_limiter.wait_for_slot(interval_seconds)
 
     def _float_env(self, name: str, default: float) -> float:
-        raw_value = self.environ.get(name, "").strip()
-        if not raw_value:
-            return default
         try:
-            return float(raw_value)
-        except ValueError as exc:
+            return seconds_setting(
+                self.environ,
+                name=name,
+                default=default,
+            )
+        except InvalidProviderConfiguration as exc:
             raise RuntimeConfigurationError(
-                message=f"{name} must be a number of seconds.",
+                message=str(exc),
                 details={"invalid_configuration": [name]},
             ) from exc
 

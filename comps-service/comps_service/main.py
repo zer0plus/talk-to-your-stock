@@ -153,7 +153,7 @@ def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.COMPS_SERVICE,
         database_checker=check_comps_database,
-        additional_checks={"run_data_source": check_run_data_source()},
+        additional_checkers={"run_data_source": check_run_data_source},
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
