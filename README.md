@@ -113,10 +113,6 @@ The Agent converts natural language into a validated Tool request. It cannot ove
 
 Each calculated value can point back to its formula, inputs, source field, and as-of time. Raw provider evidence and normalized inputs are captured in a Run-specific Source Snapshot.
 
-### Duplicate work is a correctness bug
-
-ADK may emit sibling Tool calls or retry invalid input. Invocation gates and persisted uniqueness constraints prevent one User Message from creating multiple successful Runs.
-
 ### Readiness must tell the truth
 
 Health means a process is alive. Readiness verifies configuration, migrations, dependencies, and required capabilities. Missing production behavior produces a clear failure rather than a green check.
@@ -173,14 +169,6 @@ PYTHONPATH=shared:comps-service \
 ```
 
 Live Alpha Vantage tests are opt-in so the default suite remains deterministic.
-
-## Roadmap
-
-- Connect real provider and FX inputs to the Comps Run path.
-- Add deterministic automatic Peer selection.
-- Build the web chat and Comps Table experience.
-- Stream Run progress and add CSV/XLSX exports.
-- Design authentication and public-deployment controls after the local MVP is complete.
 
 ## Repository guide
 
