@@ -67,8 +67,6 @@ The Agent never invents a Comps Table. A deterministic table exists only after t
 
 This diagram captures the backend shape implemented today. It is a working design, not a claim that the service boundaries or data flow are final.
 
-As the product moves from controlled data to real providers and a web experience, the architecture will evolve with what those milestones teach.
-
 ```mermaid
 flowchart LR
     USER["User prompt"] --> BFF["Web BFF<br/>Threads + Messages"]
