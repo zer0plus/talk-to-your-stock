@@ -88,7 +88,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
             schema = ready_responses["503"]["content"]["application/json"]["schema"]
             self.assertEqual(schema["$ref"], "#/components/schemas/ReadinessResponse")
 
-    def test_agent_readiness_propagates_comps_data_source_failure(self) -> None:
+    def test_agent_readiness_accepts_real_comps_data_source(self) -> None:
         self.comps_get_patcher.stop()
 
         with running_service(comps_app) as comps_service_url:
@@ -96,16 +96,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
             with patch.dict(os.environ, env, clear=True), database_connects():
                 response = TestClient(agent_app).get("/v1/ready")
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["status"], "not_ready")
-        self.assertEqual(body["checks"]["agent_routing"]["status"], "fail")
-        self.assertEqual(
-            body["checks"]["agent_routing"]["message"],
-            "Comps Service is not ready.",
-        )
+        self.assertEqual(body["status"], "ready")
+        self.assertEqual(body["checks"]["agent_routing"]["status"], "ok")
 
-    def test_local_stack_does_not_claim_comps_run_readiness_before_provider_path(
+    def test_local_stack_reports_comps_run_data_source_ready(
         self,
     ) -> None:
         for service_name, app in (
@@ -125,11 +121,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
         with database_connects():
             comps_response = self._get_ready(comps_app, LOCAL_ENV)
 
-        self.assertEqual(comps_response.status_code, 503)
+        self.assertEqual(comps_response.status_code, 200)
         comps_body = comps_response.json()
+        self.assertEqual(comps_body["status"], "ready")
         self.assertEqual(comps_body["checks"]["configuration"]["status"], "ok")
         self.assertEqual(comps_body["checks"]["database"]["status"], "ok")
-        self.assertEqual(comps_body["checks"]["run_data_source"]["status"], "fail")
+        self.assertEqual(comps_body["checks"]["run_data_source"]["status"], "ok")
 
     def test_web_bff_checks_agent_readiness_through_real_http_boundary(self) -> None:
         self.agent_get_patcher.stop()

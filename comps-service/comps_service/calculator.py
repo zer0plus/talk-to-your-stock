@@ -47,6 +47,7 @@ class CompanyCompsInput:
     net_income_ltm: float
     as_of: datetime
     sources: dict[str, str] = field(default_factory=dict)
+    source_as_of: dict[str, datetime] = field(default_factory=dict)
 
 
 class CompsCalculator:
@@ -147,6 +148,10 @@ class CompsCalculator:
                     raise CompsCalculationError(
                         f"Source reference is required for {ticker}.{field_name}."
                     )
+                if field_name not in company.source_as_of:
+                    raise CompsCalculationError(
+                        f"Source date is required for {ticker}.{field_name}."
+                    )
 
         if target_ticker.upper() not in seen:
             raise CompsCalculationError(
@@ -165,6 +170,15 @@ class CompsCalculator:
         ev_to_ebitda: float | None,
         pe: float | None,
     ) -> list[TraceFormula]:
+        equity_value_as_of = min(
+            company.source_as_of["share_price"],
+            company.source_as_of["shares_outstanding"],
+        )
+        net_debt_as_of = min(
+            company.source_as_of["total_debt"],
+            company.source_as_of["cash"],
+        )
+        enterprise_value_as_of = min(equity_value_as_of, net_debt_as_of)
         return [
             TraceFormula(
                 ticker=company.ticker.upper(),
@@ -196,13 +210,13 @@ class CompsCalculator:
                         field="equity_value",
                         value=market_cap,
                         source="calculated.equity_value",
-                        as_of=company.as_of,
+                        as_of=equity_value_as_of,
                     ),
                     TraceInput(
                         field="net_debt",
                         value=net_debt,
                         source="calculated.net_debt",
-                        as_of=company.as_of,
+                        as_of=net_debt_as_of,
                     ),
                 ],
             ),
@@ -212,6 +226,7 @@ class CompsCalculator:
                 denominator_field="revenue_ltm",
                 output_value=ev_to_revenue,
                 enterprise_value=enterprise_value,
+                enterprise_value_as_of=enterprise_value_as_of,
             ),
             self._multiple_trace(
                 company=company,
@@ -219,6 +234,7 @@ class CompsCalculator:
                 denominator_field="ebit_ltm",
                 output_value=ev_to_ebit,
                 enterprise_value=enterprise_value,
+                enterprise_value_as_of=enterprise_value_as_of,
             ),
             self._multiple_trace(
                 company=company,
@@ -226,6 +242,7 @@ class CompsCalculator:
                 denominator_field="ebitda_ltm",
                 output_value=ev_to_ebitda,
                 enterprise_value=enterprise_value,
+                enterprise_value_as_of=enterprise_value_as_of,
             ),
             TraceFormula(
                 ticker=company.ticker.upper(),
@@ -237,7 +254,7 @@ class CompsCalculator:
                         field="equity_value",
                         value=market_cap,
                         source="calculated.equity_value",
-                        as_of=company.as_of,
+                        as_of=equity_value_as_of,
                     ),
                     self._trace_input(company, "net_income_ltm"),
                 ],
@@ -252,6 +269,7 @@ class CompsCalculator:
         denominator_field: str,
         output_value: float | None,
         enterprise_value: float,
+        enterprise_value_as_of: datetime,
     ) -> TraceFormula:
         return TraceFormula(
             ticker=company.ticker.upper(),
@@ -263,7 +281,7 @@ class CompsCalculator:
                     field="enterprise_value",
                     value=enterprise_value,
                     source="calculated.enterprise_value",
-                    as_of=company.as_of,
+                    as_of=enterprise_value_as_of,
                 ),
                 self._trace_input(company, denominator_field),
             ],
@@ -274,7 +292,7 @@ class CompsCalculator:
             field=field_name,
             value=getattr(company, field_name),
             source=company.sources[field_name],
-            as_of=company.as_of,
+            as_of=company.source_as_of[field_name],
         )
 
     def _safe_ratio(self, numerator: float | None, denominator: float | None) -> float | None:

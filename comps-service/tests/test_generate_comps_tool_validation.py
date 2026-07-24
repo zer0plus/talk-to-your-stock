@@ -15,13 +15,28 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from comps_service.main import app
-from comps_service.tool_validation import AlphaVantageTickerValidator
+from comps_service.main import app, get_company_data_source
+from comps_service.run_service import CompanyDataUnavailable, LoadedCompanyData
+from comps_service.tool_validation import (
+    AlphaVantageRequestLimiter,
+    AlphaVantageTickerValidator,
+    TickerDirectory,
+)
 
 TEST_ALPHA_VANTAGE_API_KEY_VAR = "TEST_ALPHA_VANTAGE_API_KEY"
 RUN_LIVE_ALPHA_VANTAGE_TESTS_VAR = "RUN_LIVE_ALPHA_VANTAGE_TESTS"
 ALPHA_VANTAGE_TEST_REQUEST_INTERVAL_SECONDS = 2.0
 INTERNAL_TOOL_TOKEN = str(uuid4())
+
+
+class RecordingUnavailableCompanyDataSource:
+    def __init__(self) -> None:
+        self.requested_tickers: list[str] = []
+
+    def load(self, *, tickers: list[str], currency: str) -> LoadedCompanyData:
+        del currency
+        self.requested_tickers = tickers
+        raise CompanyDataUnavailable("Provider normalization intentionally stopped.")
 
 
 class GenerateCompsToolValidationTest(unittest.TestCase):
@@ -119,19 +134,22 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 503)
-        self.assertIn("Real provider and FX", response.json()["error"]["message"])
+        self.assertIn(
+            "ALPHA_VANTAGE_API_KEY",
+            response.json()["error"]["message"],
+        )
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
         response = Mock()
-        response.json.return_value = {
-            "bestMatches": [{"1. symbol": "AAPL", "3. type": "Equity"}]
-        }
+        response.json.return_value = {"bestMatches": []}
         response.raise_for_status.return_value = None
         client = Mock()
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=None)
         client.get.return_value = response
+        directory = TickerDirectory()
+        request_limiter = AlphaVantageRequestLimiter()
 
         with (
             patch("comps_service.tool_validation.httpx.Client", return_value=client),
@@ -143,18 +161,63 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "ALPHA_VANTAGE_API_KEY": "test-key",
                     "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "1.1",
                 },
+                request_limiter=request_limiter,
+                ticker_directory=directory,
             )
             second_validator = AlphaVantageTickerValidator(
                 environ={
                     "ALPHA_VANTAGE_API_KEY": "test-key",
                     "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "1.1",
                 },
+                request_limiter=request_limiter,
+                ticker_directory=directory,
+            )
+
+            self.assertFalse(first_validator.is_supported("AAPL"))
+            self.assertFalse(second_validator.is_supported("MSFT"))
+
+        sleep.assert_called_once_with(1.1)
+
+    def test_ticker_directory_reuses_known_valid_and_invalid_symbols(self) -> None:
+        responses = [
+            {
+                "bestMatches": [
+                    {"1. symbol": "AAPL", "3. type": "Equity"},
+                ]
+            },
+            {"bestMatches": []},
+        ]
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.side_effect = responses
+        client = Mock()
+        client.__enter__ = Mock(return_value=client)
+        client.__exit__ = Mock(return_value=None)
+        client.get.return_value = response
+        directory = TickerDirectory()
+
+        with patch("comps_service.tool_validation.httpx.Client", return_value=client):
+            first_validator = AlphaVantageTickerValidator(
+                environ={
+                    "ALPHA_VANTAGE_API_KEY": "test-key",
+                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+                },
+                ticker_directory=directory,
+            )
+            second_validator = AlphaVantageTickerValidator(
+                environ={
+                    "ALPHA_VANTAGE_API_KEY": "test-key",
+                    "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+                },
+                ticker_directory=directory,
             )
 
             self.assertTrue(first_validator.is_supported("AAPL"))
             self.assertTrue(second_validator.is_supported("AAPL"))
+            self.assertFalse(first_validator.is_supported("ZZZZ"))
+            self.assertFalse(second_validator.is_supported("ZZZZ"))
 
-        sleep.assert_called_once_with(1.1)
+        self.assertEqual(client.get.call_count, 2)
 
     # Rejects user-supplied peer mode before provider or database work when peers are missing.
     def test_user_supplied_mode_requires_peer_tickers_before_run_creation(self) -> None:
@@ -219,6 +282,9 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
     # Normalizes mixed-case ticker candidates before the configured Run data source.
     def test_mixed_case_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
+        company_data_source = RecordingUnavailableCompanyDataSource()
+        app.dependency_overrides[get_company_data_source] = lambda: company_data_source
+        self.addCleanup(app.dependency_overrides.clear)
 
         with (
             patch.dict(
@@ -248,7 +314,8 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         body = response.json()
         self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
-        self.assertIn("Real provider and FX", body["error"]["message"])
+        self.assertIn("intentionally stopped", body["error"]["message"])
+        self.assertEqual(company_data_source.requested_tickers, ["AAPL", "MSFT"])
         database_connect.assert_not_called()
 
     # Rejects ticker candidates with unsupported syntax before provider or database work.
@@ -628,6 +695,9 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
     # Lets live Alpha Vantage exact-match tickers reach the configured Run data source.
     def test_valid_tickers_pass_pre_run_validation_without_creating_run(self) -> None:
         database_connect = Mock()
+        company_data_source = RecordingUnavailableCompanyDataSource()
+        app.dependency_overrides[get_company_data_source] = lambda: company_data_source
+        self.addCleanup(app.dependency_overrides.clear)
 
         with (
             patch.dict(
@@ -657,7 +727,8 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         body = response.json()
         self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
-        self.assertIn("Real provider and FX", body["error"]["message"])
+        self.assertIn("intentionally stopped", body["error"]["message"])
+        self.assertEqual(company_data_source.requested_tickers, ["AAPL", "MSFT"])
         database_connect.assert_not_called()
 
     def _live_alpha_vantage_env(self) -> dict[str, str]:

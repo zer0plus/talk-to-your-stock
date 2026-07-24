@@ -77,6 +77,19 @@ class ControlledCompanyDataSource:
                             f"alpha_vantage.income_statement.{ticker}.net_income_ltm"
                         ),
                     },
+                    source_as_of={
+                        field: datetime(2026, 7, 17, tzinfo=UTC)
+                        for field in (
+                            "share_price",
+                            "shares_outstanding",
+                            "cash",
+                            "total_debt",
+                            "revenue_ltm",
+                            "ebit_ltm",
+                            "ebitda_ltm",
+                            "net_income_ltm",
+                        )
+                    },
                 )
                 for ticker in tickers
             ],

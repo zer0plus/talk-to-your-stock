@@ -11,6 +11,8 @@ import httpx
 
 from talk_to_your_stock_shared import GenerateCompsToolRequest
 
+from .provider_config import InvalidProviderConfiguration, seconds_setting
+
 ALPHA_VANTAGE_API_KEY_VAR = "ALPHA_VANTAGE_API_KEY"
 ALPHA_VANTAGE_BASE_URL_VAR = "ALPHA_VANTAGE_BASE_URL"
 ALPHA_VANTAGE_TIMEOUT_SECONDS_VAR = "ALPHA_VANTAGE_TIMEOUT_SECONDS"
@@ -53,7 +55,24 @@ class AlphaVantageRequestLimiter:
             self._last_request_at = time.monotonic()
 
 
-_ALPHA_VANTAGE_REQUEST_LIMITER = AlphaVantageRequestLimiter()
+ALPHA_VANTAGE_REQUEST_LIMITER = AlphaVantageRequestLimiter()
+
+
+class TickerDirectory:
+    def __init__(self) -> None:
+        self._support_by_ticker: dict[str, bool] = {}
+        self._lock = threading.Lock()
+
+    def find(self, ticker: str) -> bool | None:
+        with self._lock:
+            return self._support_by_ticker.get(ticker.upper())
+
+    def remember(self, ticker: str, *, is_supported: bool) -> None:
+        with self._lock:
+            self._support_by_ticker[ticker.upper()] = is_supported
+
+
+_TICKER_DIRECTORY = TickerDirectory()
 
 
 class AlphaVantageTickerValidator:
@@ -62,11 +81,16 @@ class AlphaVantageTickerValidator:
         *,
         environ: Mapping[str, str] | None = None,
         request_limiter: AlphaVantageRequestLimiter | None = None,
+        ticker_directory: TickerDirectory | None = None,
     ) -> None:
         self.environ = os.environ if environ is None else environ
-        self._request_limiter = request_limiter or _ALPHA_VANTAGE_REQUEST_LIMITER
+        self._request_limiter = request_limiter or ALPHA_VANTAGE_REQUEST_LIMITER
+        self._ticker_directory = ticker_directory or _TICKER_DIRECTORY
 
     def is_supported(self, ticker: str) -> bool:
+        known_support = self._ticker_directory.find(ticker)
+        if known_support is not None:
+            return known_support
         payload = self._search_symbol(ticker)
         matches = payload.get("bestMatches")
         if not isinstance(matches, list):
@@ -74,7 +98,11 @@ class AlphaVantageTickerValidator:
                 message="Alpha Vantage symbol search returned an unexpected payload.",
                 details={"provider": "alpha_vantage"},
             )
-        return any(self._match_symbol(match) == ticker.upper() for match in matches)
+        is_supported = any(
+            self._match_symbol(match) == ticker.upper() for match in matches
+        )
+        self._ticker_directory.remember(ticker, is_supported=is_supported)
+        return is_supported
 
     def _search_symbol(self, ticker: str) -> dict[str, Any]:
         api_key = self._api_key()
@@ -145,14 +173,15 @@ class AlphaVantageTickerValidator:
         self._request_limiter.wait_for_slot(interval_seconds)
 
     def _float_env(self, name: str, default: float) -> float:
-        raw_value = self.environ.get(name, "").strip()
-        if not raw_value:
-            return default
         try:
-            return float(raw_value)
-        except ValueError as exc:
+            return seconds_setting(
+                self.environ,
+                name=name,
+                default=default,
+            )
+        except InvalidProviderConfiguration as exc:
             raise RuntimeConfigurationError(
-                message=f"{name} must be a number of seconds.",
+                message=str(exc),
                 details={"invalid_configuration": [name]},
             ) from exc
 
