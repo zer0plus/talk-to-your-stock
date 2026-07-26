@@ -8,7 +8,7 @@ import unittest
 import httpx
 
 from comps_service.provider import AlphaVantageCompanyDataSource
-from comps_service.run_service import CompsRunExecutionError
+from comps_service.run_service import CompanyDataUnavailable, CompsRunExecutionError
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "alpha_vantage"
@@ -77,6 +77,53 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 if function != "GLOBAL_QUOTE"
             )
         )
+
+    def test_blank_quote_entitlement_is_not_sent(self) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        quote_params: dict[str, str] = {}
+
+        def respond(request):
+            function = request.url.params["function"]
+            if function == "GLOBAL_QUOTE":
+                quote_params.update(request.url.params)
+            return httpx.Response(200, json=deepcopy(fixture[function]))
+
+        source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": "fixture-key",
+                "ALPHA_VANTAGE_QUOTE_ENTITLEMENT": "  ",
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(respond),
+        )
+
+        source.load(tickers=["AAPL"], currency="USD")
+
+        self.assertNotIn("entitlement", quote_params)
+
+    def test_invalid_quote_entitlement_fails_before_provider_request(self) -> None:
+        def respond(_request):
+            self.fail("Invalid configuration must not reach Alpha Vantage.")
+
+        source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": "fixture-key",
+                "ALPHA_VANTAGE_QUOTE_ENTITLEMENT": "realtme",
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(respond),
+        )
+
+        with self.assertRaisesRegex(
+            CompanyDataUnavailable,
+            (
+                "ALPHA_VANTAGE_QUOTE_ENTITLEMENT must be "
+                "'realtime' or 'delayed'"
+            ),
+        ):
+            source.load(tickers=["AAPL"], currency="USD")
 
     def test_missing_fundamental_evidence_fails_instead_of_building_input(
         self,

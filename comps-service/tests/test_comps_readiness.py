@@ -112,6 +112,27 @@ class CompsReadinessTest(unittest.TestCase):
                         },
                     )
 
+    def test_readiness_rejects_invalid_quote_entitlement(self) -> None:
+        env = {
+            **COMPS_ENV,
+            "ALPHA_VANTAGE_QUOTE_ENTITLEMENT": "realtme",
+        }
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["status"], "not_ready")
+        self.assertEqual(
+            response.json()["checks"]["run_data_source"],
+            {
+                "status": "fail",
+                "message": (
+                    "ALPHA_VANTAGE_QUOTE_ENTITLEMENT must be "
+                    "'realtime' or 'delayed'."
+                ),
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

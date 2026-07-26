@@ -7,7 +7,11 @@ from talk_to_your_stock_shared import DependencyStatus, ReadinessCheck
 from talk_to_your_stock_shared.migrations import required_schema_revision
 from talk_to_your_stock_shared.readiness import check_database
 
-from .provider_config import InvalidProviderConfiguration, seconds_setting
+from .provider_config import (
+    InvalidProviderConfiguration,
+    quote_entitlement_setting,
+    seconds_setting,
+)
 from .tool_validation import (
     ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS_VAR,
     ALPHA_VANTAGE_TIMEOUT_SECONDS_VAR,
@@ -43,6 +47,7 @@ def check_run_data_source(environ: Mapping[str, str]) -> ReadinessCheck:
             name=ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS_VAR,
             default=DEFAULT_ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS,
         )
+        quote_entitlement_setting(environ)
     except InvalidProviderConfiguration as exc:
         return ReadinessCheck(
             status=DependencyStatus.FAIL,

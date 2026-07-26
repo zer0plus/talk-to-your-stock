@@ -10,7 +10,11 @@ from typing import Any
 import httpx
 
 from .calculator import CompanyCompsInput
-from .provider_config import InvalidProviderConfiguration, seconds_setting
+from .provider_config import (
+    InvalidProviderConfiguration,
+    quote_entitlement_setting,
+    seconds_setting,
+)
 from .run_service import (
     CompanyDataUnavailable,
     CompsRunExecutionError,
@@ -27,9 +31,6 @@ from .tool_validation import (
     ALPHA_VANTAGE_REQUEST_LIMITER,
     AlphaVantageRequestLimiter,
 )
-
-ALPHA_VANTAGE_QUOTE_ENTITLEMENT_VAR = "ALPHA_VANTAGE_QUOTE_ENTITLEMENT"
-
 
 @dataclass(frozen=True)
 class _SelectedQuarterlyReport:
@@ -410,11 +411,8 @@ class AlphaVantageCompanyDataSource:
         else:
             raise AssertionError("Alpha Vantage request parameters are incomplete.")
         if function == "GLOBAL_QUOTE":
-            entitlement = self._environ.get(
-                ALPHA_VANTAGE_QUOTE_ENTITLEMENT_VAR,
-                "",
-            ).strip()
-            if entitlement:
+            entitlement = self._quote_entitlement()
+            if entitlement is not None:
                 params["entitlement"] = entitlement
 
         self._request_limiter.wait_for_slot(
@@ -474,6 +472,12 @@ class AlphaVantageCompanyDataSource:
                 name=name,
                 default=default,
             )
+        except InvalidProviderConfiguration as exc:
+            raise CompanyDataUnavailable(str(exc)) from exc
+
+    def _quote_entitlement(self) -> str | None:
+        try:
+            return quote_entitlement_setting(self._environ)
         except InvalidProviderConfiguration as exc:
             raise CompanyDataUnavailable(str(exc)) from exc
 
