@@ -284,7 +284,7 @@ class CompsMigrationsTest(unittest.TestCase):
                     headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
                 )
                 self.assertEqual(failed.status_code, 502, failed.text)
-                failed_run_id = failed.json()["error"]["details"]["run_id"]
+                failed_run_id = failed.json()["error"]["run_id"]
 
                 app.dependency_overrides.clear()
                 app.dependency_overrides[get_company_data_source] = (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from typing import Annotated
@@ -58,6 +59,7 @@ from .tool_validation import (
 
 COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
 GENERATE_COMPS_TOOL_PATH = "/v1/internal/tools/generate-comps-table"
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="TalkToYourStock Comps Service",
@@ -241,6 +243,15 @@ def generate_comps_table(
             details=exc.details,
         )
     except UpstreamValidationError as exc:
+        logger.error(
+            (
+                "Comps Tool validation failed: thread_id=%s "
+                "trigger_message_id=%s message=%s"
+            ),
+            request.thread_id,
+            request.trigger_message_id,
+            exc.message,
+        )
         return _error_response(
             status_code=status.HTTP_502_BAD_GATEWAY,
             code=ErrorCode.UPSTREAM_ERROR,
@@ -255,6 +266,21 @@ def generate_comps_table(
         ).generate(request)
     except FailedCompsRun as exc:
         dependency_unavailable = isinstance(exc.cause, CompanyDataUnavailable)
+        failure_details = {
+            **(getattr(exc.cause, "details", None) or {}),
+            "thread_id": str(request.thread_id),
+            "trigger_message_id": str(request.trigger_message_id),
+        }
+        logger.error(
+            (
+                "Comps Run failed: run_id=%s thread_id=%s "
+                "trigger_message_id=%s message=%s"
+            ),
+            exc.run_id,
+            request.thread_id,
+            request.trigger_message_id,
+            str(exc),
+        )
         return _error_response(
             status_code=(
                 status.HTTP_503_SERVICE_UNAVAILABLE
@@ -267,7 +293,8 @@ def generate_comps_table(
                 else ErrorCode.UPSTREAM_ERROR
             ),
             message=str(exc),
-            details={"run_id": str(exc.run_id)},
+            details=failure_details,
+            run_id=exc.run_id,
         )
 
 
@@ -349,6 +376,7 @@ def _error_response(
     code: ErrorCode,
     message: str,
     details: dict[str, object] | None = None,
+    run_id: UUID | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -357,6 +385,7 @@ def _error_response(
                 code=code,
                 message=message,
                 details=details,
+                run_id=run_id,
             )
         ).model_dump(mode="json"),
     )

@@ -217,7 +217,7 @@ class FailedCompsRunTest(unittest.TestCase):
 
             self.assertEqual(failed.status_code, 502, failed.text)
             self.assertEqual(failed.json()["error"]["code"], "UPSTREAM_ERROR")
-            run_id = UUID(failed.json()["error"]["details"]["run_id"])
+            run_id = UUID(failed.json()["error"]["run_id"])
             readback = client.get(f"/v1/runs/{run_id}")
             table_readback = client.get(f"/v1/runs/{run_id}/table")
             trace_readback = client.get(f"/v1/runs/{run_id}/trace")
@@ -249,6 +249,7 @@ class FailedCompsRunTest(unittest.TestCase):
         )
 
     def test_provider_failure_preserves_payloads_gathered_before_failure(self) -> None:
+        provider_key = "FAKE_PROVIDER_KEY_123"
         fixture = json.loads(
             (FIXTURE_ROOT / "usd_company_latest.json").read_text()
         )
@@ -259,7 +260,13 @@ class FailedCompsRunTest(unittest.TestCase):
             if function == "INCOME_STATEMENT" and symbol == "MSFT":
                 return httpx.Response(
                     429,
-                    json={"Information": "Provider rate limit reached."},
+                    json={
+                        "Information": (
+                            "Provider quota exhausted. "
+                            f"API key as {provider_key}"
+                        ),
+                        provider_key: "echoed credential key",
+                    },
                 )
             payload = deepcopy(fixture[function])
             if function == "GLOBAL_QUOTE":
@@ -271,7 +278,7 @@ class FailedCompsRunTest(unittest.TestCase):
 
         source = AlphaVantageCompanyDataSource(
             environ={
-                "ALPHA_VANTAGE_API_KEY": "fixture-key",
+                "ALPHA_VANTAGE_API_KEY": provider_key,
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
@@ -280,23 +287,32 @@ class FailedCompsRunTest(unittest.TestCase):
                     "1. symbol": ticker,
                     "3. type": "Equity",
                     "8. currency": "USD",
+                    provider_key: "echoed credential key",
                 }
                 for ticker in ("AAPL", "MSFT")
             },
         )
         app.dependency_overrides[get_company_data_source] = lambda: source
+        thread_id = uuid4()
+        trigger_message_id = uuid4()
 
-        with patch.dict(
-            os.environ,
-            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
-            clear=True,
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN,
+                    "TALK_TO_YOUR_STOCK_ENV": "local",
+                },
+                clear=True,
+            ),
+            self.assertLogs("comps_service.main", level="ERROR") as captured_logs,
         ):
             failed = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
                 json={
                     "invocation_id": str(uuid4()),
-                    "thread_id": str(uuid4()),
-                    "trigger_message_id": str(uuid4()),
+                    "thread_id": str(thread_id),
+                    "trigger_message_id": str(trigger_message_id),
                     "target_ticker": "AAPL",
                     "peer_tickers": ["MSFT"],
                     "peer_selection_mode": "user_supplied",
@@ -306,7 +322,22 @@ class FailedCompsRunTest(unittest.TestCase):
             )
 
         self.assertEqual(failed.status_code, 502, failed.text)
-        run_id = UUID(failed.json()["error"]["details"]["run_id"])
+        self.assertEqual(
+            failed.json()["error"]["message"],
+            "Alpha Vantage request limit was reached while loading MSFT.",
+        )
+        self.assertEqual(
+            failed.json()["error"]["details"],
+            {
+                "provider": "alpha_vantage",
+                "operation": "INCOME_STATEMENT",
+                "subject": "MSFT",
+                "thread_id": str(thread_id),
+                "trigger_message_id": str(trigger_message_id),
+            },
+        )
+        self.assertNotIn(provider_key, failed.text)
+        run_id = UUID(failed.json()["error"]["run_id"])
         snapshot = self.repository.get_source_snapshot(run_id)
         self.assertIsNotNone(snapshot)
         assert snapshot is not None
@@ -325,8 +356,23 @@ class FailedCompsRunTest(unittest.TestCase):
         )
         self.assertEqual(
             snapshot.raw_provider_evidence["MSFT"]["income_statement"],
-            {"Information": "Provider rate limit reached."},
+            {
+                "Information": (
+                    "Provider quota exhausted. API key as [REDACTED]"
+                ),
+                "[REDACTED]": "echoed credential key",
+            },
         )
+        self.assertNotIn(
+            provider_key,
+            json.dumps(snapshot.raw_provider_evidence),
+        )
+        log_output = "\n".join(captured_logs.output)
+        self.assertIn(str(run_id), log_output)
+        self.assertIn(str(thread_id), log_output)
+        self.assertIn(str(trigger_message_id), log_output)
+        self.assertIn(failed.json()["error"]["message"], log_output)
+        self.assertNotIn(provider_key, log_output)
 
     def test_fx_failure_preserves_invalid_fx_payload(self) -> None:
         company_fixture = json.loads(
@@ -393,7 +439,7 @@ class FailedCompsRunTest(unittest.TestCase):
             )
 
         self.assertEqual(failed.status_code, 502, failed.text)
-        run_id = UUID(failed.json()["error"]["details"]["run_id"])
+        run_id = UUID(failed.json()["error"]["run_id"])
         snapshot = self.repository.get_source_snapshot(run_id)
         self.assertIsNotNone(snapshot)
         assert snapshot is not None
@@ -427,7 +473,7 @@ class FailedCompsRunTest(unittest.TestCase):
             )
 
         self.assertEqual(failed.status_code, 502, failed.text)
-        run_id = UUID(failed.json()["error"]["details"]["run_id"])
+        run_id = UUID(failed.json()["error"]["run_id"])
         run = self.repository.get_run(run_id)
         self.assertIsNotNone(run)
         assert run is not None

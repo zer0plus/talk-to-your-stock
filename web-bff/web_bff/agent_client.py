@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from talk_to_your_stock_shared import (
     AgentMessageRequest,
     AgentMessageResponse,
+    ErrorResponse,
     Message,
     Thread,
     User,
@@ -20,6 +21,13 @@ AGENT_SERVICE_URL_VAR = "AGENT_SERVICE_URL"
 
 class AgentServiceUnavailable(RuntimeError):
     pass
+
+
+class AgentServiceResponseError(RuntimeError):
+    def __init__(self, *, status_code: int, error: ErrorResponse) -> None:
+        super().__init__(error.error.message)
+        self.status_code = status_code
+        self.error = error
 
 
 class HttpAgentClient:
@@ -55,17 +63,24 @@ class HttpAgentClient:
                 json=request.model_dump(mode="json"),
                 timeout=30,
             )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise AgentServiceUnavailable(
-                f"Agent Service returned HTTP {exc.response.status_code}."
-            ) from exc
         except httpx.HTTPError as exc:
             raise AgentServiceUnavailable("Agent Service unavailable.") from exc
 
+        if response.is_error:
+            try:
+                error = ErrorResponse.model_validate(response.json())
+            except (JSONDecodeError, ValidationError, ValueError):
+                raise AgentServiceUnavailable(
+                    "Agent Service returned an invalid error response."
+                ) from None
+            status_code = response.status_code
+            if status_code not in (502, 503):
+                status_code = 502
+            raise AgentServiceResponseError(status_code=status_code, error=error)
+
         try:
             return AgentMessageResponse.model_validate(response.json())
-        except (JSONDecodeError, ValidationError, ValueError) as exc:
+        except (JSONDecodeError, ValidationError, ValueError):
             raise AgentServiceUnavailable(
                 "Agent Service returned an invalid response."
-            ) from exc
+            ) from None

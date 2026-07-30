@@ -16,6 +16,7 @@ from .provider_config import (
     quote_entitlement_setting,
     seconds_setting,
 )
+from .provider_error import alpha_vantage_error, sanitize_provider_evidence
 from .run_service import (
     CompanyDataLoadFailure,
     CompanyDataUnavailable,
@@ -68,6 +69,7 @@ class AlphaVantageCompanyDataSource:
         tickers: list[str],
         currency: str,
     ) -> LoadedCompanyData:
+        api_key = self._environ.get(ALPHA_VANTAGE_API_KEY_VAR, "").strip()
         companies: list[CompanyCompsInput] = []
         evidence: dict[str, object] = {}
         fx_cache: dict[
@@ -92,13 +94,19 @@ class AlphaVantageCompanyDataSource:
                     exc,
                     partial_data=LoadedCompanyData(
                         companies=companies,
-                        raw_provider_evidence=evidence,
+                        raw_provider_evidence=sanitize_provider_evidence(
+                            evidence,
+                            secret=api_key,
+                        ),
                     ),
                 ) from exc
             companies.append(company)
         return LoadedCompanyData(
             companies=companies,
-            raw_provider_evidence=evidence,
+            raw_provider_evidence=sanitize_provider_evidence(
+                evidence,
+                secret=api_key,
+            ),
         )
 
     def _load_company(
@@ -522,9 +530,10 @@ class AlphaVantageCompanyDataSource:
         raw_evidence: dict[str, object] | None = None,
         evidence_key: str | None = None,
     ) -> dict[str, Any]:
+        api_key = self._api_key()
         params = {
             "function": function,
-            "apikey": self._api_key(),
+            "apikey": api_key,
         }
         subject: str
         if symbol is not None:
@@ -565,29 +574,34 @@ class AlphaVantageCompanyDataSource:
                     params=params,
                 )
             payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, ValueError):
             raise CompsRunExecutionError(
                 f"Alpha Vantage {function} request failed for {subject}."
-            ) from exc
+            ) from None
         if raw_evidence is not None and evidence_key is not None:
             raw_evidence[evidence_key] = payload
+        provider_error = alpha_vantage_error(
+            payload,
+            operation=function,
+            subject=subject,
+            action="loading",
+        )
+        if provider_error is not None:
+            raise CompsRunExecutionError(
+                provider_error.message,
+                details=provider_error.details,
+            )
         try:
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             raise CompsRunExecutionError(
                 f"Alpha Vantage {function} request failed for {subject}."
-            ) from exc
+            ) from None
         if not isinstance(payload, dict):
             raise CompsRunExecutionError(
                 f"Alpha Vantage {function} returned a non-object payload for "
                 f"{subject}."
             )
-        for key in ("Error Message", "Note", "Information"):
-            if payload.get(key):
-                raise CompsRunExecutionError(
-                    f"Alpha Vantage {function} failed for {subject}: "
-                    f"{payload[key]}"
-                )
         return payload
 
     def _api_key(self) -> str:

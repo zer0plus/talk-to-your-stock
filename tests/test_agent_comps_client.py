@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import traceback
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import Mock, patch
@@ -11,6 +12,7 @@ from fastapi import FastAPI, Header
 from fastapi.responses import JSONResponse
 
 from agent_service.comps_client import (
+    CompsToolError,
     CompsToolUnavailable,
     CompsToolValidationError,
     HttpCompsToolClient,
@@ -90,6 +92,40 @@ class HttpCompsToolClientTest(unittest.TestCase):
             {"unsupported_tickers": ["AAPLL"]},
         )
 
+    def test_malformed_error_response_uses_a_safe_generic_error(self) -> None:
+        leaked_value = "FAKE_UPSTREAM_SECRET_123"
+        comps_app = FastAPI()
+
+        @comps_app.post("/v1/internal/tools/generate-comps-table")
+        def generate_comps_table() -> JSONResponse:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": {
+                        "code": leaked_value,
+                        "message": "Malformed error.",
+                    }
+                },
+            )
+
+        request = _tool_request(thread_id=uuid4(), trigger_message_id=uuid4())
+        with running_service(comps_app) as base_url:
+            client = HttpCompsToolClient(
+                base_url=base_url,
+                internal_token="internal-token",
+            )
+            with self.assertRaises(CompsToolUnavailable) as context:
+                asyncio.run(client.generate_comps_table(request))
+
+        self.assertEqual(
+            str(context.exception),
+            "Comps Service returned an invalid error response.",
+        )
+        self.assertNotIn(
+            leaked_value,
+            "".join(traceback.format_exception(context.exception)),
+        )
+
     def test_calls_real_comps_service_route_with_service_credential(self) -> None:
         ticker_validator = Mock()
         ticker_validator.is_supported.return_value = True
@@ -111,13 +147,15 @@ class HttpCompsToolClientTest(unittest.TestCase):
                 base_url=base_url,
                 internal_token="internal-token",
             )
-            with self.assertRaises(CompsToolUnavailable) as context:
+            with self.assertRaises(CompsToolError) as context:
                 asyncio.run(client.generate_comps_table(request))
 
+        self.assertEqual(context.exception.status_code, 503)
         self.assertEqual(
-            str(context.exception),
-            "Comps Service returned HTTP 503.",
+            context.exception.error.error.code,
+            ErrorCode.INTERNAL_ERROR,
         )
+        self.assertIsNone(context.exception.error.error.run_id)
         self.assertEqual(ticker_validator.is_supported.call_count, 2)
 
 

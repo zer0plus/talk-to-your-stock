@@ -52,6 +52,7 @@ class ErrorDetail(ContractModel):
     code: ErrorCode
     message: str
     details: dict[str, object] | None = None
+    run_id: UUID | None = None
     request_id: str | None = None
 
 

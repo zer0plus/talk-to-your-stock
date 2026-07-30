@@ -984,7 +984,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             "ALPHA_VANTAGE_API_KEY",
             response.json()["error"]["message"],
         )
-        run_id = UUID(response.json()["error"]["details"]["run_id"])
+        run_id = UUID(response.json()["error"]["run_id"])
         self.assertEqual(self.repository.runs[run_id].status.value, "failed")
         self.assertEqual(self.repository.tables, {})
         self.assertEqual(self.repository.traces, {})

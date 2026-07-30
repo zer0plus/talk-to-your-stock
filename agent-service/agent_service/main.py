@@ -37,6 +37,7 @@ from agent_service.comps_client import COMPS_SERVICE_URL_VAR
 from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
 from agent_service.fundamental_agent import (
     AgentRoutingUnavailable,
+    AgentToolError,
     FundamentalAnalysisAgent,
 )
 
@@ -183,7 +184,11 @@ def _failed_comps_service_check() -> ReadinessCheck:
 @app.post(
     "/v1/internal/agent/respond",
     response_model=AgentMessageResponse,
-    responses={400: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
     tags=["Internal"],
 )
 async def respond_to_message(
@@ -203,6 +208,22 @@ async def respond_to_message(
                 request=request,
                 session_context=session_context,
             )
+    except AgentToolError as exc:
+        logger.error(
+            (
+                "Comps Tool failed: code=%s run_id=%s thread_id=%s "
+                "trigger_message_id=%s message=%s"
+            ),
+            exc.error.error.code.value,
+            exc.error.error.run_id,
+            request.thread_id,
+            request.user_message_id,
+            exc.error.error.message,
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.error.model_dump(mode="json"),
+        )
     except (AgentRoutingUnavailable, AgentSessionUnavailable) as exc:
         return _agent_operation_error(exc)
     return response

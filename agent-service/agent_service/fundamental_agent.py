@@ -16,6 +16,7 @@ from talk_to_your_stock_shared import (
     AgentMessageRequest,
     AgentMessageResponse,
     AnalysisPeriod,
+    ErrorResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     PeerSelectionMode,
@@ -23,6 +24,7 @@ from talk_to_your_stock_shared import (
 
 from .comps_client import (
     CompsToolClient,
+    CompsToolError,
     CompsToolUnavailable,
     CompsToolValidationError,
     HttpCompsToolClient,
@@ -69,6 +71,13 @@ ask one concise clarification question before calling the Tool.
 
 class AgentRoutingUnavailable(RuntimeError):
     pass
+
+
+class AgentToolError(RuntimeError):
+    def __init__(self, *, status_code: int, error: ErrorResponse) -> None:
+        super().__init__(error.error.message)
+        self.status_code = status_code
+        self.error = error
 
 
 class FundamentalAnalysisAgent:
@@ -164,6 +173,11 @@ class FundamentalAnalysisAgent:
                 text = _text_from_event(event)
                 if text:
                     final_text = text
+        except CompsToolError as exc:
+            raise AgentToolError(
+                status_code=exc.status_code,
+                error=exc.error,
+            ) from None
         except CompsToolUnavailable as exc:
             raise AgentRoutingUnavailable(str(exc)) from exc
         except Exception as exc:

@@ -24,7 +24,14 @@ class CompanyDataUnavailable(RuntimeError):
 
 
 class CompsRunExecutionError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.details = details
 
 
 class DuplicateToolInvocation(RuntimeError):
