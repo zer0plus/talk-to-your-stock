@@ -564,21 +564,24 @@ class AlphaVantageCompanyDataSource:
                     ),
                     params=params,
                 )
-            response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise CompsRunExecutionError(
                 f"Alpha Vantage {function} request failed for {subject}."
             ) from exc
+        if raw_evidence is not None and evidence_key is not None:
+            raw_evidence[evidence_key] = payload
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise CompsRunExecutionError(
+                f"Alpha Vantage {function} request failed for {subject}."
+            ) from exc
         if not isinstance(payload, dict):
-            if raw_evidence is not None and evidence_key is not None:
-                raw_evidence[evidence_key] = payload
             raise CompsRunExecutionError(
                 f"Alpha Vantage {function} returned a non-object payload for "
                 f"{subject}."
             )
-        if raw_evidence is not None and evidence_key is not None:
-            raw_evidence[evidence_key] = payload
         for key in ("Error Message", "Note", "Information"):
             if payload.get(key):
                 raise CompsRunExecutionError(

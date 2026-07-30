@@ -234,7 +234,7 @@ class FailedCompsRunTest(unittest.TestCase):
             symbol = request.url.params["symbol"]
             if function == "INCOME_STATEMENT" and symbol == "MSFT":
                 return httpx.Response(
-                    200,
+                    429,
                     json={"Information": "Provider rate limit reached."},
                 )
             payload = deepcopy(fixture[function])
