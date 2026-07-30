@@ -24,10 +24,7 @@ from comps_service.main import (
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
 from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
-from comps_service.tool_validation import (
-    AlphaVantageTickerValidator,
-    TickerDirectory,
-)
+from comps_service.tool_validation import AlphaVantageTickerValidator
 from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
 
 
@@ -253,7 +250,10 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
-            ticker_directory=self._ticker_directory("AAPL", "MSFT"),
+            validated_ticker_matches=self._validated_ticker_matches(
+                "AAPL",
+                "MSFT",
+            ),
         )
         app.dependency_overrides[get_company_data_source] = lambda: source
 
@@ -393,7 +393,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             (FIXTURE_ROOT / "cad_to_usd_latest.json").read_text()
         )
         fx_requests: list[tuple[str, str]] = []
-        ticker_directory = TickerDirectory()
+        validated_ticker_matches: dict[str, dict[str, object]] = {}
 
         def respond(request):
             function = request.url.params["function"]
@@ -450,12 +450,12 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         validator = AlphaVantageTickerValidator(
             environ=provider_environ,
             transport=transport,
-            ticker_directory=ticker_directory,
+            validated_ticker_matches=validated_ticker_matches,
         )
         source = AlphaVantageCompanyDataSource(
             environ=provider_environ,
             transport=transport,
-            ticker_directory=ticker_directory,
+            validated_ticker_matches=validated_ticker_matches,
         )
         app.dependency_overrides[get_ticker_validator] = lambda: validator
         app.dependency_overrides[get_company_data_source] = lambda: source
@@ -642,7 +642,10 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
-            ticker_directory=self._ticker_directory("AAPL", "MSFT"),
+            validated_ticker_matches=self._validated_ticker_matches(
+                "AAPL",
+                "MSFT",
+            ),
         )
         app.dependency_overrides[get_company_data_source] = lambda: source
 
@@ -748,23 +751,19 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             ["2026-03-31", "2026-06-30"],
         )
 
-    def _ticker_directory(
+    def _validated_ticker_matches(
         self,
         *tickers: str,
         currency: str = "USD",
-    ) -> TickerDirectory:
-        directory = TickerDirectory()
-        for ticker in tickers:
-            directory.remember(
-                ticker,
-                is_supported=True,
-                provider_match={
-                    "1. symbol": ticker,
-                    "3. type": "Equity",
-                    "8. currency": currency,
-                },
-            )
-        return directory
+    ) -> dict[str, dict[str, object]]:
+        return {
+            ticker: {
+                "1. symbol": ticker,
+                "3. type": "Equity",
+                "8. currency": currency,
+            }
+            for ticker in tickers
+        }
 
     def test_succeeded_run_and_table_are_available_through_readback_contracts(
         self,

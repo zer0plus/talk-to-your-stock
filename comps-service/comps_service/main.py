@@ -52,6 +52,7 @@ from .tool_validation import (
     RuntimeConfigurationError,
     ToolValidationError,
     UpstreamValidationError,
+    ValidatedTickerMatches,
     validate_generate_comps_request,
 )
 
@@ -163,14 +164,32 @@ def get_repository() -> CompsRunRepository:
     return PostgresCompsRunRepository.from_env()
 
 
-def get_company_data_source() -> CompanyDataSource:
-    return AlphaVantageCompanyDataSource()
+def get_validated_ticker_matches() -> ValidatedTickerMatches:
+    return {}
 
 
-def get_ticker_validator() -> AlphaVantageTickerValidator:
+def get_company_data_source(
+    validated_ticker_matches: Annotated[
+        ValidatedTickerMatches,
+        Depends(get_validated_ticker_matches),
+    ],
+) -> CompanyDataSource:
+    return AlphaVantageCompanyDataSource(
+        validated_ticker_matches=validated_ticker_matches
+    )
+
+
+def get_ticker_validator(
+    validated_ticker_matches: Annotated[
+        ValidatedTickerMatches,
+        Depends(get_validated_ticker_matches),
+    ],
+) -> AlphaVantageTickerValidator:
     from . import tool_validation
 
-    return tool_validation.AlphaVantageTickerValidator()
+    return tool_validation.AlphaVantageTickerValidator(
+        validated_ticker_matches=validated_ticker_matches
+    )
 
 
 @app.post(

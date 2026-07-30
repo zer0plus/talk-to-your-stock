@@ -20,7 +20,6 @@ from comps_service.run_service import CompanyDataUnavailable, LoadedCompanyData
 from comps_service.tool_validation import (
     AlphaVantageRequestLimiter,
     AlphaVantageTickerValidator,
-    TickerDirectory,
 )
 
 TEST_ALPHA_VANTAGE_API_KEY_VAR = "TEST_ALPHA_VANTAGE_API_KEY"
@@ -148,7 +147,6 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=None)
         client.get.return_value = response
-        directory = TickerDirectory()
         request_limiter = AlphaVantageRequestLimiter()
 
         with (
@@ -162,7 +160,6 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "1.1",
                 },
                 request_limiter=request_limiter,
-                ticker_directory=directory,
             )
             second_validator = AlphaVantageTickerValidator(
                 environ={
@@ -170,7 +167,6 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "1.1",
                 },
                 request_limiter=request_limiter,
-                ticker_directory=directory,
             )
 
             self.assertFalse(first_validator.is_supported("AAPL"))
@@ -178,7 +174,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
 
         sleep.assert_called_once_with(1.1)
 
-    def test_ticker_directory_reuses_known_valid_and_invalid_symbols(self) -> None:
+    def test_ticker_validation_checks_provider_for_every_request(self) -> None:
         responses = [
             {
                 "bestMatches": [
@@ -189,6 +185,16 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     },
                 ]
             },
+            {
+                "bestMatches": [
+                    {
+                        "1. symbol": "AAPL",
+                        "3. type": "Equity",
+                        "8. currency": "USD",
+                    },
+                ]
+            },
+            {"bestMatches": []},
             {"bestMatches": []},
         ]
         response = Mock()
@@ -198,7 +204,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=None)
         client.get.return_value = response
-        directory = TickerDirectory()
+        validated_ticker_matches: dict[str, dict[str, object]] = {}
 
         with patch("comps_service.tool_validation.httpx.Client", return_value=client):
             first_validator = AlphaVantageTickerValidator(
@@ -206,14 +212,14 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
                     "ALPHA_VANTAGE_API_KEY": "test-key",
                     "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
                 },
-                ticker_directory=directory,
+                validated_ticker_matches=validated_ticker_matches,
             )
             second_validator = AlphaVantageTickerValidator(
                 environ={
                     "ALPHA_VANTAGE_API_KEY": "test-key",
                     "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
                 },
-                ticker_directory=directory,
+                validated_ticker_matches=validated_ticker_matches,
             )
 
             self.assertTrue(first_validator.is_supported("AAPL"))
@@ -221,10 +227,11 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             self.assertFalse(first_validator.is_supported("ZZZZ"))
             self.assertFalse(second_validator.is_supported("ZZZZ"))
 
-        self.assertEqual(client.get.call_count, 2)
-        aapl_entry = directory.find("AAPL")
-        assert aapl_entry is not None
-        self.assertEqual(aapl_entry.quote_currency, "USD")
+        self.assertEqual(client.get.call_count, 4)
+        self.assertEqual(
+            validated_ticker_matches["AAPL"]["8. currency"],
+            "USD",
+        )
 
     # Rejects user-supplied peer mode before provider or database work when peers are missing.
     def test_user_supplied_mode_requires_peer_tickers_before_run_creation(self) -> None:

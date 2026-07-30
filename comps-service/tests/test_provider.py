@@ -9,7 +9,6 @@ import httpx
 
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.run_service import CompanyDataUnavailable, CompsRunExecutionError
-from comps_service.tool_validation import TickerDirectory
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "alpha_vantage"
@@ -66,7 +65,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
-            ticker_directory=self._ticker_directory(),
+            validated_ticker_matches=self._validated_ticker_matches(),
         )
 
         source.load(tickers=["AAPL"], currency="USD")
@@ -99,7 +98,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
-            ticker_directory=self._ticker_directory(),
+            validated_ticker_matches=self._validated_ticker_matches(),
         )
 
         source.load(tickers=["AAPL"], currency="USD")
@@ -117,7 +116,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
-            ticker_directory=self._ticker_directory(),
+            validated_ticker_matches=self._validated_ticker_matches(),
         )
 
         with self.assertRaisesRegex(
@@ -350,7 +349,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
-            ticker_directory=self._ticker_directory(currency=None),
+            validated_ticker_matches=self._validated_ticker_matches(currency=None),
         )
 
         with self.assertRaisesRegex(
@@ -366,23 +365,21 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
-            ticker_directory=self._ticker_directory(),
+            validated_ticker_matches=self._validated_ticker_matches(),
         )
 
-    def _ticker_directory(self, *, currency: str | None = "USD") -> TickerDirectory:
-        directory = TickerDirectory()
-        provider_match = {
+    def _validated_ticker_matches(
+        self,
+        *,
+        currency: str | None = "USD",
+    ) -> dict[str, dict[str, object]]:
+        provider_match: dict[str, object] = {
             "1. symbol": "AAPL",
             "3. type": "Equity",
         }
         if currency is not None:
             provider_match["8. currency"] = currency
-        directory.remember(
-            "AAPL",
-            is_supported=True,
-            provider_match=provider_match,
-        )
-        return directory
+        return {"AAPL": provider_match}
 
 
 if __name__ == "__main__":

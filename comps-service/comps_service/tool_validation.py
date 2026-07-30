@@ -58,43 +58,7 @@ class AlphaVantageRequestLimiter:
 ALPHA_VANTAGE_REQUEST_LIMITER = AlphaVantageRequestLimiter()
 
 
-@dataclass(frozen=True)
-class TickerDirectoryEntry:
-    is_supported: bool
-    quote_currency: str | None
-    provider_match: dict[str, object] | None
-
-
-class TickerDirectory:
-    def __init__(self) -> None:
-        self._entries_by_ticker: dict[str, TickerDirectoryEntry] = {}
-        self._lock = threading.Lock()
-
-    def find(self, ticker: str) -> TickerDirectoryEntry | None:
-        with self._lock:
-            return self._entries_by_ticker.get(ticker.upper())
-
-    def remember(
-        self,
-        ticker: str,
-        *,
-        is_supported: bool,
-        provider_match: dict[str, object] | None = None,
-    ) -> None:
-        quote_currency = (
-            str(provider_match.get("8. currency") or "").strip().upper()
-            if provider_match
-            else ""
-        )
-        with self._lock:
-            self._entries_by_ticker[ticker.upper()] = TickerDirectoryEntry(
-                is_supported=is_supported,
-                quote_currency=quote_currency or None,
-                provider_match=dict(provider_match) if provider_match else None,
-            )
-
-
-TICKER_DIRECTORY = TickerDirectory()
+ValidatedTickerMatches = dict[str, dict[str, object]]
 
 
 class AlphaVantageTickerValidator:
@@ -103,18 +67,17 @@ class AlphaVantageTickerValidator:
         *,
         environ: Mapping[str, str] | None = None,
         request_limiter: AlphaVantageRequestLimiter | None = None,
-        ticker_directory: TickerDirectory | None = None,
+        validated_ticker_matches: ValidatedTickerMatches | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.environ = os.environ if environ is None else environ
         self._request_limiter = request_limiter or ALPHA_VANTAGE_REQUEST_LIMITER
-        self._ticker_directory = ticker_directory or TICKER_DIRECTORY
+        self._validated_ticker_matches = (
+            {} if validated_ticker_matches is None else validated_ticker_matches
+        )
         self._transport = transport
 
     def is_supported(self, ticker: str) -> bool:
-        known_entry = self._ticker_directory.find(ticker)
-        if known_entry is not None:
-            return known_entry.is_supported
         payload = self._search_symbol(ticker)
         matches = payload.get("bestMatches")
         if not isinstance(matches, list):
@@ -131,13 +94,8 @@ class AlphaVantageTickerValidator:
             None,
         )
         is_supported = provider_match is not None
-        self._ticker_directory.remember(
-            ticker,
-            is_supported=is_supported,
-            provider_match=(
-                provider_match if isinstance(provider_match, dict) else None
-            ),
-        )
+        if isinstance(provider_match, dict):
+            self._validated_ticker_matches[ticker.upper()] = dict(provider_match)
         return is_supported
 
     def _search_symbol(self, ticker: str) -> dict[str, Any]:

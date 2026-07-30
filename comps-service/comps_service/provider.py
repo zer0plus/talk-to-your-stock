@@ -30,9 +30,8 @@ from .tool_validation import (
     DEFAULT_ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS,
     DEFAULT_ALPHA_VANTAGE_TIMEOUT_SECONDS,
     ALPHA_VANTAGE_REQUEST_LIMITER,
-    TICKER_DIRECTORY,
     AlphaVantageRequestLimiter,
-    TickerDirectory,
+    ValidatedTickerMatches,
 )
 
 _MIN_FISCAL_QUARTER_DAYS = 75
@@ -53,12 +52,14 @@ class AlphaVantageCompanyDataSource:
         environ: Mapping[str, str] | None = None,
         transport: httpx.BaseTransport | None = None,
         request_limiter: AlphaVantageRequestLimiter | None = None,
-        ticker_directory: TickerDirectory | None = None,
+        validated_ticker_matches: ValidatedTickerMatches | None = None,
     ) -> None:
         self._environ = os.environ if environ is None else environ
         self._transport = transport
         self._request_limiter = request_limiter or ALPHA_VANTAGE_REQUEST_LIMITER
-        self._ticker_directory = ticker_directory or TICKER_DIRECTORY
+        self._validated_ticker_matches = (
+            {} if validated_ticker_matches is None else validated_ticker_matches
+        )
 
     def load(
         self,
@@ -97,10 +98,9 @@ class AlphaVantageCompanyDataSource:
         ],
     ) -> tuple[CompanyCompsInput, dict[str, object]]:
         self._api_key()
-        ticker_entry = self._ticker_directory.find(ticker)
-        provider_match = ticker_entry.provider_match if ticker_entry else None
+        provider_match = self._validated_ticker_matches.get(ticker)
         quote_currency = self._required_text(
-            ticker_entry.quote_currency if ticker_entry else None,
+            provider_match.get("8. currency") if provider_match else None,
             field="SYMBOL_SEARCH.8. currency",
             ticker=ticker,
         ).upper()
