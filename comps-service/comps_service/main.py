@@ -33,6 +33,7 @@ from talk_to_your_stock_shared.readiness import (
 from talk_to_your_stock_shared.time import utc_now
 
 from .readiness import check_comps_database, check_run_data_source
+from .provider import AlphaVantageCompanyDataSource
 from .repository import (
     CompsPersistenceUnavailable,
     InvalidRunLinkage,
@@ -45,13 +46,13 @@ from .run_service import (
     CompsRunRepository,
     CompsRunService,
     DuplicateToolInvocation,
-    UnavailableCompanyDataSource,
 )
 from .tool_validation import (
     AlphaVantageTickerValidator,
     RuntimeConfigurationError,
     ToolValidationError,
     UpstreamValidationError,
+    ValidatedTickerMatches,
     validate_generate_comps_request,
 )
 
@@ -153,7 +154,7 @@ def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.COMPS_SERVICE,
         database_checker=check_comps_database,
-        additional_checks={"run_data_source": check_run_data_source()},
+        additional_checkers={"run_data_source": check_run_data_source},
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
@@ -163,14 +164,32 @@ def get_repository() -> CompsRunRepository:
     return PostgresCompsRunRepository.from_env()
 
 
-def get_company_data_source() -> CompanyDataSource:
-    return UnavailableCompanyDataSource()
+def get_validated_ticker_matches() -> ValidatedTickerMatches:
+    return {}
 
 
-def get_ticker_validator() -> AlphaVantageTickerValidator:
+def get_company_data_source(
+    validated_ticker_matches: Annotated[
+        ValidatedTickerMatches,
+        Depends(get_validated_ticker_matches),
+    ],
+) -> CompanyDataSource:
+    return AlphaVantageCompanyDataSource(
+        validated_ticker_matches=validated_ticker_matches
+    )
+
+
+def get_ticker_validator(
+    validated_ticker_matches: Annotated[
+        ValidatedTickerMatches,
+        Depends(get_validated_ticker_matches),
+    ],
+) -> AlphaVantageTickerValidator:
     from . import tool_validation
 
-    return tool_validation.AlphaVantageTickerValidator()
+    return tool_validation.AlphaVantageTickerValidator(
+        validated_ticker_matches=validated_ticker_matches
+    )
 
 
 @app.post(

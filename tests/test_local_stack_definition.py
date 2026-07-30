@@ -74,6 +74,29 @@ class LocalStackDefinitionTest(unittest.TestCase):
         self.assertNotIn(".env.example", dockerignore)
         self.assertNotIn("**/.env.example", dockerignore)
 
+    def test_compose_wires_real_provider_runtime_settings(self) -> None:
+        compose_path = REPO_ROOT / "dev" / "docker-compose.yml"
+        environment = yaml.safe_load(compose_path.read_text())["services"][
+            "comps-service"
+        ]["environment"]
+
+        self.assertEqual(
+            environment["ALPHA_VANTAGE_API_KEY"],
+            "${ALPHA_VANTAGE_API_KEY:-}",
+        )
+        self.assertEqual(
+            environment["ALPHA_VANTAGE_QUOTE_ENTITLEMENT"],
+            "${ALPHA_VANTAGE_QUOTE_ENTITLEMENT:-}",
+        )
+        self.assertEqual(
+            environment["ALPHA_VANTAGE_TIMEOUT_SECONDS"],
+            "${ALPHA_VANTAGE_TIMEOUT_SECONDS:-20}",
+        )
+        self.assertEqual(
+            environment["ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS"],
+            "${ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS:-1.1}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

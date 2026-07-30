@@ -1,0 +1,76 @@
+{
+  "GLOBAL_QUOTE": {
+    "Global Quote": {
+      "01. symbol": "AAPL",
+      "02. open": "142.1000",
+      "03. high": "144.0000",
+      "04. low": "141.5000",
+      "05. price": "143.2500",
+      "06. volume": "12345678",
+      "07. latest trading day": "2026-07-17",
+      "08. previous close": "142.0000",
+      "09. change": "1.2500",
+      "10. change percent": "0.8803%"
+    }
+  },
+  "OVERVIEW": {
+    "Symbol": "AAPL",
+    "AssetType": "Common Stock",
+    "Name": "Example Technology Inc.",
+    "Currency": "USD",
+    "Country": "USA",
+    "LatestQuarter": "2026-06-30",
+    "SharesOutstanding": "1000"
+  },
+  "INCOME_STATEMENT": {
+    "symbol": "AAPL",
+    "annualReports": [],
+    "quarterlyReports": [
+      {
+        "fiscalDateEnding": "2026-06-30",
+        "reportedCurrency": "USD",
+        "totalRevenue": "280",
+        "ebit": "58",
+        "ebitda": "68",
+        "netIncome": "34"
+      },
+      {
+        "fiscalDateEnding": "2026-03-31",
+        "reportedCurrency": "USD",
+        "totalRevenue": "260",
+        "ebit": "52",
+        "ebitda": "62",
+        "netIncome": "31"
+      },
+      {
+        "fiscalDateEnding": "2025-12-31",
+        "reportedCurrency": "USD",
+        "totalRevenue": "240",
+        "ebit": "48",
+        "ebitda": "58",
+        "netIncome": "29"
+      },
+      {
+        "fiscalDateEnding": "2025-09-30",
+        "reportedCurrency": "USD",
+        "totalRevenue": "220",
+        "ebit": "42",
+        "ebitda": "52",
+        "netIncome": "26"
+      }
+    ]
+  },
+  "BALANCE_SHEET": {
+    "symbol": "AAPL",
+    "annualReports": [],
+    "quarterlyReports": [
+      {
+        "fiscalDateEnding": "2026-06-30",
+        "reportedCurrency": "USD",
+        "cashAndCashEquivalentsAtCarryingValue": "100",
+        "shortLongTermDebtTotal": "300",
+        "commonStockSharesOutstanding": "1000"
+      }
+    ]
+  }
+}

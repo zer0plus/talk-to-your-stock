@@ -129,6 +129,22 @@ class CompsCalculatorTest(unittest.TestCase):
                 currency="USD",
             )
 
+    def test_missing_trace_source_date_raises(self) -> None:
+        company = self._company("AAPL")
+        incomplete_dates = dict(company.source_as_of)
+        incomplete_dates.pop("cash")
+
+        with self.assertRaisesRegex(
+            CompsCalculationError,
+            r"Source date is required for AAPL\.cash",
+        ):
+            self.calculator.generate(
+                run_id=uuid4(),
+                target_ticker="AAPL",
+                companies=[replace(company, source_as_of=incomplete_dates)],
+                currency="USD",
+            )
+
     def _company(self, ticker: str, **overrides: float) -> CompanyCompsInput:
         values = {
             "share_price": 10.0,
@@ -147,6 +163,7 @@ class CompsCalculatorTest(unittest.TestCase):
             currency="USD",
             as_of=self.as_of,
             sources={field: f"fixture.{field}" for field in values},
+            source_as_of={field: self.as_of for field in values},
             **values,
         )
 

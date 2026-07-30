@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime
+import json
 import os
 from pathlib import Path
 import unittest
@@ -8,6 +10,7 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+import httpx
 import yaml
 
 from comps_service.artifacts import SourceSnapshot
@@ -18,13 +21,16 @@ from comps_service.main import (
     get_repository,
     get_ticker_validator,
 )
+from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
 from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
+from comps_service.tool_validation import AlphaVantageTickerValidator
 from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
 
 
 INTERNAL_TOOL_TOKEN = "test-internal-tool-token"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "alpha_vantage"
 
 
 class SupportedTickerValidator:
@@ -75,6 +81,19 @@ class ControlledCompanyDataSource:
                         "net_income_ltm": (
                             f"alpha_vantage.income_statement.{ticker}.net_income_ltm"
                         ),
+                    },
+                    source_as_of={
+                        field: datetime(2026, 7, 17, tzinfo=UTC)
+                        for field in (
+                            "share_price",
+                            "shares_outstanding",
+                            "cash",
+                            "total_debt",
+                            "revenue_ltm",
+                            "ebit_ltm",
+                            "ebitda_ltm",
+                            "net_income_ltm",
+                        )
                     },
                 )
                 for ticker in tickers
@@ -202,6 +221,549 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             ["AAPL"],
         )
         self.assertEqual(body["table"]["run_id"], body["run"]["id"])
+
+    def test_provider_payload_with_missing_currency_is_persisted(
+        self,
+    ) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+
+        def respond(request):
+            function = request.url.params["function"]
+            symbol = request.url.params["symbol"]
+            payload = deepcopy(fixture[function])
+            if function == "GLOBAL_QUOTE":
+                payload["Global Quote"]["01. symbol"] = symbol
+            else:
+                symbol_field = "Symbol" if function == "OVERVIEW" else "symbol"
+                payload[symbol_field] = symbol
+            if function == "OVERVIEW" and symbol != "AAPL":
+                payload["Name"] = f"{symbol} Example Company"
+            if function == "INCOME_STATEMENT" and symbol == "MSFT":
+                payload["quarterlyReports"][0]["reportedCurrency"] = "None"
+            return httpx.Response(200, json=payload)
+
+        source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": "fixture-key",
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(respond),
+            validated_ticker_matches=self._validated_ticker_matches(
+                "AAPL",
+                "MSFT",
+            ),
+        )
+        app.dependency_overrides[get_company_data_source] = lambda: source
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                    "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        row = body["table"]["rows"][0]
+        self.assertEqual(
+            {
+                "ticker": row["ticker"],
+                "company_name": row["company_name"],
+                "currency": row["currency"],
+                "share_price": row["share_price"],
+                "shares_outstanding": row["shares_outstanding"],
+                "cash": row["cash"],
+                "total_debt": row["total_debt"],
+                "revenue_ltm": row["revenue_ltm"],
+                "ebit_ltm": row["ebit_ltm"],
+                "ebitda_ltm": row["ebitda_ltm"],
+                "net_income_ltm": row["net_income_ltm"],
+                "as_of": row["as_of"],
+            },
+            {
+                "ticker": "AAPL",
+                "company_name": "Example Technology Inc.",
+                "currency": "USD",
+                "share_price": 143.25,
+                "shares_outstanding": 1000.0,
+                "cash": 100.0,
+                "total_debt": 300.0,
+                "revenue_ltm": 1000.0,
+                "ebit_ltm": 200.0,
+                "ebitda_ltm": 240.0,
+                "net_income_ltm": 120.0,
+                "as_of": "2026-07-17T00:00:00Z",
+            },
+        )
+        run_id = UUID(body["run"]["id"])
+        client = TestClient(app)
+        persisted_run = client.get(f"/v1/runs/{run_id}")
+        persisted_table = client.get(f"/v1/runs/{run_id}/table")
+        self.assertEqual(persisted_run.status_code, 200)
+        self.assertEqual(persisted_run.json()["run"]["status"], "succeeded")
+        self.assertEqual(persisted_table.status_code, 200)
+        self.assertEqual(
+            {row["ticker"] for row in persisted_table.json()["rows"]},
+            {"AAPL", "MSFT"},
+        )
+        self.assertEqual(client.get(f"/v1/runs/{run_id}/trace").status_code, 200)
+        snapshot = self.repository.get_source_snapshot(run_id)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(
+            set(snapshot.raw_provider_evidence["AAPL"]),
+            {
+                "symbol_search",
+                "global_quote",
+                "overview",
+                "income_statement",
+                "balance_sheet",
+            },
+        )
+        self.assertEqual(
+            snapshot.raw_provider_evidence["MSFT"]["income_statement"][
+                "quarterlyReports"
+            ][0]["reportedCurrency"],
+            "None",
+        )
+        msft_input = next(
+            company
+            for company in snapshot.normalized_inputs
+            if company.ticker == "MSFT"
+        )
+        self.assertEqual(msft_input.currency, "USD")
+        normalized = snapshot.normalized_inputs[0]
+        self.assertTrue(
+            all(
+                "overview.AAPL.Currency=USD" in source
+                for field, source in normalized.sources.items()
+                if field not in {"share_price", "shares_outstanding"}
+            )
+        )
+        self.assertIn(
+            "symbol_search.AAPL.8. currency=USD",
+            normalized.sources["share_price"],
+        )
+        trace_inputs = {
+            trace_input["field"]: trace_input
+            for formula in body["trace"]["formulas"]
+            if formula["ticker"] == "AAPL"
+            for trace_input in formula["inputs"]
+            if not trace_input["source"].startswith("calculated.")
+        }
+        self.assertEqual(
+            trace_inputs["share_price"]["as_of"],
+            "2026-07-17T00:00:00Z",
+        )
+        for field in (
+            "shares_outstanding",
+            "cash",
+            "total_debt",
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(
+                    trace_inputs[field]["as_of"],
+                    "2026-06-30T00:00:00Z",
+                )
+
+    def test_quote_and_fundamentals_use_their_own_currency_evidence(self) -> None:
+        company_fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        fx_fixture = json.loads(
+            (FIXTURE_ROOT / "cad_to_usd_latest.json").read_text()
+        )
+        fx_requests: list[tuple[str, str]] = []
+        validated_ticker_matches: dict[str, dict[str, object]] = {}
+
+        def respond(request):
+            function = request.url.params["function"]
+            if function == "SYMBOL_SEARCH":
+                ticker = request.url.params["keywords"]
+                return httpx.Response(
+                    200,
+                    json={
+                        "bestMatches": [
+                            {
+                                "1. symbol": ticker,
+                                "3. type": "Equity",
+                                "8. currency": "GBP",
+                            }
+                        ]
+                    },
+                )
+            if function == "CURRENCY_EXCHANGE_RATE":
+                from_currency = request.url.params["from_currency"]
+                to_currency = request.url.params["to_currency"]
+                fx_requests.append((from_currency, to_currency))
+                payload = deepcopy(fx_fixture)
+                exchange_rate = payload["Realtime Currency Exchange Rate"]
+                exchange_rate["1. From_Currency Code"] = from_currency
+                exchange_rate["3. To_Currency Code"] = to_currency
+                exchange_rate["5. Exchange Rate"] = (
+                    "1.25000000" if from_currency == "GBP" else "0.75000000"
+                )
+                exchange_rate["6. Last Refreshed"] = (
+                    "2026-07-15 21:59:01"
+                    if from_currency == "GBP"
+                    else "2026-05-31 21:59:01"
+                )
+                return httpx.Response(200, json=payload)
+
+            symbol = request.url.params["symbol"]
+            payload = deepcopy(company_fixture[function])
+            if function == "GLOBAL_QUOTE":
+                payload["Global Quote"]["01. symbol"] = symbol
+            elif function == "OVERVIEW":
+                payload["Symbol"] = symbol
+                payload["Currency"] = "CAD"
+            else:
+                payload["symbol"] = symbol
+                for report in payload["quarterlyReports"]:
+                    report["reportedCurrency"] = "CAD"
+            return httpx.Response(200, json=payload)
+
+        provider_environ = {
+            "ALPHA_VANTAGE_API_KEY": "fixture-key",
+            "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+        }
+        transport = httpx.MockTransport(respond)
+        validator = AlphaVantageTickerValidator(
+            environ=provider_environ,
+            transport=transport,
+            validated_ticker_matches=validated_ticker_matches,
+        )
+        source = AlphaVantageCompanyDataSource(
+            environ=provider_environ,
+            transport=transport,
+            validated_ticker_matches=validated_ticker_matches,
+        )
+        app.dependency_overrides[get_ticker_validator] = lambda: validator
+        app.dependency_overrides[get_company_data_source] = lambda: source
+
+        client = TestClient(app)
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                    "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        row = response.json()["table"]["rows"][0]
+        self.assertEqual(row["currency"], "USD")
+        self.assertEqual(
+            {
+                "share_price": row["share_price"],
+                "shares_outstanding": row["shares_outstanding"],
+                "cash": row["cash"],
+                "total_debt": row["total_debt"],
+                "revenue_ltm": row["revenue_ltm"],
+                "ebit_ltm": row["ebit_ltm"],
+                "ebitda_ltm": row["ebitda_ltm"],
+                "net_income_ltm": row["net_income_ltm"],
+            },
+            {
+                "share_price": 179.0625,
+                "shares_outstanding": 1000.0,
+                "cash": 75.0,
+                "total_debt": 225.0,
+                "revenue_ltm": 750.0,
+                "ebit_ltm": 150.0,
+                "ebitda_ltm": 180.0,
+                "net_income_ltm": 90.0,
+            },
+        )
+        run_id = UUID(response.json()["run"]["id"])
+        trace_readback = client.get(f"/v1/runs/{run_id}/trace")
+        self.assertEqual(trace_readback.status_code, 200, trace_readback.text)
+        snapshot = self.repository.get_source_snapshot(run_id)
+        assert snapshot is not None
+        normalized = snapshot.normalized_inputs[0]
+        self.assertEqual(normalized.currency, "USD")
+        self.assertEqual(
+            normalized.source_as_of["share_price"].isoformat(),
+            "2026-07-15T21:59:01+00:00",
+        )
+        self.assertEqual(
+            normalized.source_as_of["shares_outstanding"].isoformat(),
+            "2026-06-30T00:00:00+00:00",
+        )
+        for field in (
+            "cash",
+            "total_debt",
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(
+                    normalized.source_as_of[field].isoformat(),
+                    "2026-05-31T21:59:01+00:00",
+                )
+        self.assertIn(
+            "symbol_search.AAPL.8. currency=GBP",
+            normalized.sources["share_price"],
+        )
+        self.assertIn(
+            "currency_exchange_rate.GBP_USD.5. Exchange Rate",
+            normalized.sources["share_price"],
+        )
+        self.assertTrue(
+            all(
+                "currency_exchange_rate.CAD_USD.5. Exchange Rate" in source
+                for field, source in normalized.sources.items()
+                if field not in {"share_price", "shares_outstanding"}
+            )
+        )
+        self.assertEqual(
+            snapshot.raw_provider_evidence["AAPL"]["symbol_search"]["8. currency"],
+            "GBP",
+        )
+        self.assertEqual(
+            set(
+                snapshot.raw_provider_evidence["AAPL"][
+                    "currency_exchange_rates"
+                ]
+            ),
+            {"GBP_USD", "CAD_USD"},
+        )
+        trace_inputs = {
+            trace_input["field"]: trace_input
+            for formula in trace_readback.json()["formulas"]
+            if formula["ticker"] == "AAPL"
+            for trace_input in formula["inputs"]
+            if not trace_input["source"].startswith("calculated.")
+        }
+        self.assertEqual(
+            trace_inputs["share_price"]["as_of"],
+            "2026-07-15T21:59:01Z",
+        )
+        for field in (
+            "cash",
+            "total_debt",
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+        ):
+            with self.subTest(trace_field=field):
+                self.assertEqual(
+                    trace_inputs[field]["as_of"],
+                    "2026-05-31T21:59:01Z",
+                )
+        self.assertEqual(fx_requests, [("GBP", "USD"), ("CAD", "USD")])
+
+    def test_trace_references_the_provider_reports_used_for_inputs(self) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        income_reports = fixture["INCOME_STATEMENT"]["quarterlyReports"]
+        oldest_report = deepcopy(income_reports[-1])
+        oldest_report.update(
+            {
+                "fiscalDateEnding": "2025-06-30",
+                "totalRevenue": "999",
+                "ebit": "999",
+                "ebitda": "999",
+                "netIncome": "999",
+            }
+        )
+        fixture["INCOME_STATEMENT"]["quarterlyReports"] = [
+            oldest_report,
+            income_reports[0],
+            income_reports[3],
+            income_reports[1],
+            income_reports[2],
+        ]
+        fixture["OVERVIEW"]["SharesOutstanding"] = "None"
+        latest_balance_report = fixture["BALANCE_SHEET"]["quarterlyReports"][0]
+        older_balance_report = deepcopy(latest_balance_report)
+        older_balance_report.update(
+            {
+                "fiscalDateEnding": "2026-03-31",
+                "cashAndCashEquivalentsAtCarryingValue": "999",
+                "shortLongTermDebtTotal": "999",
+                "commonStockSharesOutstanding": "999",
+            }
+        )
+        fixture["BALANCE_SHEET"]["quarterlyReports"] = [
+            older_balance_report,
+            latest_balance_report,
+        ]
+
+        def respond(request):
+            function = request.url.params["function"]
+            symbol = request.url.params["symbol"]
+            payload = deepcopy(fixture[function])
+            if function == "GLOBAL_QUOTE":
+                payload["Global Quote"]["01. symbol"] = symbol
+            else:
+                symbol_field = "Symbol" if function == "OVERVIEW" else "symbol"
+                payload[symbol_field] = symbol
+            return httpx.Response(200, json=payload)
+
+        source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": "fixture-key",
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(respond),
+            validated_ticker_matches=self._validated_ticker_matches(
+                "AAPL",
+                "MSFT",
+            ),
+        )
+        app.dependency_overrides[get_company_data_source] = lambda: source
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                    "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        aapl_row = next(
+            row for row in body["table"]["rows"] if row["ticker"] == "AAPL"
+        )
+        self.assertEqual(aapl_row["revenue_ltm"], 1000.0)
+        trace_inputs = {
+            trace_input["field"]: trace_input
+            for formula in body["trace"]["formulas"]
+            if formula["ticker"] == "AAPL"
+            for trace_input in formula["inputs"]
+        }
+        for input_field, provider_field in {
+            "revenue_ltm": "totalRevenue",
+            "ebit_ltm": "ebit",
+            "ebitda_ltm": "ebitda",
+            "net_income_ltm": "netIncome",
+        }.items():
+            with self.subTest(input_field=input_field):
+                report_sources = " + ".join(
+                    "alpha_vantage.income_statement.AAPL."
+                    f"quarterlyReports[{raw_index}].{provider_field}"
+                    for raw_index in (1, 3, 4, 2)
+                )
+                self.assertEqual(
+                    trace_inputs[input_field]["source"],
+                    f"{report_sources}; "
+                    "alpha_vantage.overview.AAPL.Currency=USD",
+                )
+        expected_balance_sources = {
+            "shares_outstanding": (
+                "alpha_vantage.balance_sheet.AAPL.quarterlyReports[1]."
+                "commonStockSharesOutstanding"
+            ),
+            "cash": (
+                "alpha_vantage.balance_sheet.AAPL.quarterlyReports[1]."
+                "cashAndCashEquivalentsAtCarryingValue; "
+                "alpha_vantage.overview.AAPL.Currency=USD"
+            ),
+            "total_debt": (
+                "alpha_vantage.balance_sheet.AAPL.quarterlyReports[1]."
+                "shortLongTermDebtTotal; "
+                "alpha_vantage.overview.AAPL.Currency=USD"
+            ),
+        }
+        for input_field, expected_source in expected_balance_sources.items():
+            with self.subTest(input_field=input_field):
+                self.assertEqual(
+                    trace_inputs[input_field]["source"],
+                    expected_source,
+                )
+
+        snapshot = self.repository.get_source_snapshot(UUID(body["run"]["id"]))
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        normalized_input = next(
+            company
+            for company in snapshot.normalized_inputs
+            if company.ticker == "AAPL"
+        )
+        for input_field in (
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+            *expected_balance_sources,
+        ):
+            with self.subTest(persisted_input_field=input_field):
+                self.assertEqual(
+                    normalized_input.sources[input_field],
+                    trace_inputs[input_field]["source"],
+                )
+        self.assertEqual(
+            [
+                report["fiscalDateEnding"]
+                for report in snapshot.raw_provider_evidence["AAPL"][
+                    "balance_sheet"
+                ]["quarterlyReports"]
+            ],
+            ["2026-03-31", "2026-06-30"],
+        )
+
+    def _validated_ticker_matches(
+        self,
+        *tickers: str,
+        currency: str = "USD",
+    ) -> dict[str, dict[str, object]]:
+        return {
+            ticker: {
+                "1. symbol": ticker,
+                "3. type": "Equity",
+                "8. currency": currency,
+            }
+            for ticker in tickers
+        }
 
     def test_succeeded_run_and_table_are_available_through_readback_contracts(
         self,
@@ -377,7 +939,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(len(self.repository.traces), 1)
         self.assertEqual(len(self.repository.source_snapshots), 1)
 
-    def test_runtime_path_fails_clearly_without_real_company_data_source(
+    def test_runtime_path_fails_clearly_without_provider_configuration(
         self,
     ) -> None:
         app.dependency_overrides.pop(get_company_data_source)
@@ -403,7 +965,10 @@ class SuccessfulCompsRunTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["code"], "INTERNAL_ERROR")
-        self.assertIn("Real provider and FX", response.json()["error"]["message"])
+        self.assertIn(
+            "ALPHA_VANTAGE_API_KEY",
+            response.json()["error"]["message"],
+        )
         self.assertEqual(self.repository.runs, {})
         self.assertEqual(self.repository.tables, {})
 

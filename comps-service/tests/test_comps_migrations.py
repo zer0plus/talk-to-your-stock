@@ -77,6 +77,23 @@ class ControlledCompanyDataSource:
                             f"alpha_vantage.income_statement.{ticker}.net_income_ltm"
                         ),
                     },
+                    source_as_of={
+                        field: (
+                            datetime(2026, 7, 15, 21, 59, 1, tzinfo=UTC)
+                            if field == "share_price"
+                            else datetime(2026, 7, 17, tzinfo=UTC)
+                        )
+                        for field in (
+                            "share_price",
+                            "shares_outstanding",
+                            "cash",
+                            "total_debt",
+                            "revenue_ltm",
+                            "ebit_ltm",
+                            "ebitda_ltm",
+                            "net_income_ltm",
+                        )
+                    },
                 )
                 for ticker in tickers
             ],
@@ -251,6 +268,23 @@ class CompsMigrationsTest(unittest.TestCase):
                 self.assertEqual(
                     source_snapshot.raw_provider_evidence["AAPL"],
                     {"raw_marker": "raw-provider-AAPL"},
+                )
+                self.assertEqual(
+                    source_snapshot.normalized_inputs[0].source_as_of[
+                        "share_price"
+                    ],
+                    datetime(2026, 7, 15, 21, 59, 1, tzinfo=UTC),
+                )
+                trace_inputs = [
+                    trace_input
+                    for formula in trace_readback.json()["formulas"]
+                    if formula["ticker"] == "AAPL"
+                    for trace_input in formula["inputs"]
+                    if trace_input["field"] == "share_price"
+                ]
+                self.assertEqual(
+                    trace_inputs[0]["as_of"],
+                    "2026-07-15T21:59:01Z",
                 )
                 self.assertEqual(
                     _linked_record_counts(database_url, trigger_message_id),
