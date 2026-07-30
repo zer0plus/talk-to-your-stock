@@ -24,7 +24,7 @@ Talk to Your Stock turns natural-language company comparison requests into struc
 The model interprets intent. Python calculates the numbers. Each successful Run links the answer to a Comps Table, formula-level Trace, and immutable Source Snapshot.
 
 > [!NOTE]
-> This is a local, pre-production MVP. The architecture and controlled-data workflow are implemented; real provider and FX inputs are the current milestone.
+> This is a local, pre-production MVP.
 
 ## Why I am building it
 
