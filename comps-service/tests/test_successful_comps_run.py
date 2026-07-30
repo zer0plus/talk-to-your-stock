@@ -460,12 +460,13 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         app.dependency_overrides[get_ticker_validator] = lambda: validator
         app.dependency_overrides[get_company_data_source] = lambda: source
 
+        client = TestClient(app)
         with patch.dict(
             os.environ,
             {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
             clear=True,
         ):
-            response = TestClient(app).post(
+            response = client.post(
                 "/v1/internal/tools/generate-comps-table",
                 json={
                     "invocation_id": str(uuid4()),
@@ -506,6 +507,8 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             },
         )
         run_id = UUID(response.json()["run"]["id"])
+        trace_readback = client.get(f"/v1/runs/{run_id}/trace")
+        self.assertEqual(trace_readback.status_code, 200, trace_readback.text)
         snapshot = self.repository.get_source_snapshot(run_id)
         assert snapshot is not None
         normalized = snapshot.normalized_inputs[0]
@@ -560,7 +563,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         trace_inputs = {
             trace_input["field"]: trace_input
-            for formula in response.json()["trace"]["formulas"]
+            for formula in trace_readback.json()["formulas"]
             if formula["ticker"] == "AAPL"
             for trace_input in formula["inputs"]
             if not trace_input["source"].startswith("calculated.")
