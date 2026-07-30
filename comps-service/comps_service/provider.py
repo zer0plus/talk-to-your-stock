@@ -71,17 +71,19 @@ class AlphaVantageCompanyDataSource:
     ) -> LoadedCompanyData:
         api_key = self._environ.get(ALPHA_VANTAGE_API_KEY_VAR, "").strip()
         companies: list[CompanyCompsInput] = []
-        evidence: dict[str, object] = {}
+        evidence = {
+            ticker.upper(): {
+                "symbol_search": self._validated_ticker_matches.get(ticker.upper())
+            }
+            for ticker in tickers
+        }
         fx_cache: dict[
             tuple[str, str],
             tuple[float, dict[str, Any], str, datetime],
         ] = {}
         for ticker_candidate in tickers:
             ticker = ticker_candidate.upper()
-            raw_evidence: dict[str, object] = {
-                "symbol_search": self._validated_ticker_matches.get(ticker)
-            }
-            evidence[ticker] = raw_evidence
+            raw_evidence = evidence[ticker]
             try:
                 company = self._load_company(
                     ticker=ticker,

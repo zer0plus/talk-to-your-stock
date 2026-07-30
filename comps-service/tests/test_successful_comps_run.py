@@ -991,7 +991,10 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(self.repository.traces, {})
         self.assertEqual(
             self.repository.source_snapshots[run_id].raw_provider_evidence,
-            {"AAPL": {"symbol_search": None}},
+            {
+                "AAPL": {"symbol_search": None},
+                "MSFT": {"symbol_search": None},
+            },
         )
 
     def test_invalid_run_linkage_returns_validation_error_without_artifacts(

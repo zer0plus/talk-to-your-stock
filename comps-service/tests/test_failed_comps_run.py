@@ -290,7 +290,7 @@ class FailedCompsRunTest(unittest.TestCase):
                     "8. currency": "USD",
                     provider_key: "echoed credential key",
                 }
-                for ticker in ("AAPL", "MSFT")
+                for ticker in ("AAPL", "MSFT", "GOOG")
             },
         )
         app.dependency_overrides[get_company_data_source] = lambda: source
@@ -315,7 +315,7 @@ class FailedCompsRunTest(unittest.TestCase):
                     "thread_id": str(thread_id),
                     "trigger_message_id": str(trigger_message_id),
                     "target_ticker": "AAPL",
-                    "peer_tickers": ["MSFT"],
+                    "peer_tickers": ["MSFT", "GOOG"],
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                 },
@@ -347,6 +347,10 @@ class FailedCompsRunTest(unittest.TestCase):
             ["AAPL"],
         )
         self.assertEqual(
+            set(snapshot.raw_provider_evidence),
+            {"AAPL", "MSFT", "GOOG"},
+        )
+        self.assertEqual(
             set(snapshot.raw_provider_evidence["MSFT"]),
             {
                 "symbol_search",
@@ -354,6 +358,10 @@ class FailedCompsRunTest(unittest.TestCase):
                 "overview",
                 "income_statement",
             },
+        )
+        self.assertEqual(
+            set(snapshot.raw_provider_evidence["GOOG"]),
+            {"symbol_search"},
         )
         self.assertEqual(
             snapshot.raw_provider_evidence["MSFT"]["income_statement"],
