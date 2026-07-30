@@ -105,9 +105,6 @@ The Agent converts natural language into a validated Tool request. It cannot ove
 
 Each calculated value can point back to its formula, inputs, source field, and as-of time. Raw provider evidence and normalized inputs are captured in a Run-specific Source Snapshot.
 
-### Readiness must tell the truth
-
-Health means a process is alive. Readiness verifies configuration, migrations, dependencies, and required capabilities. Missing production behavior produces a clear failure rather than a green check.
 
 ## Technology
 
