@@ -119,14 +119,30 @@ class AlphaVantageCompanyDataSource:
             field="SYMBOL_SEARCH.8. currency",
             ticker=ticker,
         ).upper()
-        quote_payload = self._fetch_json(function="GLOBAL_QUOTE", symbol=ticker)
-        raw_evidence["global_quote"] = quote_payload
-        overview = self._fetch_json(function="OVERVIEW", symbol=ticker)
-        raw_evidence["overview"] = overview
-        income = self._fetch_json(function="INCOME_STATEMENT", symbol=ticker)
-        raw_evidence["income_statement"] = income
-        balance_sheet = self._fetch_json(function="BALANCE_SHEET", symbol=ticker)
-        raw_evidence["balance_sheet"] = balance_sheet
+        quote_payload = self._fetch_json(
+            function="GLOBAL_QUOTE",
+            symbol=ticker,
+            raw_evidence=raw_evidence,
+            evidence_key="global_quote",
+        )
+        overview = self._fetch_json(
+            function="OVERVIEW",
+            symbol=ticker,
+            raw_evidence=raw_evidence,
+            evidence_key="overview",
+        )
+        income = self._fetch_json(
+            function="INCOME_STATEMENT",
+            symbol=ticker,
+            raw_evidence=raw_evidence,
+            evidence_key="income_statement",
+        )
+        balance_sheet = self._fetch_json(
+            function="BALANCE_SHEET",
+            symbol=ticker,
+            raw_evidence=raw_evidence,
+            evidence_key="balance_sheet",
+        )
 
         quote = self._required_object(
             quote_payload,
@@ -433,8 +449,9 @@ class AlphaVantageCompanyDataSource:
             function="CURRENCY_EXCHANGE_RATE",
             from_currency=from_currency,
             to_currency=to_currency,
+            raw_evidence=raw_evidence,
+            evidence_key=f"{from_currency}_{to_currency}",
         )
-        raw_evidence[f"{from_currency}_{to_currency}"] = payload
         evidence = self._required_object(
             payload,
             "Realtime Currency Exchange Rate",
@@ -502,6 +519,8 @@ class AlphaVantageCompanyDataSource:
         symbol: str | None = None,
         from_currency: str | None = None,
         to_currency: str | None = None,
+        raw_evidence: dict[str, object] | None = None,
+        evidence_key: str | None = None,
     ) -> dict[str, Any]:
         params = {
             "function": function,
@@ -552,10 +571,14 @@ class AlphaVantageCompanyDataSource:
                 f"Alpha Vantage {function} request failed for {subject}."
             ) from exc
         if not isinstance(payload, dict):
+            if raw_evidence is not None and evidence_key is not None:
+                raw_evidence[evidence_key] = payload
             raise CompsRunExecutionError(
                 f"Alpha Vantage {function} returned a non-object payload for "
                 f"{subject}."
             )
+        if raw_evidence is not None and evidence_key is not None:
+            raw_evidence[evidence_key] = payload
         for key in ("Error Message", "Note", "Information"):
             if payload.get(key):
                 raise CompsRunExecutionError(
@@ -837,6 +860,9 @@ class AlphaVantageCompanyDataSource:
             "none",
             "null",
             "nan",
+            "n/a",
+            "na",
+            "not available",
             "-",
         }
 

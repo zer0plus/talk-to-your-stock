@@ -232,14 +232,17 @@ class FailedCompsRunTest(unittest.TestCase):
         def respond(request):
             function = request.url.params["function"]
             symbol = request.url.params["symbol"]
+            if function == "INCOME_STATEMENT" and symbol == "MSFT":
+                return httpx.Response(
+                    200,
+                    json={"Information": "Provider rate limit reached."},
+                )
             payload = deepcopy(fixture[function])
             if function == "GLOBAL_QUOTE":
                 payload["Global Quote"]["01. symbol"] = symbol
             else:
                 symbol_field = "Symbol" if function == "OVERVIEW" else "symbol"
                 payload[symbol_field] = symbol
-            if function == "INCOME_STATEMENT" and symbol == "MSFT":
-                payload["quarterlyReports"] = []
             return httpx.Response(200, json=payload)
 
         source = AlphaVantageCompanyDataSource(
@@ -294,14 +297,11 @@ class FailedCompsRunTest(unittest.TestCase):
                 "global_quote",
                 "overview",
                 "income_statement",
-                "balance_sheet",
             },
         )
         self.assertEqual(
-            snapshot.raw_provider_evidence["MSFT"]["income_statement"][
-                "quarterlyReports"
-            ],
-            [],
+            snapshot.raw_provider_evidence["MSFT"]["income_statement"],
+            {"Information": "Provider rate limit reached."},
         )
 
     def test_fx_failure_preserves_invalid_fx_payload(self) -> None:

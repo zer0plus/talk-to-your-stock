@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -20,7 +21,11 @@ from comps_service.main import (
     get_ticker_validator,
 )
 from comps_service.repository import PostgresCompsRunRepository
-from comps_service.run_service import LoadedCompanyData
+from comps_service.run_service import (
+    CompanyDataLoadFailure,
+    CompsRunExecutionError,
+    LoadedCompanyData,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -101,6 +106,30 @@ class ControlledCompanyDataSource:
                 ticker: {"raw_marker": f"raw-provider-{ticker}"}
                 for ticker in tickers
             },
+        )
+
+
+class PartialFailureCompanyDataSource:
+    def load(
+        self,
+        *,
+        tickers: list[str],
+        currency: str,
+    ) -> LoadedCompanyData:
+        loaded = ControlledCompanyDataSource().load(
+            tickers=tickers,
+            currency=currency,
+        )
+        raise CompanyDataLoadFailure(
+            CompsRunExecutionError(
+                "Alpha Vantage INCOME_STATEMENT returned no evidence for MSFT."
+            ),
+            partial_data=LoadedCompanyData(
+                companies=[
+                    replace(loaded.companies[0], ebitda_ltm=None)
+                ],
+                raw_provider_evidence=loaded.raw_provider_evidence,
+            ),
         )
 
 
@@ -243,6 +272,20 @@ class CompsMigrationsTest(unittest.TestCase):
                             )
                         connection.rollback()
 
+                app.dependency_overrides[get_company_data_source] = (
+                    PartialFailureCompanyDataSource
+                )
+                failed = client.post(
+                    "/v1/internal/tools/generate-comps-table",
+                    json=_generate_request(
+                        thread_id=thread_id,
+                        trigger_message_id=trigger_message_id,
+                    ),
+                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                )
+                self.assertEqual(failed.status_code, 502, failed.text)
+                failed_run_id = failed.json()["error"]["details"]["run_id"]
+
                 app.dependency_overrides.clear()
                 app.dependency_overrides[get_company_data_source] = (
                     ControlledCompanyDataSource
@@ -256,6 +299,18 @@ class CompsMigrationsTest(unittest.TestCase):
                 source_snapshot = PostgresCompsRunRepository(
                     database_url=database_url
                 ).get_source_snapshot(UUID(run_id))
+                failed_run_readback = TestClient(app).get(
+                    f"/v1/runs/{failed_run_id}"
+                )
+                failed_table_readback = TestClient(app).get(
+                    f"/v1/runs/{failed_run_id}/table"
+                )
+                failed_trace_readback = TestClient(app).get(
+                    f"/v1/runs/{failed_run_id}/trace"
+                )
+                failed_source_snapshot = PostgresCompsRunRepository(
+                    database_url=database_url
+                ).get_source_snapshot(UUID(failed_run_id))
 
                 self.assertEqual(run_readback.status_code, 200, run_readback.text)
                 self.assertEqual(table_readback.status_code, 200, table_readback.text)
@@ -287,8 +342,28 @@ class CompsMigrationsTest(unittest.TestCase):
                     "2026-07-15T21:59:01Z",
                 )
                 self.assertEqual(
+                    failed_run_readback.json()["run"]["status"],
+                    "failed",
+                )
+                self.assertEqual(failed_run_readback.json()["run"]["warnings"], [])
+                self.assertEqual(failed_table_readback.status_code, 404)
+                self.assertEqual(failed_trace_readback.status_code, 404)
+                self.assertIsNotNone(failed_source_snapshot)
+                assert failed_source_snapshot is not None
+                self.assertEqual(
+                    [
+                        company.ticker
+                        for company in failed_source_snapshot.normalized_inputs
+                    ],
+                    ["AAPL"],
+                )
+                self.assertEqual(
+                    set(failed_source_snapshot.raw_provider_evidence),
+                    {"AAPL", "MSFT"},
+                )
+                self.assertEqual(
                     _linked_record_counts(database_url, trigger_message_id),
-                    (1, 1, 1, 1, 1),
+                    (1, 2, 1, 1, 2),
                 )
             finally:
                 app.dependency_overrides.clear()

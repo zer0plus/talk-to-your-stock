@@ -139,7 +139,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
         fixture = json.loads(
             (FIXTURE_ROOT / "usd_company_latest.json").read_text()
         )
-        fixture["INCOME_STATEMENT"]["quarterlyReports"][2]["ebitda"] = "None"
+        fixture["INCOME_STATEMENT"]["quarterlyReports"][2]["ebitda"] = "N/A"
 
         def respond(request):
             return httpx.Response(

@@ -222,7 +222,6 @@ class CompsRunService:
             peer_tickers=peer_tickers,
             currency=request.currency.upper(),
             as_of=started_at,
-            warnings=self._missing_metric_warnings(loaded.companies),
             error_message=str(cause),
             created_at=started_at,
             started_at=started_at,
