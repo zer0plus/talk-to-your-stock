@@ -97,6 +97,17 @@ class LocalStackDefinitionTest(unittest.TestCase):
             "${ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS:-1.1}",
         )
 
+    def test_compose_wires_web_bff_directly_to_comps_service(self) -> None:
+        compose_path = REPO_ROOT / "dev" / "docker-compose.yml"
+        environment = yaml.safe_load(compose_path.read_text())["services"][
+            "web-bff"
+        ]["environment"]
+
+        self.assertEqual(
+            environment["COMPS_SERVICE_URL"],
+            "${COMPS_SERVICE_URL:-http://comps-service:8002}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

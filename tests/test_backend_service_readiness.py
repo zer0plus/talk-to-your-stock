@@ -44,7 +44,12 @@ class BackendServiceReadinessTest(unittest.TestCase):
                 "time": "2026-07-15T00:00:00Z",
             },
         )
-        self.agent_get_patcher = patch("httpx.get", return_value=agent_response)
+        self.agent_get_patcher = patch(
+            "httpx.get",
+            side_effect=lambda url, **_kwargs: (
+                comps_response if "comps-service" in url else agent_response
+            ),
+        )
         self.agent_get_patcher.start()
         self.addCleanup(self.agent_get_patcher.stop)
         comps_response = httpx.Response(
@@ -131,8 +136,15 @@ class BackendServiceReadinessTest(unittest.TestCase):
     def test_web_bff_checks_agent_readiness_through_real_http_boundary(self) -> None:
         self.agent_get_patcher.stop()
 
-        with running_service(agent_app) as agent_service_url:
-            env = {**LOCAL_ENV, "AGENT_SERVICE_URL": agent_service_url}
+        with (
+            running_service(agent_app) as agent_service_url,
+            running_service(comps_app) as comps_service_url,
+        ):
+            env = {
+                **LOCAL_ENV,
+                "AGENT_SERVICE_URL": agent_service_url,
+                "COMPS_SERVICE_URL": comps_service_url,
+            }
             with patch.dict(os.environ, env, clear=True), database_connects():
                 response = TestClient(web_bff_app).get("/v1/ready")
 
@@ -140,6 +152,20 @@ class BackendServiceReadinessTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["status"], "ready")
         self.assertEqual(body["checks"]["agent_service"]["status"], "ok")
+        self.assertEqual(body["checks"]["comps_service"]["status"], "ok")
+
+    def test_web_bff_readiness_requires_direct_comps_configuration(self) -> None:
+        env = dict(LOCAL_ENV)
+        del env["COMPS_SERVICE_URL"]
+
+        with database_connects():
+            response = self._get_ready(web_bff_app, env)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn(
+            "COMPS_SERVICE_URL",
+            response.json()["checks"]["configuration"]["message"],
+        )
 
     def test_database_failure_makes_readiness_not_ready(self) -> None:
         with (
@@ -258,6 +284,7 @@ class BackendServiceReadinessTest(unittest.TestCase):
             "MANAGED_AUTH_ISSUER": "https://auth.example.com",
             "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (

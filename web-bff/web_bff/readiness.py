@@ -14,39 +14,64 @@ from talk_to_your_stock_shared import (
 from talk_to_your_stock_shared.migrations import required_schema_revision
 from talk_to_your_stock_shared.readiness import check_database
 from web_bff.agent_client import AGENT_SERVICE_URL_VAR
+from web_bff.comps_client import COMPS_SERVICE_URL_VAR
 
 
 logger = logging.getLogger(__name__)
 
 
 def check_agent_service(environ: Mapping[str, str]) -> ReadinessCheck:
-    base_url = environ.get(AGENT_SERVICE_URL_VAR, "").strip().rstrip("/")
+    return _check_http_service(
+        environ=environ,
+        url_var=AGENT_SERVICE_URL_VAR,
+        expected_service=ServiceName.AGENT_SERVICE,
+        display_name="Agent Service",
+    )
+
+
+def check_comps_service(environ: Mapping[str, str]) -> ReadinessCheck:
+    return _check_http_service(
+        environ=environ,
+        url_var=COMPS_SERVICE_URL_VAR,
+        expected_service=ServiceName.COMPS_SERVICE,
+        display_name="Comps Service",
+    )
+
+
+def _check_http_service(
+    *,
+    environ: Mapping[str, str],
+    url_var: str,
+    expected_service: ServiceName,
+    display_name: str,
+) -> ReadinessCheck:
+    base_url = environ.get(url_var, "").strip().rstrip("/")
     if not base_url:
-        return _failed_agent_service_check()
+        return _failed_service_check(display_name)
 
     try:
         response = httpx.get(f"{base_url}/v1/ready", timeout=2)
         response.raise_for_status()
         readiness = ReadinessResponse.model_validate(response.json())
     except (httpx.HTTPError, ValueError):
-        logger.exception("Agent Service readiness check failed.")
-        return _failed_agent_service_check()
+        logger.exception("%s readiness check failed.", display_name)
+        return _failed_service_check(display_name)
 
-    if readiness.service != ServiceName.AGENT_SERVICE:
-        logger.error("Agent Service readiness response identified another service.")
-        return _failed_agent_service_check()
+    if readiness.service != expected_service:
+        logger.error("%s readiness response identified another service.", display_name)
+        return _failed_service_check(display_name)
 
     if readiness.status != ReadinessState.READY:
-        logger.error("Agent Service reported that it is not ready.")
-        return _failed_agent_service_check()
+        logger.error("%s reported that it is not ready.", display_name)
+        return _failed_service_check(display_name)
 
     return ReadinessCheck(status=DependencyStatus.OK)
 
 
-def _failed_agent_service_check() -> ReadinessCheck:
+def _failed_service_check(display_name: str) -> ReadinessCheck:
     return ReadinessCheck(
         status=DependencyStatus.FAIL,
-        message="Agent Service readiness check failed.",
+        message=f"{display_name} readiness check failed.",
     )
 
 
