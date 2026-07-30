@@ -308,6 +308,38 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
         ):
             source.load(tickers=["AAPL"], currency="USD")
 
+    def test_invalid_fx_date_evidence_fails_instead_of_dating_converted_input(
+        self,
+    ) -> None:
+        company_fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        fx_fixture = json.loads(
+            (FIXTURE_ROOT / "cad_to_usd_latest.json").read_text()
+        )
+        company_fixture["OVERVIEW"]["Currency"] = "CAD"
+        for function in ("INCOME_STATEMENT", "BALANCE_SHEET"):
+            for report in company_fixture[function]["quarterlyReports"]:
+                report["reportedCurrency"] = "CAD"
+        fx_fixture["Realtime Currency Exchange Rate"]["6. Last Refreshed"] = (
+            "not-a-date"
+        )
+
+        def respond(request):
+            function = request.url.params["function"]
+            payload = (
+                fx_fixture
+                if function == "CURRENCY_EXCHANGE_RATE"
+                else company_fixture[function]
+            )
+            return httpx.Response(200, json=deepcopy(payload))
+
+        with self.assertRaisesRegex(
+            CompsRunExecutionError,
+            "Missing or invalid Alpha Vantage date evidence for CAD/USD",
+        ):
+            self._source(respond).load(tickers=["AAPL"], currency="USD")
+
     def test_missing_quote_currency_evidence_fails_clearly(self) -> None:
         def respond(_request):
             self.fail("Missing quote currency must fail before provider requests.")

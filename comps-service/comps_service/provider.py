@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -69,7 +70,7 @@ class AlphaVantageCompanyDataSource:
         evidence: dict[str, object] = {}
         fx_cache: dict[
             tuple[str, str],
-            tuple[float, dict[str, Any], str],
+            tuple[float, dict[str, Any], str, datetime],
         ] = {}
         for ticker_candidate in tickers:
             ticker = ticker_candidate.upper()
@@ -92,7 +93,7 @@ class AlphaVantageCompanyDataSource:
         requested_currency: str,
         fx_cache: dict[
             tuple[str, str],
-            tuple[float, dict[str, Any], str],
+            tuple[float, dict[str, Any], str, datetime],
         ],
     ) -> tuple[CompanyCompsInput, dict[str, object]]:
         self._api_key()
@@ -335,16 +336,20 @@ class AlphaVantageCompanyDataSource:
         }
         fx_evidence: dict[str, object] = {}
         if quote_currency != requested_currency:
-            rate, fx_payload, fx_source = self._exchange_rate(
+            rate, fx_payload, fx_source, fx_as_of = self._exchange_rate(
                 from_currency=quote_currency,
                 to_currency=requested_currency,
                 cache=fx_cache,
             )
             share_price *= rate
             sources["share_price"] = f"{sources['share_price']} * {fx_source}"
+            source_as_of["share_price"] = min(
+                source_as_of["share_price"],
+                fx_as_of,
+            )
             fx_evidence[f"{quote_currency}_{requested_currency}"] = fx_payload
         if fundamental_currency != requested_currency:
-            rate, fx_payload, fx_source = self._exchange_rate(
+            rate, fx_payload, fx_source, fx_as_of = self._exchange_rate(
                 from_currency=fundamental_currency,
                 to_currency=requested_currency,
                 cache=fx_cache,
@@ -364,6 +369,7 @@ class AlphaVantageCompanyDataSource:
                 "net_income_ltm",
             ):
                 sources[field] = f"{sources[field]} * {fx_source}"
+                source_as_of[field] = min(source_as_of[field], fx_as_of)
             fx_evidence[f"{fundamental_currency}_{requested_currency}"] = fx_payload
         if fx_evidence:
             raw_evidence["currency_exchange_rates"] = fx_evidence
@@ -391,8 +397,11 @@ class AlphaVantageCompanyDataSource:
         *,
         from_currency: str,
         to_currency: str,
-        cache: dict[tuple[str, str], tuple[float, dict[str, Any], str]],
-    ) -> tuple[float, dict[str, Any], str]:
+        cache: dict[
+            tuple[str, str],
+            tuple[float, dict[str, Any], str, datetime],
+        ],
+    ) -> tuple[float, dict[str, Any], str, datetime]:
         pair = (from_currency, to_currency)
         if pair in cache:
             return cache[pair]
@@ -443,12 +452,23 @@ class AlphaVantageCompanyDataSource:
             field="CURRENCY_EXCHANGE_RATE.7. Time Zone",
             ticker=f"{from_currency}/{to_currency}",
         )
+        try:
+            refreshed_as_of = datetime.strptime(
+                refreshed_at,
+                "%Y-%m-%d %H:%M:%S",
+            ).replace(tzinfo=ZoneInfo(timezone)).astimezone(UTC)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise CompsRunExecutionError(
+                "Missing or invalid Alpha Vantage date evidence for "
+                f"{from_currency}/{to_currency} at "
+                "CURRENCY_EXCHANGE_RATE.6. Last Refreshed or 7. Time Zone."
+            ) from exc
         source = (
             "alpha_vantage.currency_exchange_rate."
             f"{from_currency}_{to_currency}.5. Exchange Rate"
             f"@{refreshed_at} {timezone}"
         )
-        cache[pair] = (rate, payload, source)
+        cache[pair] = (rate, payload, source, refreshed_as_of)
         return cache[pair]
 
     def _fetch_json(

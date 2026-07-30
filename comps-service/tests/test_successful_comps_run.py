@@ -422,6 +422,11 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 exchange_rate["5. Exchange Rate"] = (
                     "1.25000000" if from_currency == "GBP" else "0.75000000"
                 )
+                exchange_rate["6. Last Refreshed"] = (
+                    "2026-07-15 21:59:01"
+                    if from_currency == "GBP"
+                    else "2026-05-31 21:59:01"
+                )
                 return httpx.Response(200, json=payload)
 
             symbol = request.url.params["symbol"]
@@ -505,6 +510,27 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         assert snapshot is not None
         normalized = snapshot.normalized_inputs[0]
         self.assertEqual(normalized.currency, "USD")
+        self.assertEqual(
+            normalized.source_as_of["share_price"].isoformat(),
+            "2026-07-15T21:59:01+00:00",
+        )
+        self.assertEqual(
+            normalized.source_as_of["shares_outstanding"].isoformat(),
+            "2026-06-30T00:00:00+00:00",
+        )
+        for field in (
+            "cash",
+            "total_debt",
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(
+                    normalized.source_as_of[field].isoformat(),
+                    "2026-05-31T21:59:01+00:00",
+                )
         self.assertIn(
             "symbol_search.AAPL.8. currency=GBP",
             normalized.sources["share_price"],
@@ -532,6 +558,30 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             ),
             {"GBP_USD", "CAD_USD"},
         )
+        trace_inputs = {
+            trace_input["field"]: trace_input
+            for formula in response.json()["trace"]["formulas"]
+            if formula["ticker"] == "AAPL"
+            for trace_input in formula["inputs"]
+            if not trace_input["source"].startswith("calculated.")
+        }
+        self.assertEqual(
+            trace_inputs["share_price"]["as_of"],
+            "2026-07-15T21:59:01Z",
+        )
+        for field in (
+            "cash",
+            "total_debt",
+            "revenue_ltm",
+            "ebit_ltm",
+            "ebitda_ltm",
+            "net_income_ltm",
+        ):
+            with self.subTest(trace_field=field):
+                self.assertEqual(
+                    trace_inputs[field]["as_of"],
+                    "2026-05-31T21:59:01Z",
+                )
         self.assertEqual(fx_requests, [("GBP", "USD"), ("CAD", "USD")])
 
     def test_trace_references_the_provider_reports_used_for_inputs(self) -> None:
