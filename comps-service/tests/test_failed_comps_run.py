@@ -374,6 +374,63 @@ class FailedCompsRunTest(unittest.TestCase):
         self.assertIn(failed.json()["error"]["message"], log_output)
         self.assertNotIn(provider_key, log_output)
 
+    def test_provider_failure_preserves_non_json_response_body(self) -> None:
+        provider_key = "FAKE_PROVIDER_KEY_123"
+        response_body = f"<html>Proxy failure for {provider_key}</html>"
+
+        source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": provider_key,
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    502,
+                    text=response_body,
+                    headers={"Content-Type": "text/html"},
+                )
+            ),
+            validated_ticker_matches={
+                "AAPL": {
+                    "1. symbol": "AAPL",
+                    "3. type": "Equity",
+                    "8. currency": "USD",
+                },
+            },
+        )
+        app.dependency_overrides[get_company_data_source] = lambda: source
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            failed = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(failed.status_code, 502, failed.text)
+        run_id = UUID(failed.json()["error"]["run_id"])
+        snapshot = self.repository.get_source_snapshot(run_id)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(
+            snapshot.raw_provider_evidence["AAPL"]["global_quote"],
+            {
+                "raw_response_body": "<html>Proxy failure for [REDACTED]</html>"
+            },
+        )
+
     def test_fx_failure_preserves_invalid_fx_payload(self) -> None:
         company_fixture = json.loads(
             (FIXTURE_ROOT / "usd_company_latest.json").read_text()

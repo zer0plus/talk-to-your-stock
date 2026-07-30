@@ -573,8 +573,15 @@ class AlphaVantageCompanyDataSource:
                     ),
                     params=params,
                 )
+        except httpx.HTTPError:
+            raise CompsRunExecutionError(
+                f"Alpha Vantage {function} request failed for {subject}."
+            ) from None
+        try:
             payload = response.json()
-        except (httpx.HTTPError, ValueError):
+        except ValueError:
+            if raw_evidence is not None and evidence_key is not None:
+                raw_evidence[evidence_key] = {"raw_response_body": response.text}
             raise CompsRunExecutionError(
                 f"Alpha Vantage {function} request failed for {subject}."
             ) from None
