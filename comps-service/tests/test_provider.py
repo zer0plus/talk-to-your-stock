@@ -8,7 +8,11 @@ import unittest
 import httpx
 
 from comps_service.provider import AlphaVantageCompanyDataSource
-from comps_service.run_service import CompanyDataUnavailable, CompsRunExecutionError
+from comps_service.run_service import (
+    CompanyDataLoadFailure,
+    CompanyDataUnavailable,
+    CompsRunExecutionError,
+)
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "alpha_vantage"
@@ -120,15 +124,16 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            CompanyDataUnavailable,
+            CompanyDataLoadFailure,
             (
                 "ALPHA_VANTAGE_QUOTE_ENTITLEMENT must be "
                 "'realtime' or 'delayed'"
             ),
-        ):
+        ) as raised:
             source.load(tickers=["AAPL"], currency="USD")
+        self.assertIsInstance(raised.exception.cause, CompanyDataUnavailable)
 
-    def test_missing_fundamental_evidence_fails_instead_of_building_input(
+    def test_missing_individual_metric_builds_input_with_warning(
         self,
     ) -> None:
         fixture = json.loads(
@@ -142,13 +147,9 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 json=deepcopy(fixture[request.url.params["function"]]),
             )
 
-        source = self._source(respond)
+        loaded = self._source(respond).load(tickers=["AAPL"], currency="USD")
 
-        with self.assertRaisesRegex(
-            CompsRunExecutionError,
-            "Missing Alpha Vantage evidence.*ebitda",
-        ):
-            source.load(tickers=["AAPL"], currency="USD")
+        self.assertIsNone(loaded.companies[0].ebitda_ltm)
 
     def test_duplicate_income_quarter_fails_instead_of_building_ltm_input(
         self,

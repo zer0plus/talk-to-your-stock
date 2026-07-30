@@ -42,10 +42,10 @@ from .repository import (
 from .run_service import (
     CompanyDataSource,
     CompanyDataUnavailable,
-    CompsRunExecutionError,
     CompsRunRepository,
     CompsRunService,
     DuplicateToolInvocation,
+    FailedCompsRun,
 )
 from .tool_validation import (
     AlphaVantageTickerValidator,
@@ -253,17 +253,21 @@ def generate_comps_table(
             repository=repository,
             company_data_source=company_data_source,
         ).generate(request)
-    except CompanyDataUnavailable as exc:
+    except FailedCompsRun as exc:
+        dependency_unavailable = isinstance(exc.cause, CompanyDataUnavailable)
         return _error_response(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            code=ErrorCode.INTERNAL_ERROR,
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if dependency_unavailable
+                else status.HTTP_502_BAD_GATEWAY
+            ),
+            code=(
+                ErrorCode.INTERNAL_ERROR
+                if dependency_unavailable
+                else ErrorCode.UPSTREAM_ERROR
+            ),
             message=str(exc),
-        )
-    except CompsRunExecutionError as exc:
-        return _error_response(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            code=ErrorCode.UPSTREAM_ERROR,
-            message=str(exc),
+            details={"run_id": str(exc.run_id)},
         )
 
 

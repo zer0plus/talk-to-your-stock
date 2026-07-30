@@ -149,6 +149,21 @@ class InMemoryCompsRunRepository:
         self.traces[run.id] = trace
         self.source_snapshots[run.id] = source_snapshot
 
+    def save_failed_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
+        source_snapshot: SourceSnapshot,
+    ) -> None:
+        if invocation_id in self.invocations:
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a Run."
+            )
+        self.invocations[invocation_id] = run.id
+        self.runs[run.id] = run
+        self.source_snapshots[run.id] = source_snapshot
+
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)
 
@@ -969,8 +984,14 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             "ALPHA_VANTAGE_API_KEY",
             response.json()["error"]["message"],
         )
-        self.assertEqual(self.repository.runs, {})
+        run_id = UUID(response.json()["error"]["details"]["run_id"])
+        self.assertEqual(self.repository.runs[run_id].status.value, "failed")
         self.assertEqual(self.repository.tables, {})
+        self.assertEqual(self.repository.traces, {})
+        self.assertEqual(
+            self.repository.source_snapshots[run_id].raw_provider_evidence,
+            {"AAPL": {"symbol_search": None}},
+        )
 
     def test_invalid_run_linkage_returns_validation_error_without_artifacts(
         self,

@@ -17,6 +17,7 @@ from .provider_config import (
     seconds_setting,
 )
 from .run_service import (
+    CompanyDataLoadFailure,
     CompanyDataUnavailable,
     CompsRunExecutionError,
     LoadedCompanyData,
@@ -75,13 +76,26 @@ class AlphaVantageCompanyDataSource:
         ] = {}
         for ticker_candidate in tickers:
             ticker = ticker_candidate.upper()
-            company, raw_evidence = self._load_company(
-                ticker=ticker,
-                requested_currency=currency.upper(),
-                fx_cache=fx_cache,
-            )
-            companies.append(company)
+            raw_evidence: dict[str, object] = {
+                "symbol_search": self._validated_ticker_matches.get(ticker)
+            }
             evidence[ticker] = raw_evidence
+            try:
+                company = self._load_company(
+                    ticker=ticker,
+                    requested_currency=currency.upper(),
+                    fx_cache=fx_cache,
+                    raw_evidence=raw_evidence,
+                )
+            except (CompanyDataUnavailable, CompsRunExecutionError) as exc:
+                raise CompanyDataLoadFailure(
+                    exc,
+                    partial_data=LoadedCompanyData(
+                        companies=companies,
+                        raw_provider_evidence=evidence,
+                    ),
+                ) from exc
+            companies.append(company)
         return LoadedCompanyData(
             companies=companies,
             raw_provider_evidence=evidence,
@@ -96,7 +110,8 @@ class AlphaVantageCompanyDataSource:
             tuple[str, str],
             tuple[float, dict[str, Any], str, datetime],
         ],
-    ) -> tuple[CompanyCompsInput, dict[str, object]]:
+        raw_evidence: dict[str, object],
+    ) -> CompanyCompsInput:
         self._api_key()
         provider_match = self._validated_ticker_matches.get(ticker)
         quote_currency = self._required_text(
@@ -105,9 +120,13 @@ class AlphaVantageCompanyDataSource:
             ticker=ticker,
         ).upper()
         quote_payload = self._fetch_json(function="GLOBAL_QUOTE", symbol=ticker)
+        raw_evidence["global_quote"] = quote_payload
         overview = self._fetch_json(function="OVERVIEW", symbol=ticker)
+        raw_evidence["overview"] = overview
         income = self._fetch_json(function="INCOME_STATEMENT", symbol=ticker)
+        raw_evidence["income_statement"] = income
         balance_sheet = self._fetch_json(function="BALANCE_SHEET", symbol=ticker)
+        raw_evidence["balance_sheet"] = balance_sheet
 
         quote = self._required_object(
             quote_payload,
@@ -327,19 +346,18 @@ class AlphaVantageCompanyDataSource:
             "ebitda_ltm": income_as_of,
             "net_income_ltm": income_as_of,
         }
-        raw_evidence: dict[str, object] = {
-            "symbol_search": provider_match,
-            "global_quote": quote_payload,
-            "overview": overview,
-            "income_statement": income,
-            "balance_sheet": balance_sheet,
-        }
         fx_evidence: dict[str, object] = {}
+        if (
+            quote_currency != requested_currency
+            or fundamental_currency != requested_currency
+        ):
+            raw_evidence["currency_exchange_rates"] = fx_evidence
         if quote_currency != requested_currency:
             rate, fx_payload, fx_source, fx_as_of = self._exchange_rate(
                 from_currency=quote_currency,
                 to_currency=requested_currency,
                 cache=fx_cache,
+                raw_evidence=fx_evidence,
             )
             share_price *= rate
             sources["share_price"] = f"{sources['share_price']} * {fx_source}"
@@ -353,13 +371,18 @@ class AlphaVantageCompanyDataSource:
                 from_currency=fundamental_currency,
                 to_currency=requested_currency,
                 cache=fx_cache,
+                raw_evidence=fx_evidence,
             )
             cash *= rate
             total_debt *= rate
-            revenue_ltm *= rate
-            ebit_ltm *= rate
-            ebitda_ltm *= rate
-            net_income_ltm *= rate
+            revenue_ltm = (
+                revenue_ltm * rate if revenue_ltm is not None else None
+            )
+            ebit_ltm = ebit_ltm * rate if ebit_ltm is not None else None
+            ebitda_ltm = ebitda_ltm * rate if ebitda_ltm is not None else None
+            net_income_ltm = (
+                net_income_ltm * rate if net_income_ltm is not None else None
+            )
             for field in (
                 "cash",
                 "total_debt",
@@ -371,9 +394,6 @@ class AlphaVantageCompanyDataSource:
                 sources[field] = f"{sources[field]} * {fx_source}"
                 source_as_of[field] = min(source_as_of[field], fx_as_of)
             fx_evidence[f"{fundamental_currency}_{requested_currency}"] = fx_payload
-        if fx_evidence:
-            raw_evidence["currency_exchange_rates"] = fx_evidence
-
         company = CompanyCompsInput(
             ticker=ticker,
             company_name=self._optional_text(overview.get("Name")),
@@ -390,7 +410,7 @@ class AlphaVantageCompanyDataSource:
             sources=sources,
             source_as_of=source_as_of,
         )
-        return company, raw_evidence
+        return company
 
     def _exchange_rate(
         self,
@@ -401,16 +421,20 @@ class AlphaVantageCompanyDataSource:
             tuple[str, str],
             tuple[float, dict[str, Any], str, datetime],
         ],
+        raw_evidence: dict[str, object],
     ) -> tuple[float, dict[str, Any], str, datetime]:
         pair = (from_currency, to_currency)
         if pair in cache:
-            return cache[pair]
+            cached = cache[pair]
+            raw_evidence[f"{from_currency}_{to_currency}"] = cached[1]
+            return cached
 
         payload = self._fetch_json(
             function="CURRENCY_EXCHANGE_RATE",
             from_currency=from_currency,
             to_currency=to_currency,
         )
+        raw_evidence[f"{from_currency}_{to_currency}"] = payload
         evidence = self._required_object(
             payload,
             "Realtime Currency Exchange Rate",
@@ -611,14 +635,17 @@ class AlphaVantageCompanyDataSource:
         *,
         field: str,
         ticker: str,
-    ) -> float:
+    ) -> float | None:
+        values = [selection.report.get(field) for selection in reports]
+        if any(self._is_missing_value(value) for value in values):
+            return None
         return sum(
             self._required_number(
-                selection.report.get(field),
+                value,
                 field=f"INCOME_STATEMENT.quarterlyReports.{field}",
                 ticker=ticker,
             )
-            for selection in reports
+            for value in values
         )
 
     def _income_statement_source(

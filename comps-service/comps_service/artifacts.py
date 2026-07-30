@@ -18,10 +18,10 @@ class NormalizedCompanyInput(InternalArtifactModel):
     shares_outstanding: float
     cash: float
     total_debt: float
-    revenue_ltm: float
-    ebit_ltm: float
-    ebitda_ltm: float
-    net_income_ltm: float
+    revenue_ltm: float | None
+    ebit_ltm: float | None
+    ebitda_ltm: float | None
+    net_income_ltm: float | None
     as_of: datetime
     sources: dict[str, str]
     source_as_of: dict[str, datetime]

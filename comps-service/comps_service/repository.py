@@ -140,6 +140,69 @@ class PostgresCompsRunRepository:
         except Exception as exc:
             self._raise_unavailable(exc)
 
+    def save_failed_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
+        source_snapshot: SourceSnapshot,
+    ) -> None:
+        from psycopg.types.json import Jsonb
+
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        insert into comps_runs (
+                            id, invocation_id, thread_id, trigger_message_id, status,
+                            target_ticker, peer_tickers, currency, as_of, warnings,
+                            error_message, created_at, started_at, completed_at
+                        )
+                        values (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                        """,
+                        (
+                            run.id,
+                            invocation_id,
+                            run.thread_id,
+                            run.trigger_message_id,
+                            run.status.value,
+                            run.target_ticker,
+                            run.peer_tickers,
+                            run.currency,
+                            run.as_of,
+                            Jsonb(run.warnings),
+                            run.error_message,
+                            run.created_at,
+                            run.started_at,
+                            run.completed_at,
+                        ),
+                    )
+                    cursor.execute(
+                        """
+                        insert into comps_source_snapshots (
+                            run_id, raw_provider_evidence, normalized_inputs,
+                            created_at
+                        )
+                        values (%s, %s, %s, %s)
+                        """,
+                        (
+                            source_snapshot.run_id,
+                            Jsonb(source_snapshot.raw_provider_evidence),
+                            Jsonb(
+                                [
+                                    company.model_dump(mode="json")
+                                    for company in source_snapshot.normalized_inputs
+                                ]
+                            ),
+                            source_snapshot.created_at,
+                        ),
+                    )
+        except Exception as exc:
+            self._raise_unavailable(exc)
+
     def get_run(self, run_id: UUID) -> Run | None:
         try:
             with self._connect() as connection:

@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from comps_service.main import app, get_company_data_source
+from comps_service.main import app, get_company_data_source, get_repository
 from comps_service.run_service import CompanyDataUnavailable, LoadedCompanyData
 from comps_service.tool_validation import (
     AlphaVantageRequestLimiter,
@@ -106,6 +106,9 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
     def test_generate_comps_table_accepts_case_insensitive_bearer_scheme(self) -> None:
         ticker_validator = Mock()
         ticker_validator.is_supported.return_value = True
+        repository = Mock()
+        app.dependency_overrides[get_repository] = lambda: repository
+        self.addCleanup(app.dependency_overrides.clear)
 
         with (
             patch.dict(
@@ -137,6 +140,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             "ALPHA_VANTAGE_API_KEY",
             response.json()["error"]["message"],
         )
+        repository.save_failed_run.assert_called_once()
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:

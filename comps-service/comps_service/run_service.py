@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import datetime
+from typing import NoReturn, Protocol
 from uuid import UUID, uuid4
 
 from talk_to_your_stock_shared import (
@@ -15,7 +16,7 @@ from talk_to_your_stock_shared import (
 from talk_to_your_stock_shared.time import utc_now
 
 from .artifacts import SourceSnapshot
-from .calculator import CompanyCompsInput, CompsCalculator
+from .calculator import CompanyCompsInput, CompsCalculationError, CompsCalculator
 
 
 class CompanyDataUnavailable(RuntimeError):
@@ -36,6 +37,34 @@ class LoadedCompanyData:
     raw_provider_evidence: dict[str, object]
 
 
+class CompanyDataLoadFailure(CompsRunExecutionError):
+    def __init__(
+        self,
+        cause: CompanyDataUnavailable | CompsRunExecutionError,
+        *,
+        partial_data: LoadedCompanyData,
+    ) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+        self.partial_data = partial_data
+
+
+class FailedCompsRun(RuntimeError):
+    def __init__(
+        self,
+        *,
+        run_id: UUID,
+        cause: (
+            CompanyDataUnavailable
+            | CompsRunExecutionError
+            | CompsCalculationError
+        ),
+    ) -> None:
+        super().__init__(str(cause))
+        self.run_id = run_id
+        self.cause = cause
+
+
 class CompanyDataSource(Protocol):
     def load(
         self,
@@ -53,6 +82,14 @@ class CompsRunRepository(Protocol):
         run: Run,
         table: RunTableResponse,
         trace: TraceResponse,
+        source_snapshot: SourceSnapshot,
+    ) -> None: ...
+
+    def save_failed_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
         source_snapshot: SourceSnapshot,
     ) -> None: ...
 
@@ -81,23 +118,51 @@ class CompsRunService:
         target_ticker = request.target_ticker.upper()
         peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
         requested_tickers = [target_ticker, *peer_tickers]
-        loaded = self._company_data_source.load(
-            tickers=requested_tickers,
-            currency=request.currency.upper(),
-        )
-        companies = self._order_requested_companies(
-            requested_tickers=requested_tickers,
-            companies=loaded.companies,
-        )
-
         run_id = uuid4()
-        table, trace = self._calculator.generate(
-            run_id=run_id,
-            target_ticker=target_ticker,
-            companies=companies,
-            currency=request.currency.upper(),
-        )
-        now = utc_now()
+        started_at = utc_now()
+        loaded = LoadedCompanyData(companies=[], raw_provider_evidence={})
+        try:
+            loaded = self._company_data_source.load(
+                tickers=requested_tickers,
+                currency=request.currency.upper(),
+            )
+            companies = self._order_requested_companies(
+                requested_tickers=requested_tickers,
+                companies=loaded.companies,
+            )
+            table, trace = self._calculator.generate(
+                run_id=run_id,
+                target_ticker=target_ticker,
+                companies=companies,
+                currency=request.currency.upper(),
+            )
+        except CompanyDataLoadFailure as exc:
+            self._save_failed_run(
+                request=request,
+                run_id=run_id,
+                target_ticker=target_ticker,
+                peer_tickers=peer_tickers,
+                started_at=started_at,
+                loaded=exc.partial_data,
+                cause=exc.cause,
+            )
+        except (
+            CompanyDataUnavailable,
+            CompsRunExecutionError,
+            CompsCalculationError,
+        ) as exc:
+            self._save_failed_run(
+                request=request,
+                run_id=run_id,
+                target_ticker=target_ticker,
+                peer_tickers=peer_tickers,
+                started_at=started_at,
+                loaded=loaded,
+                cause=exc,
+            )
+
+        completed_at = utc_now()
+        warnings = self._missing_metric_warnings(companies)
         run = Run(
             id=run_id,
             thread_id=request.thread_id,
@@ -107,15 +172,16 @@ class CompsRunService:
             peer_tickers=peer_tickers,
             currency=request.currency.upper(),
             as_of=table.as_of,
-            created_at=now,
-            started_at=now,
-            completed_at=now,
+            warnings=warnings,
+            created_at=started_at,
+            started_at=started_at,
+            completed_at=completed_at,
         )
         source_snapshot = SourceSnapshot(
             run_id=run_id,
             raw_provider_evidence=loaded.raw_provider_evidence,
             normalized_inputs=companies,
-            created_at=now,
+            created_at=completed_at,
         )
         self._repository.save_succeeded_run(
             invocation_id=request.invocation_id,
@@ -130,6 +196,69 @@ class CompsRunService:
             trace=trace,
             warnings=run.warnings,
         )
+
+    def _save_failed_run(
+        self,
+        *,
+        request: GenerateCompsToolRequest,
+        run_id: UUID,
+        target_ticker: str,
+        peer_tickers: list[str],
+        started_at: datetime,
+        loaded: LoadedCompanyData,
+        cause: (
+            CompanyDataUnavailable
+            | CompsRunExecutionError
+            | CompsCalculationError
+        ),
+    ) -> NoReturn:
+        completed_at = utc_now()
+        run = Run(
+            id=run_id,
+            thread_id=request.thread_id,
+            trigger_message_id=request.trigger_message_id,
+            status=RunStatus.FAILED,
+            target_ticker=target_ticker,
+            peer_tickers=peer_tickers,
+            currency=request.currency.upper(),
+            as_of=started_at,
+            warnings=self._missing_metric_warnings(loaded.companies),
+            error_message=str(cause),
+            created_at=started_at,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+        source_snapshot = SourceSnapshot(
+            run_id=run_id,
+            raw_provider_evidence=loaded.raw_provider_evidence,
+            normalized_inputs=loaded.companies,
+            created_at=completed_at,
+        )
+        self._repository.save_failed_run(
+            invocation_id=request.invocation_id,
+            run=run,
+            source_snapshot=source_snapshot,
+        )
+        raise FailedCompsRun(run_id=run_id, cause=cause) from cause
+
+    def _missing_metric_warnings(
+        self,
+        companies: list[CompanyCompsInput],
+    ) -> list[str]:
+        warnings: list[str] = []
+        for company in companies:
+            for metric, dependent_metric in (
+                ("revenue_ltm", "ev_to_revenue"),
+                ("ebit_ltm", "ev_to_ebit"),
+                ("ebitda_ltm", "ev_to_ebitda"),
+                ("net_income_ltm", "pe"),
+            ):
+                if getattr(company, metric) is None:
+                    warnings.append(
+                        f"{company.ticker.upper()}.{metric} is unavailable; "
+                        f"{dependent_metric} is null."
+                    )
+        return warnings
 
     def _order_requested_companies(
         self,
