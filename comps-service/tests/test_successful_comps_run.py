@@ -149,6 +149,21 @@ class InMemoryCompsRunRepository:
         self.traces[run.id] = trace
         self.source_snapshots[run.id] = source_snapshot
 
+    def save_failed_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
+        source_snapshot: SourceSnapshot,
+    ) -> None:
+        if invocation_id in self.invocations:
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a Run."
+            )
+        self.invocations[invocation_id] = run.id
+        self.runs[run.id] = run
+        self.source_snapshots[run.id] = source_snapshot
+
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)
 
@@ -212,6 +227,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(body["run"]["status"], "succeeded")
         self.assertEqual(body["run"]["target_ticker"], "AAPL")
         self.assertEqual(body["run"]["peer_tickers"], ["MSFT", "GOOG"])
+        self.assertEqual(body["run"]["as_of"], body["table"]["as_of"])
         self.assertEqual(
             {row["ticker"] for row in body["table"]["rows"]},
             {"AAPL", "MSFT", "GOOG"},
@@ -969,8 +985,17 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             "ALPHA_VANTAGE_API_KEY",
             response.json()["error"]["message"],
         )
-        self.assertEqual(self.repository.runs, {})
+        run_id = UUID(response.json()["error"]["run_id"])
+        self.assertEqual(self.repository.runs[run_id].status.value, "failed")
         self.assertEqual(self.repository.tables, {})
+        self.assertEqual(self.repository.traces, {})
+        self.assertEqual(
+            self.repository.source_snapshots[run_id].raw_provider_evidence,
+            {
+                "AAPL": {"symbol_search": None},
+                "MSFT": {"symbol_search": None},
+            },
+        )
 
     def test_invalid_run_linkage_returns_validation_error_without_artifacts(
         self,

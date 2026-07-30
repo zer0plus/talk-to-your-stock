@@ -24,6 +24,9 @@ from agent_service.main import get_fundamental_agent
 from agent_service.main import get_session_context as get_agent_session_context
 from agent_service.session_context import AdkSessionContext
 from talk_to_your_stock_shared import (
+    ErrorCode,
+    ErrorDetail,
+    ErrorResponse,
     Message,
     MessageRole,
     MessageStatus,
@@ -45,6 +48,7 @@ from web_bff.main import (
     get_repository,
     get_thread_turn_coordinator,
 )
+from web_bff.agent_client import AgentServiceResponseError
 from web_bff.turn_coordinator import ThreadTurnCoordinator
 
 
@@ -92,11 +96,13 @@ class ControlledAgent:
         response: ControlledAgentResponse | None = None,
         response_factory: Callable[[Message], ControlledAgentResponse] | None = None,
         error: Exception | None = None,
+        error_factory: Callable[[Thread, Message], Exception] | None = None,
     ) -> None:
         self._repository = repository
         self._response = response or ControlledAgentResponse(content="Assistant reply.")
         self._response_factory = response_factory
         self._error = error
+        self._error_factory = error_factory
         self.invocations: list[dict[str, object]] = []
 
     def respond_to_user_message(
@@ -119,6 +125,8 @@ class ControlledAgent:
             raise AssertionError("User Message was not persisted before Agent call.")
         if self._error is not None:
             raise self._error
+        if self._error_factory is not None:
+            raise self._error_factory(thread, user_message)
         if self._response_factory is not None:
             return self._response_factory(user_message)
         return self._response
@@ -561,6 +569,93 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
         self.assertIn("invalid Run linkage", response.json()["error"]["message"])
         self.assertEqual([message.role for message in repository.messages], [MessageRole.USER])
+
+    def test_failed_run_error_links_the_propagated_run_id(self) -> None:
+        repository = RecordingRepository()
+        run_id = uuid4()
+        agent = ControlledAgent(
+            repository=repository,
+            error_factory=lambda thread, message: AgentServiceResponseError(
+                status_code=502,
+                error=ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.UPSTREAM_ERROR,
+                        message="Safe provider failure.",
+                        run_id=run_id,
+                        details={
+                            "thread_id": str(thread.id),
+                            "trigger_message_id": str(message.id),
+                        },
+                    )
+                ),
+            ),
+        )
+        client = self._client(repository=repository, agent=agent)
+        thread = client.post("/v1/threads", json={"title": "Comps"}).json()[
+            "thread"
+        ]
+
+        with self.assertLogs("web_bff.main", level="ERROR"):
+            response = client.post(
+                f"/v1/threads/{thread['id']}/messages",
+                json={"content": "Compare AAPL with MSFT"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["run_id"], str(run_id))
+        self.assertEqual(
+            [(message.role, message.status) for message in repository.messages],
+            [
+                (MessageRole.USER, MessageStatus.COMPLETE),
+                (MessageRole.ASSISTANT, MessageStatus.FAILED),
+            ],
+        )
+        self.assertEqual(repository.messages[-1].run_id, run_id)
+        self.assertEqual(
+            repository.threads[UUID(thread["id"])].latest_run_id,
+            run_id,
+        )
+
+    def test_failed_run_error_rejects_mismatched_correlation(self) -> None:
+        repository = RecordingRepository()
+        agent = ControlledAgent(
+            repository=repository,
+            error_factory=lambda _thread, message: AgentServiceResponseError(
+                status_code=502,
+                error=ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.UPSTREAM_ERROR,
+                        message="Safe provider failure.",
+                        run_id=uuid4(),
+                        details={
+                            "thread_id": str(uuid4()),
+                            "trigger_message_id": str(message.id),
+                        },
+                    )
+                ),
+            ),
+        )
+        client = self._client(repository=repository, agent=agent)
+        thread_id = client.post(
+            "/v1/threads",
+            json={"title": "Comps"},
+        ).json()["thread"]["id"]
+
+        with self.assertLogs("web_bff.main", level="ERROR"):
+            response = client.post(
+                f"/v1/threads/{thread_id}/messages",
+                json={"content": "Compare AAPL with MSFT"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn(
+            "invalid failed Run linkage",
+            response.json()["error"]["message"],
+        )
+        self.assertEqual(
+            [message.role for message in repository.messages],
+            [MessageRole.USER],
+        )
 
     def test_agent_unavailable_returns_clear_error_after_user_message_is_saved(
         self,

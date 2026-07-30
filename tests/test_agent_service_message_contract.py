@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import httpx
+import yaml
 from fastapi.testclient import TestClient
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
@@ -20,6 +21,9 @@ from google.genai import types
 from agent_service.fundamental_agent import FundamentalAnalysisAgent
 from agent_service.main import app, get_fundamental_agent, get_session_context
 from agent_service.session_context import AdkSessionContext
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConversationLlm(BaseLlm):
@@ -44,6 +48,29 @@ class UnexpectedCompsClient:
 
 
 class AgentServiceMessageContractTest(unittest.TestCase):
+    def test_generated_contract_documents_service_unavailable_errors(self) -> None:
+        source_contract = yaml.safe_load(
+            (REPO_ROOT / "api" / "openapi.yaml").read_text()
+        )
+        source_responses = source_contract["paths"][
+            "/v1/internal/agent/respond"
+        ]["post"]["responses"]
+        self.assertEqual(
+            source_responses["503"],
+            {"$ref": "#/components/responses/ServiceUnavailable"},
+        )
+
+        contract = TestClient(app).get("/openapi.json").json()
+
+        response_schema = contract["paths"]["/v1/internal/agent/respond"]["post"][
+            "responses"
+        ]["503"]["content"]["application/json"]["schema"]
+
+        self.assertEqual(
+            response_schema["$ref"],
+            "#/components/schemas/ErrorResponse",
+        )
+
     def setUp(self) -> None:
         self.session_context = AdkSessionContext(
             app_name="talk-to-your-stock",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 from uuid import UUID
 
@@ -35,7 +36,11 @@ from talk_to_your_stock_shared.readiness import (
     readiness_http_status,
 )
 from talk_to_your_stock_shared.time import utc_now
-from web_bff.agent_client import AgentServiceUnavailable, HttpAgentClient
+from web_bff.agent_client import (
+    AgentServiceResponseError,
+    AgentServiceUnavailable,
+    HttpAgentClient,
+)
 from web_bff.auth import AuthenticationError, authenticate_user
 from web_bff.comps_client import (
     CompsArtifactNotFound,
@@ -57,6 +62,7 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 _thread_turn_coordinator = ThreadTurnCoordinator()
+logger = logging.getLogger(__name__)
 
 
 class ApiException(Exception):
@@ -320,6 +326,7 @@ def list_messages(
         400: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
     },
     tags=["Messages"],
 )
@@ -333,7 +340,7 @@ def create_message(
         Depends(get_thread_turn_coordinator),
     ],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> CreateMessageResponse:
+) -> CreateMessageResponse | JSONResponse:
     user = repository.upsert_user(current_user)
     thread = repository.get_thread(thread_id=thread_id, user_id=user.id)
     if thread is None:
@@ -355,6 +362,42 @@ def create_message(
                 user=user,
                 thread=thread,
                 user_message=user_message,
+            )
+        except AgentServiceResponseError as exc:
+            run_id = exc.error.error.run_id
+            logger.error(
+                (
+                    "Agent response failed: code=%s run_id=%s thread_id=%s "
+                    "trigger_message_id=%s message=%s"
+                ),
+                exc.error.error.code.value,
+                run_id,
+                thread.id,
+                user_message.id,
+                exc.error.error.message,
+            )
+            if run_id is not None:
+                details = exc.error.error.details or {}
+                if (
+                    details.get("thread_id") != str(thread.id)
+                    or details.get("trigger_message_id")
+                    != str(user_message.id)
+                ):
+                    raise ApiException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        code=ErrorCode.UPSTREAM_ERROR,
+                        message="Agent Service returned invalid failed Run linkage.",
+                    )
+                repository.create_message(
+                    thread_id=thread.id,
+                    role=MessageRole.ASSISTANT,
+                    content=exc.error.error.message,
+                    status=MessageStatus.FAILED,
+                    run_id=run_id,
+                )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=exc.error.model_dump(mode="json"),
             )
         except AgentServiceUnavailable as exc:
             raise ApiException(

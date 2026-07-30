@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import unittest
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 from uuid import UUID
 
+import httpx
 from fastapi.testclient import TestClient
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
@@ -29,6 +31,7 @@ from comps_service.main import (
     get_repository as get_comps_repository,
     get_ticker_validator,
 )
+from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.run_service import LoadedCompanyData
 from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
 from tests.live_service import running_service
@@ -83,6 +86,17 @@ class InMemoryCompsRepository:
         self.runs[run.id] = run
         self.tables[run.id] = table
         self.traces[run.id] = trace
+        self.source_snapshots[run.id] = source_snapshot
+
+    def save_failed_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
+        source_snapshot: SourceSnapshot,
+    ) -> None:
+        del invocation_id
+        self.runs[run.id] = run
         self.source_snapshots[run.id] = source_snapshot
 
     def get_run(self, run_id: UUID) -> Run | None:
@@ -195,6 +209,152 @@ class CanonicalBackendPathTest(unittest.TestCase):
         self.assertEqual(trace.json()["run_id"], run_id)
         self.assertEqual(len(web_repository.messages), 2)
         self.assertIn(UUID(run_id), comps_repository.runs)
+
+    def test_failed_run_error_is_visible_and_linked_to_the_thread(self) -> None:
+        provider_key = "FAKE_BOUNDARY_KEY_123"
+        comps_repository = InMemoryCompsRepository()
+
+        def provider_response(_request):
+            return httpx.Response(
+                429,
+                json={
+                    "Information": (
+                        "Provider quota exhausted. "
+                        f"API key as {provider_key}"
+                    )
+                },
+            )
+
+        company_data_source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": provider_key,
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(provider_response),
+            validated_ticker_matches={
+                ticker: {
+                    "1. symbol": ticker,
+                    "3. type": "Equity",
+                    "8. currency": "USD",
+                }
+                for ticker in ("AAPL", "MSFT", "NVDA")
+            },
+        )
+        ticker_validator = Mock()
+        ticker_validator.is_supported.return_value = True
+        comps_app.dependency_overrides[get_comps_repository] = (
+            lambda: comps_repository
+        )
+        comps_app.dependency_overrides[get_company_data_source] = (
+            lambda: company_data_source
+        )
+        comps_app.dependency_overrides[get_ticker_validator] = (
+            lambda: ticker_validator
+        )
+
+        session_context = AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=InMemorySessionService(),
+        )
+        agent_app.dependency_overrides[get_session_context] = (
+            lambda: session_context
+        )
+        web_repository = RecordingRepository()
+        web_bff_app.dependency_overrides[get_web_repository] = (
+            lambda: web_repository
+        )
+
+        with running_service(comps_app) as comps_service_url:
+            agent_app.dependency_overrides[get_fundamental_agent] = lambda: (
+                FundamentalAnalysisAgent(
+                    model=CanonicalCompsLlm(model="canonical-comps"),
+                    comps_client=HttpCompsToolClient(
+                        base_url=comps_service_url,
+                        internal_token=INTERNAL_TOKEN,
+                    ),
+                )
+            )
+            with running_service(agent_app) as agent_service_url:
+                env = {
+                    "TALK_TO_YOUR_STOCK_ENV": "local",
+                    "DATABASE_URL": "postgresql://unused-by-test",
+                    "DEV_AUTH_USER_ID": LOCAL_USER_ID,
+                    "DEV_AUTH_EMAIL": "dev@example.com",
+                    "AGENT_SERVICE_URL": agent_service_url,
+                    "COMPS_SERVICE_URL": comps_service_url,
+                    "COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOKEN,
+                }
+                with patch.dict("os.environ", env, clear=True):
+                    client = TestClient(web_bff_app)
+                    thread = client.post(
+                        "/v1/threads",
+                        json={"title": "AAPL comps"},
+                    ).json()["thread"]
+
+                    with (
+                        self.assertLogs(
+                            "comps_service.main",
+                            level="ERROR",
+                        ) as comps_logs,
+                        self.assertLogs(
+                            "agent_service.main",
+                            level="ERROR",
+                        ) as agent_logs,
+                        self.assertLogs(
+                            "web_bff.main",
+                            level="ERROR",
+                        ) as web_logs,
+                    ):
+                        failed = client.post(
+                            f"/v1/threads/{thread['id']}/messages",
+                            json={
+                                "content": (
+                                    "Compare Apple with Microsoft and Nvidia"
+                                )
+                            },
+                        )
+
+                    self.assertEqual(failed.status_code, 502, failed.text)
+                    error = failed.json()["error"]
+                    run_id = error["run_id"]
+                    self.assertEqual(error["code"], "UPSTREAM_ERROR")
+                    self.assertEqual(
+                        error["message"],
+                        "Alpha Vantage request limit was reached while loading AAPL.",
+                    )
+
+                    messages = client.get(
+                        f"/v1/threads/{thread['id']}/messages"
+                    ).json()["messages"]
+                    linked_thread = client.get(
+                        f"/v1/threads/{thread['id']}"
+                    ).json()["thread"]
+                    run = client.get(f"/v1/runs/{run_id}").json()["run"]
+
+        self.assertEqual(
+            [(message["role"], message["status"]) for message in messages],
+            [("user", "complete"), ("assistant", "failed")],
+        )
+        self.assertEqual(messages[-1]["run_id"], run_id)
+        self.assertEqual(linked_thread["latest_run_id"], run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertEqual(run["error_message"], error["message"])
+        self.assertNotIn(provider_key, failed.text)
+        self.assertNotIn(INTERNAL_TOKEN, failed.text)
+        for log_output in (
+            "\n".join(comps_logs.output),
+            "\n".join(agent_logs.output),
+            "\n".join(web_logs.output),
+        ):
+            self.assertIn(run_id, log_output)
+            self.assertIn(thread["id"], log_output)
+            self.assertIn(error["message"], log_output)
+            self.assertNotIn(provider_key, log_output)
+            self.assertNotIn(INTERNAL_TOKEN, log_output)
+        snapshot = comps_repository.source_snapshots[UUID(run_id)]
+        snapshot_json = json.dumps(snapshot.model_dump(mode="json"))
+        self.assertNotIn(provider_key, snapshot_json)
+        self.assertNotIn(INTERNAL_TOKEN, snapshot_json)
 
 
 def _loaded_company_data() -> LoadedCompanyData:

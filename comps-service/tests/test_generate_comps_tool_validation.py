@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from comps_service.main import app, get_company_data_source
+from comps_service.main import app, get_company_data_source, get_repository
 from comps_service.run_service import CompanyDataUnavailable, LoadedCompanyData
 from comps_service.tool_validation import (
     AlphaVantageRequestLimiter,
@@ -106,6 +106,9 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
     def test_generate_comps_table_accepts_case_insensitive_bearer_scheme(self) -> None:
         ticker_validator = Mock()
         ticker_validator.is_supported.return_value = True
+        repository = Mock()
+        app.dependency_overrides[get_repository] = lambda: repository
+        self.addCleanup(app.dependency_overrides.clear)
 
         with (
             patch.dict(
@@ -137,6 +140,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             "ALPHA_VANTAGE_API_KEY",
             response.json()["error"]["message"],
         )
+        repository.save_failed_run.assert_called_once()
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:
@@ -650,6 +654,77 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         self.assertEqual(body["error"]["details"]["provider"], "alpha_vantage")
         database_connect.assert_not_called()
 
+    def test_provider_quota_error_is_sanitized_before_run_creation(self) -> None:
+        provider_key = "FAKE_VALIDATION_KEY_123"
+        database_connect = Mock()
+        thread_id = uuid4()
+        trigger_message_id = uuid4()
+        provider_body = (
+            '{"Information":"Provider quota exhausted. API key as '
+            f'{provider_key}"}}'
+        ).encode()
+
+        with _alpha_vantage_server(provider_body, status_code=429) as base_url:
+            with (
+                patch.dict(
+                    sys.modules,
+                    {"psycopg": SimpleNamespace(connect=database_connect)},
+                ),
+                patch.dict(
+                    os.environ,
+                    self._env_with_internal_auth(
+                        {
+                            "ALPHA_VANTAGE_API_KEY": provider_key,
+                            "ALPHA_VANTAGE_BASE_URL": base_url,
+                            "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+                        }
+                    ),
+                    clear=True,
+                ),
+                self.assertLogs(
+                    "comps_service.main",
+                    level="ERROR",
+                ) as captured_logs,
+            ):
+                response = TestClient(app, raise_server_exceptions=False).post(
+                    "/v1/internal/tools/generate-comps-table",
+                    json={
+                        "invocation_id": str(uuid4()),
+                        "thread_id": str(thread_id),
+                        "trigger_message_id": str(trigger_message_id),
+                        "target_ticker": "AAPL",
+                        "peer_tickers": ["MSFT"],
+                        "peer_selection_mode": "user_supplied",
+                        "analysis_period": "latest",
+                    },
+                    headers=self._internal_tool_headers(),
+                )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["error"],
+            {
+                "code": "UPSTREAM_ERROR",
+                "message": (
+                    "Alpha Vantage request limit was reached while validating AAPL."
+                ),
+                "details": {
+                    "provider": "alpha_vantage",
+                    "operation": "SYMBOL_SEARCH",
+                    "subject": "AAPL",
+                },
+                "run_id": None,
+                "request_id": None,
+            },
+        )
+        self.assertNotIn(provider_key, response.text)
+        log_output = "\n".join(captured_logs.output)
+        self.assertIn(str(thread_id), log_output)
+        self.assertIn(str(trigger_message_id), log_output)
+        self.assertIn(response.json()["error"]["message"], log_output)
+        self.assertNotIn(provider_key, log_output)
+        database_connect.assert_not_called()
+
     # Rejects exact Alpha Vantage matches that are not company equity symbols.
     def test_non_equity_ticker_match_returns_validation_error_before_run_creation(
         self,
@@ -786,7 +861,7 @@ class _AlphaVantageResponseHandler(BaseHTTPRequestHandler):
             keyword = query.get("keywords", [""])[0]
             response_body = response_bodies[keyword]
 
-        self.send_response(200)
+        self.send_response(getattr(self.server, "response_status", 200))
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(response_body)
@@ -798,8 +873,11 @@ class _AlphaVantageResponseHandler(BaseHTTPRequestHandler):
 @contextmanager
 def _alpha_vantage_server(
     response_body: bytes | dict[str, bytes],
+    *,
+    status_code: int = 200,
 ) -> Iterator[str]:
     server = HTTPServer(("127.0.0.1", 0), _AlphaVantageResponseHandler)
+    server.response_status = status_code
     if isinstance(response_body, dict):
         server.response_body = b'{"bestMatches":[]}'
         server.response_bodies = response_body

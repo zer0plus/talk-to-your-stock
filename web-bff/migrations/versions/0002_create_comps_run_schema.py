@@ -43,7 +43,7 @@ def upgrade() -> None:
         sa.Column("target_ticker", sa.Text(), nullable=False),
         sa.Column("peer_tickers", postgresql.ARRAY(sa.Text()), nullable=False),
         sa.Column("currency", sa.Text(), nullable=False),
-        sa.Column("as_of", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("as_of", sa.DateTime(timezone=True), nullable=True),
         sa.Column("warnings", postgresql.JSONB(), nullable=False),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),

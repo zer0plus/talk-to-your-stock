@@ -19,7 +19,7 @@ class CompsCalculatorTest(unittest.TestCase):
         self.as_of = datetime(2026, 6, 26, tzinfo=UTC)
 
     def test_generate_calculates_expected_comps_table(self) -> None:
-        table, trace = self.calculator.generate(
+        table, trace, warnings = self.calculator.generate(
             run_id=uuid4(),
             target_ticker="AAPL",
             companies=[self._company("AAPL")],
@@ -44,6 +44,7 @@ class CompsCalculatorTest(unittest.TestCase):
         self.assertEqual(table.summary.stats.pe.min, 20.0)
 
         self.assertEqual(trace.run_id, table.run_id)
+        self.assertEqual(warnings, [])
         self.assertEqual(
             {formula.output_field for formula in trace.formulas},
             {
@@ -58,7 +59,7 @@ class CompsCalculatorTest(unittest.TestCase):
         )
 
     def test_zero_denominators_return_none_and_stats_ignore_none(self) -> None:
-        table, _trace = self.calculator.generate(
+        table, _trace, warnings = self.calculator.generate(
             run_id=uuid4(),
             target_ticker="AAPL",
             companies=[
@@ -85,6 +86,15 @@ class CompsCalculatorTest(unittest.TestCase):
         self.assertEqual(table.summary.stats.ev_to_revenue.median, peer_row.ev_to_revenue)
         self.assertEqual(table.summary.stats.ev_to_revenue.max, peer_row.ev_to_revenue)
         self.assertEqual(table.summary.stats.pe.min, peer_row.pe)
+        self.assertEqual(
+            warnings,
+            [
+                "AAPL.revenue_ltm is zero; ev_to_revenue is null.",
+                "AAPL.ebit_ltm is zero; ev_to_ebit is null.",
+                "AAPL.ebitda_ltm is zero; ev_to_ebitda is null.",
+                "AAPL.net_income_ltm is zero; pe is null.",
+            ],
+        )
 
     def test_missing_target_ticker_raises(self) -> None:
         with self.assertRaisesRegex(CompsCalculationError, "Target ticker AAPL is missing"):

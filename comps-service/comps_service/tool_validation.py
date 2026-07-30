@@ -12,6 +12,7 @@ import httpx
 from talk_to_your_stock_shared import GenerateCompsToolRequest
 
 from .provider_config import InvalidProviderConfiguration, seconds_setting
+from .provider_error import alpha_vantage_error
 
 ALPHA_VANTAGE_API_KEY_VAR = "ALPHA_VANTAGE_API_KEY"
 ALPHA_VANTAGE_BASE_URL_VAR = "ALPHA_VANTAGE_BASE_URL"
@@ -119,33 +120,51 @@ class AlphaVantageTickerValidator:
                         "apikey": api_key,
                     },
                 )
-            response.raise_for_status()
-            try:
-                payload = response.json()
-            except ValueError as exc:
-                raise UpstreamValidationError(
-                    message="Alpha Vantage symbol search returned malformed JSON.",
-                    details={"provider": "alpha_vantage"},
-                ) from exc
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             raise UpstreamValidationError(
                 message="Alpha Vantage symbol search request failed.",
                 details={"provider": "alpha_vantage"},
-            ) from exc
+            ) from None
+
+        try:
+            payload = response.json()
+        except ValueError:
+            if response.is_error:
+                raise UpstreamValidationError(
+                    message="Alpha Vantage symbol search request failed.",
+                    details={"provider": "alpha_vantage"},
+                ) from None
+            raise UpstreamValidationError(
+                message="Alpha Vantage symbol search returned malformed JSON.",
+                details={"provider": "alpha_vantage"},
+            ) from None
+
+        if isinstance(payload, dict):
+            provider_error = alpha_vantage_error(
+                payload,
+                operation="SYMBOL_SEARCH",
+                subject=ticker.upper(),
+                action="validating",
+            )
+            if provider_error is not None:
+                raise UpstreamValidationError(
+                    message=provider_error.message,
+                    details=provider_error.details,
+                )
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError:
+            raise UpstreamValidationError(
+                message="Alpha Vantage symbol search request failed.",
+                details={"provider": "alpha_vantage"},
+            ) from None
 
         if not isinstance(payload, dict):
             raise UpstreamValidationError(
                 message="Alpha Vantage symbol search returned a non-object payload.",
                 details={"provider": "alpha_vantage"},
             )
-
-        for key in ("Error Message", "Note", "Information"):
-            value = payload.get(key)
-            if value:
-                raise UpstreamValidationError(
-                    message=str(value),
-                    details={"provider": "alpha_vantage", "provider_key": key},
-                )
 
         return payload
 

@@ -35,6 +35,13 @@ class CompsToolValidationError(RuntimeError):
         self.error = error
 
 
+class CompsToolError(RuntimeError):
+    def __init__(self, *, status_code: int, error: ErrorResponse) -> None:
+        super().__init__(error.error.message)
+        self.status_code = status_code
+        self.error = error
+
+
 class HttpCompsToolClient:
     def __init__(self, *, base_url: str, internal_token: str) -> None:
         if not base_url.strip():
@@ -71,25 +78,23 @@ class HttpCompsToolClient:
         except httpx.HTTPError as exc:
             raise CompsToolUnavailable("Comps Service unavailable.") from exc
 
-        if response.status_code == 400:
+        if response.is_error:
             try:
                 error = ErrorResponse.model_validate(response.json())
-            except (JSONDecodeError, ValidationError, ValueError) as exc:
+            except (JSONDecodeError, ValidationError, ValueError):
                 raise CompsToolUnavailable(
-                    "Comps Service returned an invalid validation error."
-                ) from exc
-            raise CompsToolValidationError(error)
-
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise CompsToolUnavailable(
-                f"Comps Service returned HTTP {response.status_code}."
-            ) from exc
+                    "Comps Service returned an invalid error response."
+                ) from None
+            if response.status_code == 400:
+                raise CompsToolValidationError(error)
+            status_code = response.status_code
+            if status_code not in (502, 503):
+                status_code = 502
+            raise CompsToolError(status_code=status_code, error=error)
 
         try:
             return GenerateCompsToolResponse.model_validate(response.json())
-        except (JSONDecodeError, ValidationError, ValueError) as exc:
+        except (JSONDecodeError, ValidationError, ValueError):
             raise CompsToolUnavailable(
                 "Comps Service returned an invalid Tool response."
-            ) from exc
+            ) from None
