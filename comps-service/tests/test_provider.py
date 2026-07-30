@@ -151,6 +151,74 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
         ):
             source.load(tickers=["AAPL"], currency="USD")
 
+    def test_duplicate_income_quarter_fails_instead_of_building_ltm_input(
+        self,
+    ) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        fixture["INCOME_STATEMENT"]["quarterlyReports"][1][
+            "fiscalDateEnding"
+        ] = "2026-06-30"
+
+        def respond(request):
+            return httpx.Response(
+                200,
+                json=deepcopy(fixture[request.url.params["function"]]),
+            )
+
+        with self.assertRaisesRegex(
+            CompsRunExecutionError,
+            "four distinct consecutive quarters",
+        ):
+            self._source(respond).load(tickers=["AAPL"], currency="USD")
+
+    def test_missing_income_quarter_fails_instead_of_building_ltm_input(
+        self,
+    ) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        reports = fixture["INCOME_STATEMENT"]["quarterlyReports"]
+        reports[2]["fiscalDateEnding"] = "2025-09-30"
+        reports[3]["fiscalDateEnding"] = "2025-06-30"
+
+        def respond(request):
+            return httpx.Response(
+                200,
+                json=deepcopy(fixture[request.url.params["function"]]),
+            )
+
+        with self.assertRaisesRegex(
+            CompsRunExecutionError,
+            "four distinct consecutive quarters",
+        ):
+            self._source(respond).load(tickers=["AAPL"], currency="USD")
+
+    def test_53_week_fiscal_cadence_builds_ltm_input(self) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        reports = fixture["INCOME_STATEMENT"]["quarterlyReports"]
+        for report, fiscal_date in zip(
+            reports,
+            ("2026-01-31", "2025-10-25", "2025-07-26", "2025-04-26"),
+        ):
+            report["fiscalDateEnding"] = fiscal_date
+
+        def respond(request):
+            return httpx.Response(
+                200,
+                json=deepcopy(fixture[request.url.params["function"]]),
+            )
+
+        loaded = self._source(respond).load(
+            tickers=["AAPL"],
+            currency="USD",
+        )
+
+        self.assertEqual(loaded.companies[0].revenue_ltm, 1000.0)
+
     def test_non_positive_quote_price_fails_instead_of_building_input(
         self,
     ) -> None:

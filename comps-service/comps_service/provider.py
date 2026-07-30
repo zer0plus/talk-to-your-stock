@@ -34,6 +34,10 @@ from .tool_validation import (
     TickerDirectory,
 )
 
+_MIN_FISCAL_QUARTER_DAYS = 75
+_MAX_FISCAL_QUARTER_DAYS = 105
+
+
 @dataclass(frozen=True)
 class _SelectedQuarterlyReport:
     raw_index: int
@@ -142,6 +146,33 @@ class AlphaVantageCompanyDataSource:
             provider_function="INCOME_STATEMENT",
             required_count=4,
         )
+        income_fiscal_dates = [
+            selection.fiscal_date for selection in income_reports
+        ]
+        income_quarter_gaps = [
+            (newer - older).days
+            for newer, older in zip(
+                income_fiscal_dates,
+                income_fiscal_dates[1:],
+            )
+        ]
+        if (
+            len(set(income_fiscal_dates)) != 4
+            or not all(
+                _MIN_FISCAL_QUARTER_DAYS
+                <= gap
+                <= _MAX_FISCAL_QUARTER_DAYS
+                for gap in income_quarter_gaps
+            )
+        ):
+            selected_dates = ", ".join(
+                fiscal_date.isoformat()
+                for fiscal_date in income_fiscal_dates
+            )
+            raise CompsRunExecutionError(
+                "Alpha Vantage INCOME_STATEMENT requires four distinct "
+                f"consecutive quarters for {ticker}; selected {selected_dates}."
+            )
         balance_report_selection = self._latest_reports(
             balance_sheet,
             ticker=ticker,
