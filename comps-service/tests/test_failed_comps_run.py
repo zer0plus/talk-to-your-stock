@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 import json
 import os
@@ -157,6 +158,29 @@ class MissingPeerDataSource:
             raw_provider_evidence={
                 "AAPL": {"global_quote": {"05. price": "10.0"}}
             },
+        )
+
+
+class ZeroLtmMetricsDataSource:
+    def load(
+        self,
+        *,
+        tickers: list[str],
+        currency: str,
+    ) -> LoadedCompanyData:
+        del tickers, currency
+        return LoadedCompanyData(
+            companies=[
+                replace(
+                    company_input("AAPL"),
+                    revenue_ltm=0,
+                    ebit_ltm=0,
+                    ebitda_ltm=0,
+                    net_income_ltm=0,
+                ),
+                company_input("MSFT"),
+            ],
+            raw_provider_evidence={},
         )
 
 
@@ -516,6 +540,49 @@ class FailedCompsRunTest(unittest.TestCase):
         self.assertIsNone(msft_input.ebit_ltm)
         self.assertIsNone(msft_input.ebitda_ltm)
         self.assertIsNone(msft_input.net_income_ltm)
+
+    def test_zero_ltm_metrics_become_null_with_run_warnings(self) -> None:
+        app.dependency_overrides[get_company_data_source] = ZeroLtmMetricsDataSource
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            created = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        body = created.json()
+        warnings = [
+            "AAPL.revenue_ltm is zero; ev_to_revenue is null.",
+            "AAPL.ebit_ltm is zero; ev_to_ebit is null.",
+            "AAPL.ebitda_ltm is zero; ev_to_ebitda is null.",
+            "AAPL.net_income_ltm is zero; pe is null.",
+        ]
+        self.assertEqual(body["warnings"], warnings)
+        self.assertEqual(body["run"]["warnings"], warnings)
+        target_row = body["table"]["rows"][0]
+        for metric in ("ev_to_revenue", "ev_to_ebit", "ev_to_ebitda", "pe"):
+            with self.subTest(metric=metric):
+                self.assertIsNone(target_row[metric])
+
+        run_id = UUID(body["run"]["id"])
+        persisted = client.get(f"/v1/runs/{run_id}")
+        self.assertEqual(persisted.status_code, 200, persisted.text)
+        self.assertEqual(persisted.json()["run"]["warnings"], warnings)
 
 
 if __name__ == "__main__":

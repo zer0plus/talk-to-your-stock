@@ -130,7 +130,7 @@ class CompsRunService:
                 requested_tickers=requested_tickers,
                 companies=loaded.companies,
             )
-            table, trace = self._calculator.generate(
+            table, trace, warnings = self._calculator.generate(
                 run_id=run_id,
                 target_ticker=target_ticker,
                 companies=companies,
@@ -162,7 +162,6 @@ class CompsRunService:
             )
 
         completed_at = utc_now()
-        warnings = self._missing_metric_warnings(companies)
         run = Run(
             id=run_id,
             thread_id=request.thread_id,
@@ -239,25 +238,6 @@ class CompsRunService:
             source_snapshot=source_snapshot,
         )
         raise FailedCompsRun(run_id=run_id, cause=cause) from cause
-
-    def _missing_metric_warnings(
-        self,
-        companies: list[CompanyCompsInput],
-    ) -> list[str]:
-        warnings: list[str] = []
-        for company in companies:
-            for metric, dependent_metric in (
-                ("revenue_ltm", "ev_to_revenue"),
-                ("ebit_ltm", "ev_to_ebit"),
-                ("ebitda_ltm", "ev_to_ebitda"),
-                ("net_income_ltm", "pe"),
-            ):
-                if getattr(company, metric) is None:
-                    warnings.append(
-                        f"{company.ticker.upper()}.{metric} is unavailable; "
-                        f"{dependent_metric} is null."
-                    )
-        return warnings
 
     def _order_requested_companies(
         self,

@@ -58,21 +58,50 @@ class CompsCalculator:
         target_ticker: str,
         companies: list[CompanyCompsInput],
         currency: str,
-    ) -> tuple[RunTableResponse, TraceResponse]:
+    ) -> tuple[RunTableResponse, TraceResponse, list[str]]:
         self._validate_inputs(target_ticker=target_ticker, companies=companies)
 
         target = target_ticker.upper()
         rows: list[CompsRow] = []
         formulas: list[TraceFormula] = []
+        warnings: list[str] = []
 
         for company in companies:
             market_cap = self._round(company.share_price * company.shares_outstanding)
             net_debt = self._round(company.total_debt - company.cash)
             enterprise_value = self._round(market_cap + net_debt)
-            ev_to_revenue = self._safe_ratio(enterprise_value, company.revenue_ltm)
-            ev_to_ebit = self._safe_ratio(enterprise_value, company.ebit_ltm)
-            ev_to_ebitda = self._safe_ratio(enterprise_value, company.ebitda_ltm)
-            pe = self._safe_ratio(market_cap, company.net_income_ltm)
+            ev_to_revenue, warning = self._multiple(
+                company=company,
+                numerator=enterprise_value,
+                denominator_field="revenue_ltm",
+                output_field="ev_to_revenue",
+            )
+            if warning:
+                warnings.append(warning)
+            ev_to_ebit, warning = self._multiple(
+                company=company,
+                numerator=enterprise_value,
+                denominator_field="ebit_ltm",
+                output_field="ev_to_ebit",
+            )
+            if warning:
+                warnings.append(warning)
+            ev_to_ebitda, warning = self._multiple(
+                company=company,
+                numerator=enterprise_value,
+                denominator_field="ebitda_ltm",
+                output_field="ev_to_ebitda",
+            )
+            if warning:
+                warnings.append(warning)
+            pe, warning = self._multiple(
+                company=company,
+                numerator=market_cap,
+                denominator_field="net_income_ltm",
+                output_field="pe",
+            )
+            if warning:
+                warnings.append(warning)
 
             rows.append(
                 CompsRow(
@@ -126,7 +155,7 @@ class CompsCalculator:
                 }
             },
         )
-        return table, TraceResponse(run_id=run_id, formulas=formulas)
+        return table, TraceResponse(run_id=run_id, formulas=formulas), warnings
 
     def _validate_inputs(
         self,
@@ -295,10 +324,26 @@ class CompsCalculator:
             as_of=company.source_as_of[field_name],
         )
 
-    def _safe_ratio(self, numerator: float | None, denominator: float | None) -> float | None:
-        if numerator is None or denominator in (None, 0):
-            return None
-        return self._round(numerator / denominator)
+    def _multiple(
+        self,
+        *,
+        company: CompanyCompsInput,
+        numerator: float,
+        denominator_field: str,
+        output_field: str,
+    ) -> tuple[float | None, str | None]:
+        denominator = getattr(company, denominator_field)
+        if denominator is None:
+            reason = "unavailable"
+        elif denominator == 0:
+            reason = "zero"
+        else:
+            return self._round(numerator / denominator), None
+        return (
+            None,
+            f"{company.ticker.upper()}.{denominator_field} is {reason}; "
+            f"{output_field} is null.",
+        )
 
     def _stats(self, values: list[float | None]) -> MinMedianMax:
         present = sorted(value for value in values if value is not None)
