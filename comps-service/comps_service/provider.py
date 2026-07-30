@@ -659,7 +659,7 @@ class AlphaVantageCompanyDataSource:
         required: bool = True,
     ) -> tuple[float | None, str | None]:
         for source, value in candidates:
-            if self._is_missing_number(value):
+            if self._is_missing_value(value):
                 continue
             return (
                 self._required_number(value, field=source, ticker=ticker),
@@ -678,14 +678,23 @@ class AlphaVantageCompanyDataSource:
         expected: str,
         ticker: str,
     ) -> None:
-        currencies = {
-            self._required_text(
-                report.get("reportedCurrency"),
-                field="quarterlyReports.reportedCurrency",
-                ticker=ticker,
-            ).upper()
-            for report in reports
-        }
+        currencies: set[str] = set()
+        for report in reports:
+            value = report.get("reportedCurrency")
+            if self._is_missing_value(value):
+                continue
+            currencies.add(
+                self._required_text(
+                    value,
+                    field="quarterlyReports.reportedCurrency",
+                    ticker=ticker,
+                ).upper()
+            )
+        if not currencies:
+            raise CompsRunExecutionError(
+                f"Missing Alpha Vantage evidence for {ticker} at "
+                "quarterlyReports.reportedCurrency."
+            )
         if currencies != {expected}:
             raise CompsRunExecutionError(
                 f"Alpha Vantage currency evidence is inconsistent for {ticker}: "
@@ -728,7 +737,7 @@ class AlphaVantageCompanyDataSource:
         field: str,
         ticker: str,
     ) -> float:
-        if self._is_missing_number(value):
+        if self._is_missing_value(value):
             raise CompsRunExecutionError(
                 f"Missing Alpha Vantage evidence for {ticker} at {field}."
             )
@@ -744,7 +753,7 @@ class AlphaVantageCompanyDataSource:
             )
         return parsed
 
-    def _is_missing_number(self, value: object) -> bool:
+    def _is_missing_value(self, value: object) -> bool:
         return value is None or str(value).strip().lower() in {
             "",
             "none",

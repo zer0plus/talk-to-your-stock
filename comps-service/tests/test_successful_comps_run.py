@@ -225,7 +225,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         self.assertEqual(body["table"]["run_id"], body["run"]["id"])
 
-    def test_alpha_vantage_payloads_are_normalized_through_the_comps_tool(
+    def test_provider_payload_with_missing_currency_is_persisted(
         self,
     ) -> None:
         fixture = json.loads(
@@ -243,6 +243,8 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 payload[symbol_field] = symbol
             if function == "OVERVIEW" and symbol != "AAPL":
                 payload["Name"] = f"{symbol} Example Company"
+            if function == "INCOME_STATEMENT" and symbol == "MSFT":
+                payload["quarterlyReports"][0]["reportedCurrency"] = "None"
             return httpx.Response(200, json=payload)
 
         source = AlphaVantageCompanyDataSource(
@@ -276,7 +278,8 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        row = response.json()["table"]["rows"][0]
+        body = response.json()
+        row = body["table"]["rows"][0]
         self.assertEqual(
             {
                 "ticker": row["ticker"],
@@ -307,7 +310,11 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "as_of": "2026-07-17T00:00:00Z",
             },
         )
-        run_id = UUID(response.json()["run"]["id"])
+        run_id = UUID(body["run"]["id"])
+        client = TestClient(app)
+        self.assertEqual(client.get(f"/v1/runs/{run_id}").status_code, 200)
+        self.assertEqual(client.get(f"/v1/runs/{run_id}/table").status_code, 200)
+        self.assertEqual(client.get(f"/v1/runs/{run_id}/trace").status_code, 200)
         snapshot = self.repository.get_source_snapshot(run_id)
         self.assertIsNotNone(snapshot)
         assert snapshot is not None
@@ -321,6 +328,18 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "balance_sheet",
             },
         )
+        self.assertEqual(
+            snapshot.raw_provider_evidence["MSFT"]["income_statement"][
+                "quarterlyReports"
+            ][0]["reportedCurrency"],
+            "None",
+        )
+        msft_input = next(
+            company
+            for company in snapshot.normalized_inputs
+            if company.ticker == "MSFT"
+        )
+        self.assertEqual(msft_input.currency, "USD")
         normalized = snapshot.normalized_inputs[0]
         self.assertTrue(
             all(
@@ -335,7 +354,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         trace_inputs = {
             trace_input["field"]: trace_input
-            for formula in response.json()["trace"]["formulas"]
+            for formula in body["trace"]["formulas"]
             if formula["ticker"] == "AAPL"
             for trace_input in formula["inputs"]
             if not trace_input["source"].startswith("calculated.")

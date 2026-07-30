@@ -177,6 +177,46 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                         currency="USD",
                     )
 
+    def test_conflicting_report_currency_evidence_fails(self) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        fixture["INCOME_STATEMENT"]["quarterlyReports"][0][
+            "reportedCurrency"
+        ] = "EUR"
+
+        def respond(request):
+            return httpx.Response(
+                200,
+                json=deepcopy(fixture[request.url.params["function"]]),
+            )
+
+        with self.assertRaisesRegex(
+            CompsRunExecutionError,
+            "expected USD, received EUR, USD",
+        ):
+            self._source(respond).load(tickers=["AAPL"], currency="USD")
+
+    def test_missing_report_currency_evidence_fails(self) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+        for function in ("INCOME_STATEMENT", "BALANCE_SHEET"):
+            for report in fixture[function]["quarterlyReports"]:
+                report["reportedCurrency"] = "None"
+
+        def respond(request):
+            return httpx.Response(
+                200,
+                json=deepcopy(fixture[request.url.params["function"]]),
+            )
+
+        with self.assertRaisesRegex(
+            CompsRunExecutionError,
+            "Missing Alpha Vantage evidence.*reportedCurrency",
+        ):
+            self._source(respond).load(tickers=["AAPL"], currency="USD")
+
     def test_missing_fx_evidence_fails_instead_of_mislabeling_input(self) -> None:
         fixture = json.loads(
             (FIXTURE_ROOT / "usd_company_latest.json").read_text()
