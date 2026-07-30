@@ -20,10 +20,14 @@ from talk_to_your_stock_shared import (
     MessageRole,
     MessageStatus,
     ReadinessResponse,
+    Run,
+    RunResponse,
+    RunTableResponse,
     ServiceName,
     ServiceStatus,
     ThreadListResponse,
     ThreadResponse,
+    TraceResponse,
     User,
 )
 from talk_to_your_stock_shared.readiness import (
@@ -33,8 +37,17 @@ from talk_to_your_stock_shared.readiness import (
 from talk_to_your_stock_shared.time import utc_now
 from web_bff.agent_client import AgentServiceUnavailable, HttpAgentClient
 from web_bff.auth import AuthenticationError, authenticate_user
+from web_bff.comps_client import (
+    CompsArtifactNotFound,
+    CompsServiceUnavailable,
+    HttpCompsClient,
+)
 from web_bff.repository import InvalidCursorError, PostgresWebBffRepository
-from web_bff.readiness import check_agent_service, check_web_bff_database
+from web_bff.readiness import (
+    check_agent_service,
+    check_comps_service,
+    check_web_bff_database,
+)
 from web_bff.turn_coordinator import ThreadTurnCoordinator
 
 app = FastAPI(
@@ -75,6 +88,38 @@ def handle_agent_service_unavailable(
         content=ErrorResponse(
             error=ErrorDetail(
                 code=ErrorCode.UPSTREAM_ERROR,
+                message=str(exc),
+            )
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(CompsServiceUnavailable)
+def handle_comps_service_unavailable(
+    _request,
+    exc: CompsServiceUnavailable,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content=ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.UPSTREAM_ERROR,
+                message=str(exc),
+            )
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(CompsArtifactNotFound)
+def handle_comps_artifact_not_found(
+    _request,
+    exc: CompsArtifactNotFound,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content=ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.NOT_FOUND,
                 message=str(exc),
             )
         ).model_dump(mode="json"),
@@ -132,7 +177,10 @@ def ready(response: Response) -> ReadinessResponse:
     readiness = build_readiness_response(
         service=ServiceName.WEB_BFF,
         database_checker=check_web_bff_database,
-        additional_checkers={"agent_service": check_agent_service},
+        additional_checkers={
+            "agent_service": check_agent_service,
+            "comps_service": check_comps_service,
+        },
     )
     response.status_code = readiness_http_status(readiness)
     return readiness
@@ -144,6 +192,10 @@ def get_repository() -> PostgresWebBffRepository:
 
 def get_agent_client() -> HttpAgentClient:
     return HttpAgentClient.from_env()
+
+
+def get_comps_client() -> HttpCompsClient:
+    return HttpCompsClient.from_env()
 
 
 def get_thread_turn_coordinator() -> ThreadTurnCoordinator:
@@ -334,6 +386,95 @@ def create_message(
             run=run,
             events_url=None,
         )
+
+
+@app.get(
+    "/v1/runs/{run_id}",
+    response_model=RunResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
+    comps_client: Annotated[HttpCompsClient, Depends(get_comps_client)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> RunResponse:
+    run = _get_owned_run(
+        run_id=run_id,
+        repository=repository,
+        comps_client=comps_client,
+        current_user=current_user,
+    )
+    return RunResponse(run=run)
+
+
+@app.get(
+    "/v1/runs/{run_id}/table",
+    response_model=RunTableResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run_table(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
+    comps_client: Annotated[HttpCompsClient, Depends(get_comps_client)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> RunTableResponse:
+    _get_owned_run(
+        run_id=run_id,
+        repository=repository,
+        comps_client=comps_client,
+        current_user=current_user,
+    )
+    return comps_client.get_table(run_id)
+
+
+@app.get(
+    "/v1/runs/{run_id}/trace",
+    response_model=TraceResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run_trace(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
+    comps_client: Annotated[HttpCompsClient, Depends(get_comps_client)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> TraceResponse:
+    _get_owned_run(
+        run_id=run_id,
+        repository=repository,
+        comps_client=comps_client,
+        current_user=current_user,
+    )
+    return comps_client.get_trace(run_id)
+
+
+def _get_owned_run(
+    *,
+    run_id: UUID,
+    repository: PostgresWebBffRepository,
+    comps_client: HttpCompsClient,
+    current_user: User,
+) -> Run:
+    user = repository.upsert_user(current_user)
+    run = comps_client.get_run(run_id)
+    if repository.get_thread(thread_id=run.thread_id, user_id=user.id) is None:
+        raise CompsArtifactNotFound("Run not found.")
+    return run
 
 
 def _validation_error_details(exc: RequestValidationError) -> dict[str, object]:

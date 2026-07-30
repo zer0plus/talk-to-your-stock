@@ -201,7 +201,7 @@ def _required_config_names(
             )
         else:
             required.extend(["DEV_AUTH_USER_ID", "DEV_AUTH_EMAIL"])
-        required.extend(["AGENT_SERVICE_URL"])
+        required.extend(["AGENT_SERVICE_URL", "COMPS_SERVICE_URL"])
     elif service == ServiceName.AGENT_SERVICE:
         required.extend(
             [

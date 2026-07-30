@@ -13,7 +13,7 @@ from web_bff.main import app
 
 class WebBffReadinessTest(unittest.TestCase):
     def setUp(self) -> None:
-        agent_response = httpx.Response(
+        self.agent_response = httpx.Response(
             200,
             request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
             json={
@@ -23,7 +23,26 @@ class WebBffReadinessTest(unittest.TestCase):
                 "time": "2026-07-15T00:00:00Z",
             },
         )
-        agent_get_patcher = patch("httpx.get", return_value=agent_response)
+        self.agent_error: Exception | None = None
+        comps_response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "http://comps-service:8002/v1/ready"),
+            json={
+                "status": "ready",
+                "service": "comps-service",
+                "checks": {},
+                "time": "2026-07-15T00:00:00Z",
+            },
+        )
+
+        def readiness_response(url: str, **_kwargs: object) -> httpx.Response:
+            if "comps-service" in url:
+                return comps_response
+            if self.agent_error is not None:
+                raise self.agent_error
+            return self.agent_response
+
+        agent_get_patcher = patch("httpx.get", side_effect=readiness_response)
         self.agent_get = agent_get_patcher.start()
         self.addCleanup(agent_get_patcher.stop)
 
@@ -34,8 +53,9 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
-        self.agent_get.side_effect = httpx.ConnectError("connection refused")
+        self.agent_error = httpx.ConnectError("connection refused")
 
         with (
             patch.dict(os.environ, env, clear=True),
@@ -51,7 +71,7 @@ class WebBffReadinessTest(unittest.TestCase):
             body["checks"]["agent_service"]["message"],
             "Agent Service readiness check failed.",
         )
-        self.agent_get.assert_called_once_with(
+        self.agent_get.assert_any_call(
             "http://agent-service:8001/v1/ready",
             timeout=2,
         )
@@ -63,8 +83,9 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
-        self.agent_get.return_value = httpx.Response(
+        self.agent_response = httpx.Response(
             200,
             request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
             json={"status": "ready"},
@@ -85,8 +106,9 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
-        self.agent_get.return_value = httpx.Response(
+        self.agent_response = httpx.Response(
             200,
             request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
             json={
@@ -112,8 +134,9 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
-        self.agent_get.return_value = httpx.Response(
+        self.agent_response = httpx.Response(
             200,
             request=httpx.Request("GET", "http://agent-service:8001/v1/ready"),
             json={
@@ -139,6 +162,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (
@@ -167,6 +191,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (
@@ -188,6 +213,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (
@@ -209,6 +235,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (
@@ -230,6 +257,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (
@@ -255,6 +283,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "MANAGED_AUTH_ISSUER": "https://auth.example.com",
             "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
             "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
             "DEV_AUTH_EMAIL": "dev@example.com",
         }
@@ -279,6 +308,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "MANAGED_AUTH_ISSUER": "https://auth.example.com",
             "MANAGED_AUTH_AUDIENCE": "talk-to-your-stock",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (
@@ -300,6 +330,7 @@ class WebBffReadinessTest(unittest.TestCase):
             "DEV_AUTH_USER_ID": "dev-user",
             "DEV_AUTH_EMAIL": "dev@example.com",
             "AGENT_SERVICE_URL": "http://agent-service:8001",
+            "COMPS_SERVICE_URL": "http://comps-service:8002",
         }
 
         with (

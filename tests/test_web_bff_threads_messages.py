@@ -27,16 +27,21 @@ from talk_to_your_stock_shared import (
     Message,
     MessageRole,
     MessageStatus,
+    MinMedianMax,
     PaginationMeta,
     Run,
     RunStatus,
+    RunTableResponse,
     Thread,
+    TraceResponse,
     User,
 )
+from talk_to_your_stock_shared.schemas import RunTableSummary, RunTableSummaryStats
 from tests.live_service import running_service
 from web_bff.main import (
     app,
     get_agent_client,
+    get_comps_client,
     get_repository,
     get_thread_turn_coordinator,
 )
@@ -49,6 +54,7 @@ LOCAL_ENV = {
     "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
     "DEV_AUTH_EMAIL": "dev@example.com",
     "AGENT_SERVICE_URL": "http://agent-service.test",
+    "COMPS_SERVICE_URL": "http://comps-service.test",
 }
 
 
@@ -116,6 +122,32 @@ class ControlledAgent:
         if self._response_factory is not None:
             return self._response_factory(user_message)
         return self._response
+
+
+class ControlledCompsClient:
+    def __init__(
+        self,
+        *,
+        run: Run,
+        table: RunTableResponse,
+        trace: TraceResponse,
+    ) -> None:
+        self.run = run
+        self.table = table
+        self.trace = trace
+        self.reads: list[tuple[str, UUID]] = []
+
+    def get_run(self, run_id: UUID) -> Run:
+        self.reads.append(("run", run_id))
+        return self.run
+
+    def get_table(self, run_id: UUID) -> RunTableResponse:
+        self.reads.append(("table", run_id))
+        return self.table
+
+    def get_trace(self, run_id: UUID) -> TraceResponse:
+        self.reads.append(("trace", run_id))
+        return self.trace
 
 
 class RecordingRepository:
@@ -439,6 +471,73 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         fetched = client.get(f"/v1/threads/{created_thread['id']}")
         self.assertEqual(fetched.json()["thread"]["latest_run_id"], body["run"]["id"])
 
+    def test_owned_run_table_and_trace_are_read_through_comps_service(self) -> None:
+        repository = RecordingRepository()
+        created_thread_id: UUID | None = None
+
+        def agent_response(user_message: Message) -> ControlledAgentResponse:
+            assert created_thread_id is not None
+            return ControlledAgentResponse(
+                content="Table-backed response.",
+                run=_run(
+                    thread_id=created_thread_id,
+                    trigger_message_id=user_message.id,
+                ),
+            )
+
+        client = self._client(
+            repository=repository,
+            agent=ControlledAgent(
+                repository=repository,
+                response_factory=agent_response,
+            ),
+        )
+        thread = client.post("/v1/threads", json={"title": "Comps"}).json()["thread"]
+        created_thread_id = UUID(thread["id"])
+        created = client.post(
+            f"/v1/threads/{thread['id']}/messages",
+            json={"content": "Compare AAPL with MSFT"},
+        ).json()
+        run = Run.model_validate(created["run"])
+        table, trace = _artifacts(run)
+        comps_client = ControlledCompsClient(run=run, table=table, trace=trace)
+        app.dependency_overrides[get_comps_client] = lambda: comps_client
+
+        run_response = client.get(f"/v1/runs/{run.id}")
+        table_response = client.get(f"/v1/runs/{run.id}/table")
+        trace_response = client.get(f"/v1/runs/{run.id}/trace")
+
+        self.assertEqual(run_response.status_code, 200)
+        self.assertEqual(run_response.json()["run"]["id"], str(run.id))
+        self.assertEqual(table_response.status_code, 200)
+        self.assertEqual(table_response.json()["run_id"], str(run.id))
+        self.assertEqual(trace_response.status_code, 200)
+        self.assertEqual(trace_response.json()["run_id"], str(run.id))
+        self.assertEqual(
+            comps_client.reads,
+            [
+                ("run", run.id),
+                ("run", run.id),
+                ("table", run.id),
+                ("run", run.id),
+                ("trace", run.id),
+            ],
+        )
+
+    def test_run_readback_hides_runs_from_unowned_threads(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        run = _run(thread_id=uuid4(), trigger_message_id=uuid4())
+        table, trace = _artifacts(run)
+        comps_client = ControlledCompsClient(run=run, table=table, trace=trace)
+        app.dependency_overrides[get_comps_client] = lambda: comps_client
+
+        response = client.get(f"/v1/runs/{run.id}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+        self.assertEqual(comps_client.reads, [("run", run.id)])
+
     def test_agent_run_must_belong_to_current_thread_and_user_message(self) -> None:
         repository = RecordingRepository()
         agent = ControlledAgent(
@@ -504,6 +603,32 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
         self.assertIn("AGENT_SERVICE_URL", response.json()["error"]["message"])
 
+    def test_missing_comps_configuration_returns_upstream_error(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(
+            repository=repository,
+            env={
+                key: value
+                for key, value in LOCAL_ENV.items()
+                if key != "COMPS_SERVICE_URL"
+            },
+        )
+
+        response = client.get(f"/v1/runs/{uuid4()}")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
+        self.assertIn("COMPS_SERVICE_URL", response.json()["error"]["message"])
+
+    def test_invalid_run_id_returns_validation_error(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+
+        response = client.get("/v1/runs/not-a-uuid")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+
     def test_request_validation_errors_use_error_response_shape(self) -> None:
         repository = RecordingRepository()
         client = self._client(repository=repository)
@@ -568,6 +693,26 @@ def _run(*, thread_id: UUID, trigger_message_id: UUID) -> Run:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _artifacts(run: Run) -> tuple[RunTableResponse, TraceResponse]:
+    empty_stats = MinMedianMax(min=None, median=None, max=None)
+    table = RunTableResponse(
+        run_id=run.id,
+        target_ticker=run.target_ticker,
+        currency=run.currency,
+        as_of=run.as_of,
+        rows=[],
+        summary=RunTableSummary(
+            stats=RunTableSummaryStats(
+                ev_to_revenue=empty_stats,
+                ev_to_ebit=empty_stats,
+                ev_to_ebitda=empty_stats,
+                pe=empty_stats,
+            )
+        ),
+    )
+    return table, TraceResponse(run_id=run.id, formulas=[])
 
 
 if __name__ == "__main__":
