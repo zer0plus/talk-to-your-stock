@@ -54,20 +54,19 @@ flowchart LR
 Notes:
 
 * `Comps Service` owns the domain capability and its execution mode. The Agent calls the `generate_comps_table` tool contract and does not enqueue jobs or depend on worker mechanics.
-* During PRD #10, the backend is a local-only, single-user system and must not be exposed to an untrusted network. The Agent-to-Comps internal Tool route uses a shared Service Credential as local defense in depth. Public deployment controls and production-grade service identity are deferred with the rest of the authentication work.
+* During PRD #10, the backend is a local-only, single-user system and must not be exposed to an untrusted network. Local identity is configured explicitly through `DEV_AUTH_USER_ID` and `DEV_AUTH_EMAIL`; these values select the deterministic product-state owner and do not authenticate the operator. The Agent-to-Comps internal Tool route uses a shared Service Credential as local defense in depth. Managed JWT configuration is retained as production scaffolding, but verification and public-deployment controls remain incomplete.
 * MVP CSV/XLSX exports are owned by `Comps Service` because they are direct representations of comps table results.
 * Implementation should keep exports in an internal `exports/` module so the boundary can become a standalone service later if exports become async, template-heavy, multi-artifact, or independently scalable.
 * MVP source snapshots are stored in PostgreSQL JSONB as separate run-bound records, not in object storage. They remain conceptually and schematically separate from the reusable Fundamental Cache.
 * Object Storage is deferred until source snapshots become large, file-like, numerous enough to require lifecycle policies, or otherwise artifact-like.
 
-### Authentication Deferral for PRD #10
+### Authentication Boundary for PRD #10
 
-* PRD #10 and all of its child issues target a local, single-user demo. They do not implement user authentication or authorization.
-* The Web BFF uses one deterministic local User identity to associate Threads, Messages, and Runs with the local operator. This identity is product-state ownership, not proof of identity.
-* Login, OAuth, user JWT issuance or verification, user sessions, tenant enforcement, and user authorization are all deferred.
+* PRD #10 and all of its child issues target a local, single-user demo. Local requests require no login, Authorization header, User token, or credential verification.
+* The Web BFF uses `DEV_AUTH_USER_ID` and `DEV_AUTH_EMAIL` to configure one deterministic local User identity for Threads, Messages, and Runs. Despite the variable names, this is explicit product-state ownership configuration, not proof of identity or a development authentication mechanism.
+* The existing managed-auth/JWT configuration and Authorization handling record the intended production boundary. JWT verification, login, OAuth, user sessions, tenant enforcement, and User authorization are not implemented, and production readiness must continue to fail until they are.
 * `COMPS_SERVICE_INTERNAL_TOKEN` is a narrow Service Credential for authenticating the Agent Service to the Comps Service. It does not authenticate or authorize a User and does not make the local stack ready for an untrusted network.
-* Authentication work begins only after PRD #10 and all child issues under it are complete.
-* A follow-up PRD must define the authentication provider, user identity mapping, authorization boundaries, production-grade service identity, production readiness requirements, and deployment threat model before any public authentication contracts are exposed.
+* A follow-up PRD must finish the authentication provider, User identity mapping, authorization boundaries, production-grade service identity, production readiness requirements, and deployment threat model before public deployment.
 * Until that follow-up work is implemented, TalkToYourStock is local-only and must not claim readiness for public or untrusted-network deployment.
 
 ### Repository Layout
@@ -161,4 +160,4 @@ under a separate folder later if deployment-specific artifacts are needed.
   Rejected because operational overhead is high for MVP and slows product learning.
 
 * **Implement authentication alongside PRD #10**
-  Deferred because the first milestone is a local, single-user learning demo. Authentication adds provider, token, authorization, readiness, and deployment work without helping validate the canonical comps-backed path. It will be planned after PRD #10 and all child issues are complete.
+  Deferred because the first milestone is a local, single-user learning demo. The retained local-identity and managed-auth scaffolding does not verify credentials or make production ready. Completing authentication adds provider, token, authorization, readiness, and deployment work without helping validate the canonical comps-backed path, so it will be planned after PRD #10 and all child issues are complete.

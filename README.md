@@ -141,9 +141,14 @@ curl http://localhost:8001/v1/health
 curl http://localhost:8002/v1/health
 ```
 
-Readiness currently returns `503` for the canonical Comps path until real provider and FX Run inputs are connected. This is intentional.
+Readiness returns `503` when required configuration, migrations, or downstream
+services are unavailable. With the real local configuration in place, all three
+services report ready.
 
-See the [development guide](dev/README.md) for environment variables, readiness behavior, and manual Python setup.
+See the [development guide](dev/README.md) for environment variables and
+readiness behavior. Use the [canonical backend smoke](dev/backend-smoke.md) to
+verify the full Message-to-Run path, provider/FX behavior, artifact readback,
+and ADK Tool events.
 
 ### Tests
 
