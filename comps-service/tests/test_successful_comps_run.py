@@ -227,6 +227,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(body["run"]["status"], "succeeded")
         self.assertEqual(body["run"]["target_ticker"], "AAPL")
         self.assertEqual(body["run"]["peer_tickers"], ["MSFT", "GOOG"])
+        self.assertEqual(body["run"]["as_of"], body["table"]["as_of"])
         self.assertEqual(
             {row["ticker"] for row in body["table"]["rows"]},
             {"AAPL", "MSFT", "GOOG"},

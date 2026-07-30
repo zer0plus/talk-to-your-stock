@@ -317,6 +317,10 @@ class CompsMigrationsTest(unittest.TestCase):
                 self.assertEqual(trace_readback.status_code, 200, trace_readback.text)
                 self.assertEqual(run_readback.json()["run"], created.json()["run"])
                 self.assertEqual(table_readback.json(), created.json()["table"])
+                self.assertEqual(
+                    run_readback.json()["run"]["as_of"],
+                    table_readback.json()["as_of"],
+                )
                 self.assertEqual(trace_readback.json(), created.json()["trace"])
                 self.assertIsNotNone(source_snapshot)
                 assert source_snapshot is not None
