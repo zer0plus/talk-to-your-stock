@@ -312,8 +312,15 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         run_id = UUID(body["run"]["id"])
         client = TestClient(app)
-        self.assertEqual(client.get(f"/v1/runs/{run_id}").status_code, 200)
-        self.assertEqual(client.get(f"/v1/runs/{run_id}/table").status_code, 200)
+        persisted_run = client.get(f"/v1/runs/{run_id}")
+        persisted_table = client.get(f"/v1/runs/{run_id}/table")
+        self.assertEqual(persisted_run.status_code, 200)
+        self.assertEqual(persisted_run.json()["run"]["status"], "succeeded")
+        self.assertEqual(persisted_table.status_code, 200)
+        self.assertEqual(
+            {row["ticker"] for row in persisted_table.json()["rows"]},
+            {"AAPL", "MSFT"},
+        )
         self.assertEqual(client.get(f"/v1/runs/{run_id}/trace").status_code, 200)
         snapshot = self.repository.get_source_snapshot(run_id)
         self.assertIsNotNone(snapshot)
