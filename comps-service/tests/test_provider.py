@@ -201,15 +201,8 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
             source.load(tickers=["AAPL"], currency="USD")
 
     def test_missing_quote_currency_evidence_fails_clearly(self) -> None:
-        fixture = json.loads(
-            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
-        )
-
-        def respond(request):
-            return httpx.Response(
-                200,
-                json=deepcopy(fixture[request.url.params["function"]]),
-            )
+        def respond(_request):
+            self.fail("Missing quote currency must fail before provider requests.")
 
         source = AlphaVantageCompanyDataSource(
             environ={

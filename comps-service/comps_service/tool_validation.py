@@ -104,10 +104,12 @@ class AlphaVantageTickerValidator:
         environ: Mapping[str, str] | None = None,
         request_limiter: AlphaVantageRequestLimiter | None = None,
         ticker_directory: TickerDirectory | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.environ = os.environ if environ is None else environ
         self._request_limiter = request_limiter or ALPHA_VANTAGE_REQUEST_LIMITER
         self._ticker_directory = ticker_directory or TICKER_DIRECTORY
+        self._transport = transport
 
     def is_supported(self, ticker: str) -> bool:
         known_entry = self._ticker_directory.find(ticker)
@@ -142,7 +144,12 @@ class AlphaVantageTickerValidator:
         api_key = self._api_key()
         try:
             self._wait_for_rate_limit_slot()
-            with httpx.Client(timeout=self._timeout_seconds()) as client:
+            client_options: dict[str, object] = {
+                "timeout": self._timeout_seconds()
+            }
+            if self._transport is not None:
+                client_options["transport"] = self._transport
+            with httpx.Client(**client_options) as client:
                 response = client.get(
                     self.environ.get(
                         ALPHA_VANTAGE_BASE_URL_VAR,

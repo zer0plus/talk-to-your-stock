@@ -24,7 +24,10 @@ from comps_service.main import (
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
 from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
-from comps_service.tool_validation import TickerDirectory
+from comps_service.tool_validation import (
+    AlphaVantageTickerValidator,
+    TickerDirectory,
+)
 from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
 
 
@@ -364,14 +367,24 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             (FIXTURE_ROOT / "cad_to_usd_latest.json").read_text()
         )
         fx_requests: list[tuple[str, str]] = []
-        ticker_directory = self._ticker_directory(
-            "AAPL",
-            "MSFT",
-            currency="GBP",
-        )
+        ticker_directory = TickerDirectory()
 
         def respond(request):
             function = request.url.params["function"]
+            if function == "SYMBOL_SEARCH":
+                ticker = request.url.params["keywords"]
+                return httpx.Response(
+                    200,
+                    json={
+                        "bestMatches": [
+                            {
+                                "1. symbol": ticker,
+                                "3. type": "Equity",
+                                "8. currency": "GBP",
+                            }
+                        ]
+                    },
+                )
             if function == "CURRENCY_EXCHANGE_RATE":
                 from_currency = request.url.params["from_currency"]
                 to_currency = request.url.params["to_currency"]
@@ -398,14 +411,22 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                     report["reportedCurrency"] = "CAD"
             return httpx.Response(200, json=payload)
 
-        source = AlphaVantageCompanyDataSource(
-            environ={
-                "ALPHA_VANTAGE_API_KEY": "fixture-key",
-                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
-            },
-            transport=httpx.MockTransport(respond),
+        provider_environ = {
+            "ALPHA_VANTAGE_API_KEY": "fixture-key",
+            "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+        }
+        transport = httpx.MockTransport(respond)
+        validator = AlphaVantageTickerValidator(
+            environ=provider_environ,
+            transport=transport,
             ticker_directory=ticker_directory,
         )
+        source = AlphaVantageCompanyDataSource(
+            environ=provider_environ,
+            transport=transport,
+            ticker_directory=ticker_directory,
+        )
+        app.dependency_overrides[get_ticker_validator] = lambda: validator
         app.dependency_overrides[get_company_data_source] = lambda: source
 
         with patch.dict(

@@ -91,6 +91,14 @@ class AlphaVantageCompanyDataSource:
             tuple[float, dict[str, Any], str],
         ],
     ) -> tuple[CompanyCompsInput, dict[str, object]]:
+        self._api_key()
+        ticker_entry = self._ticker_directory.find(ticker)
+        provider_match = ticker_entry.provider_match if ticker_entry else None
+        quote_currency = self._required_text(
+            ticker_entry.quote_currency if ticker_entry else None,
+            field="SYMBOL_SEARCH.8. currency",
+            ticker=ticker,
+        ).upper()
         quote_payload = self._fetch_json(function="GLOBAL_QUOTE", symbol=ticker)
         overview = self._fetch_json(function="OVERVIEW", symbol=ticker)
         income = self._fetch_json(function="INCOME_STATEMENT", symbol=ticker)
@@ -123,13 +131,6 @@ class AlphaVantageCompanyDataSource:
             provider_function="BALANCE_SHEET",
         )
 
-        ticker_entry = self._ticker_directory.find(ticker)
-        provider_match = ticker_entry.provider_match if ticker_entry else None
-        quote_currency = self._required_text(
-            ticker_entry.quote_currency if ticker_entry else None,
-            field="SYMBOL_SEARCH.8. currency",
-            ticker=ticker,
-        ).upper()
         fundamental_currency = self._required_text(
             overview.get("Currency"),
             field="OVERVIEW.Currency",
