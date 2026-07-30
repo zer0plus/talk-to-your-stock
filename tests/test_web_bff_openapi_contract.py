@@ -77,3 +77,25 @@ def test_failed_run_errors_are_declared_in_source_and_generated_contracts() -> N
     assert generated_responses["503"]["content"]["application/json"]["schema"][
         "$ref"
     ] == "#/components/schemas/ErrorResponse"
+
+
+def test_run_as_of_is_nullable_in_source_and_generated_contracts() -> None:
+    source_contract = yaml.safe_load(
+        (REPO_ROOT / "api" / "openapi.yaml").read_text()
+    )
+    source_as_of = source_contract["components"]["schemas"]["Run"]["properties"][
+        "as_of"
+    ]
+    assert source_as_of == {
+        "type": ["string", "null"],
+        "format": "date-time",
+    }
+
+    generated_contract = TestClient(app).get("/openapi.json").json()
+    generated_as_of = generated_contract["components"]["schemas"]["Run"][
+        "properties"
+    ]["as_of"]
+    assert generated_as_of["anyOf"] == [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"},
+    ]

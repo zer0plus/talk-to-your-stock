@@ -227,7 +227,7 @@ class CompsRunService:
             target_ticker=target_ticker,
             peer_tickers=peer_tickers,
             currency=request.currency.upper(),
-            as_of=started_at,
+            as_of=None,
             error_message=str(cause),
             created_at=started_at,
             started_at=started_at,

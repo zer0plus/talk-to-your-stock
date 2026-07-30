@@ -125,7 +125,7 @@ class Run(ContractModel):
     target_ticker: Ticker
     peer_tickers: list[Ticker] = Field(min_length=1)
     currency: Currency = Field(min_length=3, max_length=3)
-    as_of: datetime
+    as_of: datetime | None
     warnings: list[str] = Field(default_factory=list)
     error_message: str | None = None
     created_at: datetime

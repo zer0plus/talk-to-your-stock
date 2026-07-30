@@ -345,6 +345,7 @@ class CompsMigrationsTest(unittest.TestCase):
                     failed_run_readback.json()["run"]["status"],
                     "failed",
                 )
+                self.assertIsNone(failed_run_readback.json()["run"]["as_of"])
                 self.assertEqual(failed_run_readback.json()["run"]["warnings"], [])
                 self.assertEqual(failed_table_readback.status_code, 404)
                 self.assertEqual(failed_trace_readback.status_code, 404)

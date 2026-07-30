@@ -225,6 +225,7 @@ class FailedCompsRunTest(unittest.TestCase):
         self.assertEqual(readback.status_code, 200, readback.text)
         run = readback.json()["run"]
         self.assertEqual(run["status"], "failed")
+        self.assertIsNone(run["as_of"])
         self.assertEqual(
             run["error_message"],
             "Alpha Vantage INCOME_STATEMENT returned no evidence for MSFT.",
