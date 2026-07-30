@@ -136,6 +136,6 @@ Production mode does not accept `DEV_AUTH_*` config. It requires:
 - All services: `DATABASE_URL`
 
 Missing production configuration fails readiness clearly. Even with all listed
-configuration, Agent routing remains not ready in production until public
-deployment controls exist. The local dev-auth identity is not a production
-fallback.
+configuration, Comps Service configuration and Agent routing remain not ready in
+production until public deployment controls exist. The local dev-auth identity
+is not a production fallback.

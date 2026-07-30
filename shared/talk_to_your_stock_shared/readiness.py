@@ -108,6 +108,15 @@ def check_configuration(
             message="Managed JWT verification is not implemented.",
         )
 
+    if service == ServiceName.COMPS_SERVICE and environment == PRODUCTION_ENVIRONMENT:
+        return ReadinessCheck(
+            status=DependencyStatus.FAIL,
+            message=(
+                "Comps Service is local-only until production-grade service "
+                "identity and public deployment controls are implemented."
+            ),
+        )
+
     return ReadinessCheck(status=DependencyStatus.OK)
 
 

@@ -48,6 +48,29 @@ class CompsReadinessTest(unittest.TestCase):
             {"status": "ok", "message": None},
         )
 
+    def test_production_readiness_fails_until_public_deployment_controls_exist(
+        self,
+    ) -> None:
+        env = {
+            **COMPS_ENV,
+            "TALK_TO_YOUR_STOCK_ENV": "production",
+        }
+        with patch.dict(os.environ, env, clear=True), database_connects():
+            response = TestClient(app).get("/v1/ready")
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["status"], "not_ready")
+        self.assertEqual(
+            response.json()["checks"]["configuration"],
+            {
+                "status": "fail",
+                "message": (
+                    "Comps Service is local-only until production-grade service "
+                    "identity and public deployment controls are implemented."
+                ),
+            },
+        )
+
     def test_readiness_rejects_invalid_provider_runtime_settings(self) -> None:
         cases = (
             (
