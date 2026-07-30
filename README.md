@@ -9,7 +9,7 @@
 <h1 align="center">Talk to Your Stock</h1>
 
 <p align="center">
-  <strong>Fundamental analysis with deterministic, auditable trading comps.</strong>
+  <strong>Equity analysis, simplified.</strong>
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
   <img alt="Status: active development" src="https://img.shields.io/badge/Status-Active_development-F59E0B" />
 </p>
 
-Talk to Your Stock turns natural-language company comparison requests into structured trading comps.
+Currently, Talk to Your Stock aims to turn natural-language company comparison requests into structured trading comps.
 
 The model interprets intent. Python calculates the numbers. Each successful Run links the answer to a Comps Table, formula-level Trace, and immutable Source Snapshot.
 
