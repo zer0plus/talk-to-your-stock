@@ -364,6 +364,10 @@ class FailedCompsRunTest(unittest.TestCase):
             {"symbol_search"},
         )
         self.assertEqual(
+            snapshot.raw_provider_evidence["GOOG"]["symbol_search"]["1. symbol"],
+            "GOOG",
+        )
+        self.assertEqual(
             snapshot.raw_provider_evidence["MSFT"]["income_statement"],
             {
                 "Information": (
