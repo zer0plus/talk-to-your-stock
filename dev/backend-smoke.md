@@ -1,8 +1,9 @@
 # Canonical Backend Smoke
 
-This manual smoke verifies the complete local explicit-peer Comps path with real
-Google ADK, Alpha Vantage, and FX behavior. It covers PostgreSQL, Web BFF, Agent
-Service, Comps Service, persisted Run artifacts, and ADK-native event history.
+This manual smoke verifies the complete local Comps path with User-supplied Peer
+Tickers using real Google ADK, Alpha Vantage, and FX behavior. It covers
+PostgreSQL, Web BFF, Agent Service, Comps Service, persisted Run artifacts, and
+ADK-native event history.
 
 Run every command from the repository root in the same terminal. The smoke is
 opt-in because it consumes live model and provider quota.
@@ -150,6 +151,24 @@ SMOKE_THREAD_JSON="$(
 )"
 export SMOKE_THREAD_ID="$(jq -er '.thread.id' <<<"$SMOKE_THREAD_JSON")"
 export SMOKE_USER_ID="$(jq -er '.thread.user_id' <<<"$SMOKE_THREAD_JSON")"
+SMOKE_CONFIGURED_USER_ID="$(
+  docker compose --env-file dev/.env -f dev/docker-compose.yml exec -T \
+    web-bff printenv DEV_AUTH_USER_ID
+)"
+SMOKE_CONFIGURED_EMAIL="$(
+  docker compose --env-file dev/.env -f dev/docker-compose.yml exec -T \
+    web-bff printenv DEV_AUTH_EMAIL
+)"
+SMOKE_IDENTITY_JSON="$(
+  curl --fail --silent --show-error "${SMOKE_BASE_URL}/v1/me"
+)"
+
+jq -e \
+  --arg user_id "$SMOKE_CONFIGURED_USER_ID" \
+  --arg email "$SMOKE_CONFIGURED_EMAIL" \
+  '.user.id == $user_id and .user.email == $email' \
+  <<<"$SMOKE_IDENTITY_JSON"
+test "$SMOKE_USER_ID" = "$SMOKE_CONFIGURED_USER_ID"
 
 SMOKE_MESSAGE_JSON="$(
   curl --fail --silent --show-error \
@@ -177,8 +196,9 @@ jq -e \
 jq '{user_message, assistant_message, run}' <<<"$SMOKE_MESSAGE_JSON"
 ```
 
-The response must link both the User Message and Assistant Message to one
-succeeded Run for IBM and MSFT.
+The Thread and `/v1/me` responses must identify the User configured through
+`DEV_AUTH_USER_ID` and `DEV_AUTH_EMAIL`. The Message response must link both the
+User Message and Assistant Message to one succeeded Run for IBM and MSFT.
 
 ## 5. Read Back The Run, Comps Table, And Trace
 
