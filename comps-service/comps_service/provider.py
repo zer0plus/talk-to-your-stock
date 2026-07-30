@@ -155,6 +155,10 @@ class AlphaVantageCompanyDataSource:
             field="GLOBAL_QUOTE.05. price",
             ticker=ticker,
         )
+        if share_price <= 0:
+            raise CompsRunExecutionError(
+                f"Alpha Vantage returned a non-positive quote price for {ticker}."
+            )
         shares_outstanding, shares_source = self._first_number(
             [
                 (

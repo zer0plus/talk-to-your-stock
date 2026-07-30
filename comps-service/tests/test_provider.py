@@ -147,6 +147,32 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
         ):
             source.load(tickers=["AAPL"], currency="USD")
 
+    def test_non_positive_quote_price_fails_instead_of_building_input(
+        self,
+    ) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+
+        for quote_price in ("0", "-1"):
+            with self.subTest(quote_price=quote_price):
+                fixture["GLOBAL_QUOTE"]["Global Quote"]["05. price"] = quote_price
+
+                def respond(request):
+                    return httpx.Response(
+                        200,
+                        json=deepcopy(fixture[request.url.params["function"]]),
+                    )
+
+                with self.assertRaisesRegex(
+                    CompsRunExecutionError,
+                    "non-positive quote price",
+                ):
+                    self._source(respond).load(
+                        tickers=["AAPL"],
+                        currency="USD",
+                    )
+
     def test_missing_fx_evidence_fails_instead_of_mislabeling_input(self) -> None:
         fixture = json.loads(
             (FIXTURE_ROOT / "usd_company_latest.json").read_text()
