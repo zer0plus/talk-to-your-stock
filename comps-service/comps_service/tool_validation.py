@@ -58,21 +58,43 @@ class AlphaVantageRequestLimiter:
 ALPHA_VANTAGE_REQUEST_LIMITER = AlphaVantageRequestLimiter()
 
 
+@dataclass(frozen=True)
+class TickerDirectoryEntry:
+    is_supported: bool
+    quote_currency: str | None
+    provider_match: dict[str, object] | None
+
+
 class TickerDirectory:
     def __init__(self) -> None:
-        self._support_by_ticker: dict[str, bool] = {}
+        self._entries_by_ticker: dict[str, TickerDirectoryEntry] = {}
         self._lock = threading.Lock()
 
-    def find(self, ticker: str) -> bool | None:
+    def find(self, ticker: str) -> TickerDirectoryEntry | None:
         with self._lock:
-            return self._support_by_ticker.get(ticker.upper())
+            return self._entries_by_ticker.get(ticker.upper())
 
-    def remember(self, ticker: str, *, is_supported: bool) -> None:
+    def remember(
+        self,
+        ticker: str,
+        *,
+        is_supported: bool,
+        provider_match: dict[str, object] | None = None,
+    ) -> None:
+        quote_currency = (
+            str(provider_match.get("8. currency") or "").strip().upper()
+            if provider_match
+            else ""
+        )
         with self._lock:
-            self._support_by_ticker[ticker.upper()] = is_supported
+            self._entries_by_ticker[ticker.upper()] = TickerDirectoryEntry(
+                is_supported=is_supported,
+                quote_currency=quote_currency or None,
+                provider_match=dict(provider_match) if provider_match else None,
+            )
 
 
-_TICKER_DIRECTORY = TickerDirectory()
+TICKER_DIRECTORY = TickerDirectory()
 
 
 class AlphaVantageTickerValidator:
@@ -85,12 +107,12 @@ class AlphaVantageTickerValidator:
     ) -> None:
         self.environ = os.environ if environ is None else environ
         self._request_limiter = request_limiter or ALPHA_VANTAGE_REQUEST_LIMITER
-        self._ticker_directory = ticker_directory or _TICKER_DIRECTORY
+        self._ticker_directory = ticker_directory or TICKER_DIRECTORY
 
     def is_supported(self, ticker: str) -> bool:
-        known_support = self._ticker_directory.find(ticker)
-        if known_support is not None:
-            return known_support
+        known_entry = self._ticker_directory.find(ticker)
+        if known_entry is not None:
+            return known_entry.is_supported
         payload = self._search_symbol(ticker)
         matches = payload.get("bestMatches")
         if not isinstance(matches, list):
@@ -98,10 +120,22 @@ class AlphaVantageTickerValidator:
                 message="Alpha Vantage symbol search returned an unexpected payload.",
                 details={"provider": "alpha_vantage"},
             )
-        is_supported = any(
-            self._match_symbol(match) == ticker.upper() for match in matches
+        provider_match = next(
+            (
+                match
+                for match in matches
+                if self._match_symbol(match) == ticker.upper()
+            ),
+            None,
         )
-        self._ticker_directory.remember(ticker, is_supported=is_supported)
+        is_supported = provider_match is not None
+        self._ticker_directory.remember(
+            ticker,
+            is_supported=is_supported,
+            provider_match=(
+                provider_match if isinstance(provider_match, dict) else None
+            ),
+        )
         return is_supported
 
     def _search_symbol(self, ticker: str) -> dict[str, Any]:

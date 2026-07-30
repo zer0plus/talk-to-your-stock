@@ -9,6 +9,7 @@ import httpx
 
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.run_service import CompanyDataUnavailable, CompsRunExecutionError
+from comps_service.tool_validation import TickerDirectory
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "alpha_vantage"
@@ -65,6 +66,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
+            ticker_directory=self._ticker_directory(),
         )
 
         source.load(tickers=["AAPL"], currency="USD")
@@ -97,6 +99,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
+            ticker_directory=self._ticker_directory(),
         )
 
         source.load(tickers=["AAPL"], currency="USD")
@@ -114,6 +117,7 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
+            ticker_directory=self._ticker_directory(),
         )
 
         with self.assertRaisesRegex(
@@ -196,6 +200,32 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
         ):
             source.load(tickers=["AAPL"], currency="USD")
 
+    def test_missing_quote_currency_evidence_fails_clearly(self) -> None:
+        fixture = json.loads(
+            (FIXTURE_ROOT / "usd_company_latest.json").read_text()
+        )
+
+        def respond(request):
+            return httpx.Response(
+                200,
+                json=deepcopy(fixture[request.url.params["function"]]),
+            )
+
+        source = AlphaVantageCompanyDataSource(
+            environ={
+                "ALPHA_VANTAGE_API_KEY": "fixture-key",
+                "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
+            },
+            transport=httpx.MockTransport(respond),
+            ticker_directory=self._ticker_directory(currency=None),
+        )
+
+        with self.assertRaisesRegex(
+            CompsRunExecutionError,
+            "Missing Alpha Vantage evidence.*SYMBOL_SEARCH.8. currency",
+        ):
+            source.load(tickers=["AAPL"], currency="USD")
+
     def _source(self, respond) -> AlphaVantageCompanyDataSource:
         return AlphaVantageCompanyDataSource(
             environ={
@@ -203,7 +233,23 @@ class AlphaVantageCompanyDataSourceTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
+            ticker_directory=self._ticker_directory(),
         )
+
+    def _ticker_directory(self, *, currency: str | None = "USD") -> TickerDirectory:
+        directory = TickerDirectory()
+        provider_match = {
+            "1. symbol": "AAPL",
+            "3. type": "Equity",
+        }
+        if currency is not None:
+            provider_match["8. currency"] = currency
+        directory.remember(
+            "AAPL",
+            is_supported=True,
+            provider_match=provider_match,
+        )
+        return directory
 
 
 if __name__ == "__main__":

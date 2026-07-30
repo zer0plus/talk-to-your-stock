@@ -24,6 +24,7 @@ from comps_service.main import (
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
 from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
+from comps_service.tool_validation import TickerDirectory
 from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
 
 
@@ -247,6 +248,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
+            ticker_directory=self._ticker_directory("AAPL", "MSFT"),
         )
         app.dependency_overrides[get_company_data_source] = lambda: source
 
@@ -308,15 +310,25 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         assert snapshot is not None
         self.assertEqual(
             set(snapshot.raw_provider_evidence["AAPL"]),
-            {"global_quote", "overview", "income_statement", "balance_sheet"},
+            {
+                "symbol_search",
+                "global_quote",
+                "overview",
+                "income_statement",
+                "balance_sheet",
+            },
         )
         normalized = snapshot.normalized_inputs[0]
         self.assertTrue(
             all(
                 "overview.AAPL.Currency=USD" in source
                 for field, source in normalized.sources.items()
-                if field != "shares_outstanding"
+                if field not in {"share_price", "shares_outstanding"}
             )
+        )
+        self.assertIn(
+            "symbol_search.AAPL.8. currency=USD",
+            normalized.sources["share_price"],
         )
         trace_inputs = {
             trace_input["field"]: trace_input
@@ -344,23 +356,34 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                     "2026-06-30T00:00:00Z",
                 )
 
-    def test_explicit_fx_evidence_converts_every_monetary_input(self) -> None:
+    def test_quote_and_fundamentals_use_their_own_currency_evidence(self) -> None:
         company_fixture = json.loads(
             (FIXTURE_ROOT / "usd_company_latest.json").read_text()
         )
         fx_fixture = json.loads(
             (FIXTURE_ROOT / "cad_to_usd_latest.json").read_text()
         )
-        fx_requests = 0
+        fx_requests: list[tuple[str, str]] = []
+        ticker_directory = self._ticker_directory(
+            "AAPL",
+            "MSFT",
+            currency="GBP",
+        )
 
         def respond(request):
-            nonlocal fx_requests
             function = request.url.params["function"]
             if function == "CURRENCY_EXCHANGE_RATE":
-                fx_requests += 1
-                self.assertEqual(request.url.params["from_currency"], "CAD")
-                self.assertEqual(request.url.params["to_currency"], "USD")
-                return httpx.Response(200, json=fx_fixture)
+                from_currency = request.url.params["from_currency"]
+                to_currency = request.url.params["to_currency"]
+                fx_requests.append((from_currency, to_currency))
+                payload = deepcopy(fx_fixture)
+                exchange_rate = payload["Realtime Currency Exchange Rate"]
+                exchange_rate["1. From_Currency Code"] = from_currency
+                exchange_rate["3. To_Currency Code"] = to_currency
+                exchange_rate["5. Exchange Rate"] = (
+                    "1.25000000" if from_currency == "GBP" else "0.75000000"
+                )
+                return httpx.Response(200, json=payload)
 
             symbol = request.url.params["symbol"]
             payload = deepcopy(company_fixture[function])
@@ -381,6 +404,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
+            ticker_directory=ticker_directory,
         )
         app.dependency_overrides[get_company_data_source] = lambda: source
 
@@ -419,7 +443,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "net_income_ltm": row["net_income_ltm"],
             },
             {
-                "share_price": 107.4375,
+                "share_price": 179.0625,
                 "shares_outstanding": 1000.0,
                 "cash": 75.0,
                 "total_debt": 225.0,
@@ -434,14 +458,34 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         assert snapshot is not None
         normalized = snapshot.normalized_inputs[0]
         self.assertEqual(normalized.currency, "USD")
+        self.assertIn(
+            "symbol_search.AAPL.8. currency=GBP",
+            normalized.sources["share_price"],
+        )
+        self.assertIn(
+            "currency_exchange_rate.GBP_USD.5. Exchange Rate",
+            normalized.sources["share_price"],
+        )
         self.assertTrue(
             all(
                 "currency_exchange_rate.CAD_USD.5. Exchange Rate" in source
                 for field, source in normalized.sources.items()
-                if field != "shares_outstanding"
+                if field not in {"share_price", "shares_outstanding"}
             )
         )
-        self.assertEqual(fx_requests, 1)
+        self.assertEqual(
+            snapshot.raw_provider_evidence["AAPL"]["symbol_search"]["8. currency"],
+            "GBP",
+        )
+        self.assertEqual(
+            set(
+                snapshot.raw_provider_evidence["AAPL"][
+                    "currency_exchange_rates"
+                ]
+            ),
+            {"GBP_USD", "CAD_USD"},
+        )
+        self.assertEqual(fx_requests, [("GBP", "USD"), ("CAD", "USD")])
 
     def test_trace_references_the_provider_reports_used_for_inputs(self) -> None:
         fixture = json.loads(
@@ -498,6 +542,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS": "0",
             },
             transport=httpx.MockTransport(respond),
+            ticker_directory=self._ticker_directory("AAPL", "MSFT"),
         )
         app.dependency_overrides[get_company_data_source] = lambda: source
 
@@ -602,6 +647,24 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             ],
             ["2026-03-31", "2026-06-30"],
         )
+
+    def _ticker_directory(
+        self,
+        *tickers: str,
+        currency: str = "USD",
+    ) -> TickerDirectory:
+        directory = TickerDirectory()
+        for ticker in tickers:
+            directory.remember(
+                ticker,
+                is_supported=True,
+                provider_match={
+                    "1. symbol": ticker,
+                    "3. type": "Equity",
+                    "8. currency": currency,
+                },
+            )
+        return directory
 
     def test_succeeded_run_and_table_are_available_through_readback_contracts(
         self,

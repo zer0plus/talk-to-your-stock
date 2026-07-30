@@ -29,7 +29,9 @@ from .tool_validation import (
     DEFAULT_ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS,
     DEFAULT_ALPHA_VANTAGE_TIMEOUT_SECONDS,
     ALPHA_VANTAGE_REQUEST_LIMITER,
+    TICKER_DIRECTORY,
     AlphaVantageRequestLimiter,
+    TickerDirectory,
 )
 
 @dataclass(frozen=True)
@@ -46,10 +48,12 @@ class AlphaVantageCompanyDataSource:
         environ: Mapping[str, str] | None = None,
         transport: httpx.BaseTransport | None = None,
         request_limiter: AlphaVantageRequestLimiter | None = None,
+        ticker_directory: TickerDirectory | None = None,
     ) -> None:
         self._environ = os.environ if environ is None else environ
         self._transport = transport
         self._request_limiter = request_limiter or ALPHA_VANTAGE_REQUEST_LIMITER
+        self._ticker_directory = ticker_directory or TICKER_DIRECTORY
 
     def load(
         self,
@@ -119,7 +123,14 @@ class AlphaVantageCompanyDataSource:
             provider_function="BALANCE_SHEET",
         )
 
-        source_currency = self._required_text(
+        ticker_entry = self._ticker_directory.find(ticker)
+        provider_match = ticker_entry.provider_match if ticker_entry else None
+        quote_currency = self._required_text(
+            ticker_entry.quote_currency if ticker_entry else None,
+            field="SYMBOL_SEARCH.8. currency",
+            ticker=ticker,
+        ).upper()
+        fundamental_currency = self._required_text(
             overview.get("Currency"),
             field="OVERVIEW.Currency",
             ticker=ticker,
@@ -146,7 +157,7 @@ class AlphaVantageCompanyDataSource:
                 *(selection.report for selection in income_reports),
                 balance_report,
             ],
-            expected=source_currency,
+            expected=fundamental_currency,
             ticker=ticker,
         )
 
@@ -255,11 +266,16 @@ class AlphaVantageCompanyDataSource:
                 field="netIncome",
             ),
         }
-        currency_source = (
-            f"alpha_vantage.overview.{ticker}.Currency={source_currency}"
+        quote_currency_source = (
+            f"alpha_vantage.symbol_search.{ticker}.8. currency={quote_currency}"
+        )
+        fundamental_currency_source = (
+            f"alpha_vantage.overview.{ticker}.Currency={fundamental_currency}"
+        )
+        sources["share_price"] = (
+            f"{sources['share_price']}; {quote_currency_source}"
         )
         for field in (
-            "share_price",
             "cash",
             "total_debt",
             "revenue_ltm",
@@ -267,7 +283,7 @@ class AlphaVantageCompanyDataSource:
             "ebitda_ltm",
             "net_income_ltm",
         ):
-            sources[field] = f"{sources[field]}; {currency_source}"
+            sources[field] = f"{sources[field]}; {fundamental_currency_source}"
         source_as_of = {
             "share_price": quote_as_of,
             "shares_outstanding": shares_as_of,
@@ -279,18 +295,28 @@ class AlphaVantageCompanyDataSource:
             "net_income_ltm": income_as_of,
         }
         raw_evidence: dict[str, object] = {
+            "symbol_search": provider_match,
             "global_quote": quote_payload,
             "overview": overview,
             "income_statement": income,
             "balance_sheet": balance_sheet,
         }
-        if source_currency != requested_currency:
+        fx_evidence: dict[str, object] = {}
+        if quote_currency != requested_currency:
             rate, fx_payload, fx_source = self._exchange_rate(
-                from_currency=source_currency,
+                from_currency=quote_currency,
                 to_currency=requested_currency,
                 cache=fx_cache,
             )
             share_price *= rate
+            sources["share_price"] = f"{sources['share_price']} * {fx_source}"
+            fx_evidence[f"{quote_currency}_{requested_currency}"] = fx_payload
+        if fundamental_currency != requested_currency:
+            rate, fx_payload, fx_source = self._exchange_rate(
+                from_currency=fundamental_currency,
+                to_currency=requested_currency,
+                cache=fx_cache,
+            )
             cash *= rate
             total_debt *= rate
             revenue_ltm *= rate
@@ -298,7 +324,6 @@ class AlphaVantageCompanyDataSource:
             ebitda_ltm *= rate
             net_income_ltm *= rate
             for field in (
-                "share_price",
                 "cash",
                 "total_debt",
                 "revenue_ltm",
@@ -307,7 +332,9 @@ class AlphaVantageCompanyDataSource:
                 "net_income_ltm",
             ):
                 sources[field] = f"{sources[field]} * {fx_source}"
-            raw_evidence["currency_exchange_rate"] = fx_payload
+            fx_evidence[f"{fundamental_currency}_{requested_currency}"] = fx_payload
+        if fx_evidence:
+            raw_evidence["currency_exchange_rates"] = fx_evidence
 
         company = CompanyCompsInput(
             ticker=ticker,

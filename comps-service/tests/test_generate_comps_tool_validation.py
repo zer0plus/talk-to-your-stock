@@ -182,7 +182,11 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         responses = [
             {
                 "bestMatches": [
-                    {"1. symbol": "AAPL", "3. type": "Equity"},
+                    {
+                        "1. symbol": "AAPL",
+                        "3. type": "Equity",
+                        "8. currency": "USD",
+                    },
                 ]
             },
             {"bestMatches": []},
@@ -218,6 +222,9 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             self.assertFalse(second_validator.is_supported("ZZZZ"))
 
         self.assertEqual(client.get.call_count, 2)
+        aapl_entry = directory.find("AAPL")
+        assert aapl_entry is not None
+        self.assertEqual(aapl_entry.quote_currency, "USD")
 
     # Rejects user-supplied peer mode before provider or database work when peers are missing.
     def test_user_supplied_mode_requires_peer_tickers_before_run_creation(self) -> None:
