@@ -1,6 +1,9 @@
 from pathlib import Path
 
 import yaml
+from fastapi.testclient import TestClient
+
+from web_bff.main import app
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,3 +29,17 @@ def test_run_readback_documents_comps_service_unavailability() -> None:
         assert responses["503"] == {
             "$ref": "#/components/responses/ServiceUnavailable"
         }
+
+
+def test_generated_run_readback_contract_documents_validation_errors() -> None:
+    contract = TestClient(app).get("/openapi.json").json()
+
+    for path in (
+        "/v1/runs/{run_id}",
+        "/v1/runs/{run_id}/table",
+        "/v1/runs/{run_id}/trace",
+    ):
+        response_schema = contract["paths"][path]["get"]["responses"]["400"][
+            "content"
+        ]["application/json"]["schema"]
+        assert response_schema["$ref"] == "#/components/schemas/ErrorResponse"

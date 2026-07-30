@@ -391,7 +391,11 @@ def create_message(
 @app.get(
     "/v1/runs/{run_id}",
     response_model=RunResponse,
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
     tags=["Runs"],
 )
 def get_run(
@@ -412,7 +416,11 @@ def get_run(
 @app.get(
     "/v1/runs/{run_id}/table",
     response_model=RunTableResponse,
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
     tags=["Runs"],
 )
 def get_run_table(
@@ -433,7 +441,11 @@ def get_run_table(
 @app.get(
     "/v1/runs/{run_id}/trace",
     response_model=TraceResponse,
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
     tags=["Runs"],
 )
 def get_run_trace(

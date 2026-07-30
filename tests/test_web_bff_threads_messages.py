@@ -54,6 +54,7 @@ LOCAL_ENV = {
     "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
     "DEV_AUTH_EMAIL": "dev@example.com",
     "AGENT_SERVICE_URL": "http://agent-service.test",
+    "COMPS_SERVICE_URL": "http://comps-service.test",
 }
 
 
@@ -618,6 +619,15 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
         self.assertIn("COMPS_SERVICE_URL", response.json()["error"]["message"])
+
+    def test_invalid_run_id_returns_validation_error(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+
+        response = client.get("/v1/runs/not-a-uuid")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
 
     def test_request_validation_errors_use_error_response_shape(self) -> None:
         repository = RecordingRepository()

@@ -44,13 +44,25 @@ class HttpCompsClient:
 
     def get_run(self, run_id: UUID) -> Run:
         response = self._get(f"/v1/runs/{run_id}", RunResponse)
+        self._require_run_id(requested=run_id, returned=response.run.id)
         return response.run
 
     def get_table(self, run_id: UUID) -> RunTableResponse:
-        return self._get(f"/v1/runs/{run_id}/table", RunTableResponse)
+        table = self._get(f"/v1/runs/{run_id}/table", RunTableResponse)
+        self._require_run_id(requested=run_id, returned=table.run_id)
+        return table
 
     def get_trace(self, run_id: UUID) -> TraceResponse:
-        return self._get(f"/v1/runs/{run_id}/trace", TraceResponse)
+        trace = self._get(f"/v1/runs/{run_id}/trace", TraceResponse)
+        self._require_run_id(requested=run_id, returned=trace.run_id)
+        return trace
+
+    @staticmethod
+    def _require_run_id(*, requested: UUID, returned: UUID) -> None:
+        if returned != requested:
+            raise CompsServiceUnavailable(
+                "Comps Service returned mismatched Run linkage."
+            )
 
     def _get(
         self,
