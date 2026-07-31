@@ -75,6 +75,32 @@ Agent Service, and Comps Service.
 ## 2. Verify Readiness
 
 ```bash
+get_json_ok() {
+  local url="$1"
+  local body_file
+  local http_status
+
+  body_file="$(mktemp)" || return 1
+  http_status="$(
+    curl --fail --silent --show-error \
+      --output "$body_file" \
+      --write-out '%{http_code}' \
+      "$url"
+  )" || {
+    rm -f "$body_file"
+    return 1
+  }
+
+  if [ "$http_status" != '200' ]; then
+    echo "Expected HTTP 200 from ${url}, got ${http_status}." >&2
+    rm -f "$body_file"
+    return 1
+  fi
+
+  cat "$body_file"
+  rm -f "$body_file"
+}
+
 wait_for_ready() {
   local port="$1"
   local endpoint="http://127.0.0.1:${port}/v1/ready"
@@ -82,7 +108,7 @@ wait_for_ready() {
   local readiness
 
   while true; do
-    if readiness="$(curl --fail --silent --show-error "$endpoint" 2>/dev/null)" \
+    if readiness="$(get_json_ok "$endpoint" 2>/dev/null)" \
       && jq -e '.status == "ready" and ([.checks[].status] | all(. == "ok"))' \
         <<<"$readiness" >/dev/null; then
       jq '{service, status, checks}' <<<"$readiness"
@@ -221,7 +247,7 @@ SMOKE_CONFIGURED_EMAIL="$(
     web-bff printenv DEV_AUTH_EMAIL
 )"
 SMOKE_IDENTITY_JSON="$(
-  curl --fail --silent --show-error "${SMOKE_BASE_URL}/v1/me"
+  get_json_ok "${SMOKE_BASE_URL}/v1/me"
 )"
 
 jq -e \
@@ -263,16 +289,13 @@ User Message and Assistant Message to one succeeded Run for IBM and MSFT.
 
 ```bash
 SMOKE_RUN_JSON="$(
-  curl --fail --silent --show-error \
-    "${SMOKE_BASE_URL}/v1/runs/${SMOKE_RUN_ID}"
+  get_json_ok "${SMOKE_BASE_URL}/v1/runs/${SMOKE_RUN_ID}"
 )"
 SMOKE_TABLE_JSON="$(
-  curl --fail --silent --show-error \
-    "${SMOKE_BASE_URL}/v1/runs/${SMOKE_RUN_ID}/table"
+  get_json_ok "${SMOKE_BASE_URL}/v1/runs/${SMOKE_RUN_ID}/table"
 )"
 SMOKE_TRACE_JSON="$(
-  curl --fail --silent --show-error \
-    "${SMOKE_BASE_URL}/v1/runs/${SMOKE_RUN_ID}/trace"
+  get_json_ok "${SMOKE_BASE_URL}/v1/runs/${SMOKE_RUN_ID}/trace"
 )"
 
 jq -e --arg run_id "$SMOKE_RUN_ID" \
