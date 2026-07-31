@@ -65,16 +65,39 @@ Agent Service, and Comps Service.
 ## 2. Verify Readiness
 
 ```bash
+wait_for_ready() {
+  local port="$1"
+  local endpoint="http://127.0.0.1:${port}/v1/ready"
+  local deadline=$((SECONDS + 60))
+  local readiness
+
+  while true; do
+    if readiness="$(curl --fail --silent --show-error "$endpoint" 2>/dev/null)" \
+      && jq -e '.status == "ready" and ([.checks[].status] | all(. == "ok"))' \
+        <<<"$readiness" >/dev/null; then
+      jq '{service, status, checks}' <<<"$readiness"
+      return 0
+    fi
+
+    if ((SECONDS >= deadline)); then
+      echo "Timed out waiting for ${endpoint} to become ready." >&2
+      curl --silent --show-error "$endpoint" >&2 || true
+      return 1
+    fi
+
+    sleep 1
+  done
+}
+
 for port in 8000 8001 8002; do
-  readiness="$(curl --fail --silent --show-error "http://127.0.0.1:${port}/v1/ready")"
-  jq -e '.status == "ready" and ([.checks[].status] | all(. == "ok"))' <<<"$readiness"
-  jq '{service, status, checks}' <<<"$readiness"
+  wait_for_ready "$port"
 done
 ```
 
-Every request must return HTTP `200`, `status: "ready"`, and only `ok` checks.
-A `503`, failed assertion, missing credential, stale migration, or unavailable
-service means the smoke has failed and should not continue.
+Each endpoint has up to 60 seconds to return HTTP `200`, `status: "ready"`, and
+only `ok` checks. A service may report `503` while it starts; a failed assertion,
+missing credential, stale migration, unavailable service, or timeout means the
+smoke has failed and should not continue.
 
 ## 3. Verify Real Provider And FX Behavior
 
