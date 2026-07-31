@@ -62,7 +62,7 @@ Notes:
 
 ### Authentication Boundary for PRD #10
 
-* PRD #10 and all of its child issues target a local, single-user demo. Local requests require no login, Authorization header, User token, or credential verification.
+* PRD #10 and all of its child issues target a local, single-user demo. Local operator requests through the Web BFF require no login, Authorization header, User token, or credential verification.
 * The Web BFF uses `DEV_AUTH_USER_ID` and `DEV_AUTH_EMAIL` to configure one deterministic local User identity for Threads, Messages, and Runs. Despite the variable names, this is explicit product-state ownership configuration, not proof of identity or a development authentication mechanism.
 * The existing managed-auth/JWT configuration and Authorization handling record the intended production boundary. JWT verification, login, OAuth, user sessions, tenant enforcement, and User authorization are not implemented, and production readiness must continue to fail until they are.
 * `COMPS_SERVICE_INTERNAL_TOKEN` is a narrow Service Credential for authenticating the Agent Service to the Comps Service. It does not authenticate or authorize a User and does not make the local stack ready for an untrusted network.
