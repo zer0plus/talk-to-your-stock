@@ -27,8 +27,10 @@ Credential is local defense in depth, not a public deployment boundary.
 cp dev/.env.example dev/.env
 ```
 
-2. Keep `TALK_TO_YOUR_STOCK_ENV=local` and set an explicit dev-auth identity in
-   `dev/.env`. The example identity and `COMPS_SERVICE_INTERNAL_TOKEN` are
+2. Keep `TALK_TO_YOUR_STOCK_ENV=local` and set the deterministic local User
+   identity in `dev/.env`. `DEV_AUTH_USER_ID` and `DEV_AUTH_EMAIL` select the
+   product-state owner; despite their names, they do not authenticate the local
+   operator. The example identity and `COMPS_SERVICE_INTERNAL_TOKEN` are
    intentionally local-only.
 
 3. Set `ALPHA_VANTAGE_API_KEY` in `dev/.env`. Comps Service readiness requires
@@ -73,12 +75,20 @@ requires `GOOGLE_ADK_APP_NAME`. Production readiness intentionally fails
 Web BFF and Comps Service database readiness also require the current Alembic
 schema revision. Missing or stale migrations keep either schema owner not ready.
 
+## Full Backend Smoke
+
+Use the [canonical backend smoke](backend-smoke.md) to verify the complete
+PostgreSQL -> Web BFF -> Agent Service -> Comps Service path with real Google
+ADK, provider, and FX credentials. It sends a Message without an Authorization
+header, reads back the persisted Run, Comps Table, and Trace, and correlates the
+product Message and Run identifiers with ADK-native Tool events.
+
 ## Real Provider And FX Smoke Check
 
 This opt-in check calls current Alpha Vantage payloads with your real credential.
 It requests IBM provider evidence in USD and normalizes it into CAD, which forces
 the explicit `CURRENCY_EXCHANGE_RATE` path. It does not use the database or
-persist a Run. The check makes five provider calls, so account for your plan's
+persist a Run. The check makes six provider calls, so account for your plan's
 request quota.
 
 ```bash
@@ -86,17 +96,30 @@ export ALPHA_VANTAGE_API_KEY="your-real-key"
 export ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS="1.1"
 PYTHONPATH=shared:comps-service python - <<'PY'
 from comps_service.provider import AlphaVantageCompanyDataSource
+from comps_service.tool_validation import AlphaVantageTickerValidator
 
-loaded = AlphaVantageCompanyDataSource().load(
+validated_ticker_matches = {}
+validator = AlphaVantageTickerValidator(
+    validated_ticker_matches=validated_ticker_matches,
+)
+assert validator.is_supported("IBM")
+
+loaded = AlphaVantageCompanyDataSource(
+    validated_ticker_matches=validated_ticker_matches,
+).load(
     tickers=["IBM"],
     currency="CAD",
 )
 company = loaded.companies[0]
 evidence = loaded.raw_provider_evidence["IBM"]
-fx = evidence["currency_exchange_rate"]["Realtime Currency Exchange Rate"]
+fx = evidence["currency_exchange_rates"]["USD_CAD"][
+    "Realtime Currency Exchange Rate"
+]
 
 assert company.ticker == "IBM"
 assert company.currency == "CAD"
+assert evidence["symbol_search"]["1. symbol"] == "IBM"
+assert evidence["symbol_search"]["8. currency"] == "USD"
 assert evidence["overview"]["Currency"] == "USD"
 assert fx["1. From_Currency Code"] == "USD"
 assert fx["3. To_Currency Code"] == "CAD"
