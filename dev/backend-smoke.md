@@ -103,13 +103,25 @@ get_json_ok() {
 
 wait_for_ready() {
   local port="$1"
+  local expected_service="$2"
+  shift 2
   local endpoint="http://127.0.0.1:${port}/v1/ready"
   local deadline=$((SECONDS + 60))
   local readiness
 
   while true; do
     if readiness="$(get_json_ok "$endpoint" 2>/dev/null)" \
-      && jq -e '.status == "ready" and ([.checks[].status] | all(. == "ok"))' \
+      && jq -e --arg service "$expected_service" '
+        . as $readiness
+        | ($ARGS.positional | sort) as $expected_checks
+        | .service == $service
+        and .status == "ready"
+        and (.checks | keys | sort) == $expected_checks
+        and all(
+          $expected_checks[];
+          $readiness.checks[.].status == "ok"
+        )
+      ' --args "$@" \
         <<<"$readiness" >/dev/null; then
       jq '{service, status, checks}' <<<"$readiness"
       return 0
@@ -125,9 +137,12 @@ wait_for_ready() {
   done
 }
 
-for port in 8000 8001 8002; do
-  wait_for_ready "$port" || exit 1
-done
+wait_for_ready 8000 web-bff \
+  configuration database agent_service comps_service || exit 1
+wait_for_ready 8001 agent-service \
+  configuration database agent_session agent_routing || exit 1
+wait_for_ready 8002 comps-service \
+  configuration database run_data_source || exit 1
 ```
 
 Each endpoint has up to 60 seconds to return HTTP `200`, `status: "ready"`, and
