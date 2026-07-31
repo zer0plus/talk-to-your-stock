@@ -41,6 +41,7 @@ Set these values in `dev/.env`:
 | `GOOGLE_API_KEY` | Real Google ADK model access |
 | `COMPS_SERVICE_INTERNAL_TOKEN` | Local Agent-to-Comps Service Credential |
 | `ALPHA_VANTAGE_API_KEY` | Real provider and FX access |
+| `ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS` | Keep at the default `1.1` seconds or lower for this smoke |
 
 `DEV_AUTH_USER_ID` and `DEV_AUTH_EMAIL` are required configuration, but they do
 not authenticate the operator. Local requests use no login, Authorization
@@ -48,9 +49,12 @@ header, User token, or credential verification. Keep the managed-auth variables
 empty for this local smoke. Set `ALPHA_VANTAGE_QUOTE_ENTITLEMENT` only when the
 provider key has the named `realtime` or `delayed` entitlement.
 
-The canonical Message path can make multiple Alpha Vantage requests per company.
-Use a provider plan with enough remaining quota and keep the configured request
-interval appropriate for that plan.
+The canonical Message path makes ten serial Alpha Vantage requests: ticker
+validation plus four data requests for each of IBM and MSFT. Both service calls
+have a 30-second deadline, so this smoke requires a low-latency provider plan
+and `ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS` at the default `1.1` seconds
+or lower. Do not raise that interval for this smoke; slower rate-limited plans
+can time out even when the stack is otherwise healthy.
 
 ## 1. Start The Stack
 
