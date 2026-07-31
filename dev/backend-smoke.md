@@ -94,7 +94,7 @@ wait_for_ready() {
 }
 
 for port in 8000 8001 8002; do
-  wait_for_ready "$port"
+  wait_for_ready "$port" || exit 1
 done
 ```
 
