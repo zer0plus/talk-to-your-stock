@@ -141,9 +141,10 @@ curl http://localhost:8001/v1/health
 curl http://localhost:8002/v1/health
 ```
 
-Readiness returns `503` when required configuration, migrations, or downstream
-services are unavailable. With the real local configuration in place, all three
-services report ready.
+Readiness returns `503` when required local configuration, migrations, or
+checked internal services are unavailable. It does not verify live Google model
+access or Alpha Vantage credentials; use the canonical backend smoke for that
+end-to-end verification.
 
 See the [development guide](dev/README.md) for environment variables and
 readiness behavior. Use the [canonical backend smoke](dev/backend-smoke.md) to
