@@ -277,6 +277,7 @@ jq -e \
     and .run.status == "succeeded"
     and .run.target_ticker == "IBM"
     and .run.peer_tickers == ["MSFT"]
+    and .run.currency == "USD"
   ' <<<"$SMOKE_MESSAGE_JSON"
 jq '{user_message, assistant_message, run}' <<<"$SMOKE_MESSAGE_JSON"
 ```
@@ -299,14 +300,16 @@ SMOKE_TRACE_JSON="$(
 )"
 
 jq -e --arg run_id "$SMOKE_RUN_ID" \
-  '.run.id == $run_id and .run.status == "succeeded"' \
+  '.run.id == $run_id and .run.status == "succeeded" and .run.currency == "USD"' \
   <<<"$SMOKE_RUN_JSON"
 jq -e --arg run_id "$SMOKE_RUN_ID" \
   '
     .run_id == $run_id
     and .target_ticker == "IBM"
+    and .currency == "USD"
     and ([.rows[].ticker] | sort) == (["IBM", "MSFT"] | sort)
     and (.rows | length) == 2
+    and all(.rows[]; .currency == "USD")
   ' <<<"$SMOKE_TABLE_JSON"
 jq -e --arg run_id "$SMOKE_RUN_ID" \
   '.run_id == $run_id and (.formulas | length) > 0' \
