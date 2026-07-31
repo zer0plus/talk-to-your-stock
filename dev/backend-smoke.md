@@ -327,7 +327,30 @@ jq -e --arg run_id "$SMOKE_RUN_ID" \
     and all(.rows[]; .currency == "USD")
   ' <<<"$SMOKE_TABLE_JSON"
 jq -e --arg run_id "$SMOKE_RUN_ID" \
-  '.run_id == $run_id and (.formulas | length) > 0' \
+  '
+    .run_id == $run_id
+    and (
+      [.formulas[] | {ticker, output_field}] | sort
+      == (
+        ["IBM", "MSFT"] as $tickers
+        | [
+            "equity_value",
+            "net_debt",
+            "enterprise_value",
+            "ev_to_revenue",
+            "ev_to_ebit",
+            "ev_to_ebitda",
+            "pe"
+          ] as $output_fields
+        | [
+            $tickers[] as $ticker
+            | $output_fields[] as $output_field
+            | {ticker: $ticker, output_field: $output_field}
+          ]
+        | sort
+      )
+    )
+  ' \
   <<<"$SMOKE_TRACE_JSON"
 
 jq '{run: .run}' <<<"$SMOKE_RUN_JSON"
