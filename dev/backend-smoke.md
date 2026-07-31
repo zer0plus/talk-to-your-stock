@@ -5,8 +5,14 @@ Tickers using real Google ADK, Alpha Vantage, and FX behavior. It covers
 PostgreSQL, Web BFF, Agent Service, Comps Service, persisted Run artifacts, and
 ADK-native event history.
 
-Run every command from the repository root in the same terminal. The smoke is
-opt-in because it consumes live model and provider quota.
+Run every command from the repository root in the same terminal. Before starting,
+enable strict shell mode so any failed command or assertion stops the smoke:
+
+```bash
+set -euo pipefail
+```
+
+The smoke is opt-in because it consumes live model and provider quota.
 
 ## Scope
 
