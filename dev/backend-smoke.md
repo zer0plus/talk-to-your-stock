@@ -175,12 +175,40 @@ These requests intentionally contain no Authorization header.
 ```bash
 SMOKE_BASE_URL="http://127.0.0.1:8000"
 
+post_json_created() {
+  local url="$1"
+  local payload="$2"
+  local body_file
+  local http_status
+
+  body_file="$(mktemp)" || return 1
+  http_status="$(
+    curl --fail --silent --show-error \
+      --output "$body_file" \
+      --write-out '%{http_code}' \
+      --request POST \
+      --header 'Content-Type: application/json' \
+      --data "$payload" \
+      "$url"
+  )" || {
+    rm -f "$body_file"
+    return 1
+  }
+
+  if [ "$http_status" != '201' ]; then
+    echo "Expected HTTP 201 from ${url}, got ${http_status}." >&2
+    rm -f "$body_file"
+    return 1
+  fi
+
+  cat "$body_file"
+  rm -f "$body_file"
+}
+
 SMOKE_THREAD_JSON="$(
-  curl --fail --silent --show-error \
-    --request POST \
-    --header 'Content-Type: application/json' \
-    --data '{"title":"Canonical backend smoke"}' \
-    "${SMOKE_BASE_URL}/v1/threads"
+  post_json_created \
+    "${SMOKE_BASE_URL}/v1/threads" \
+    '{"title":"Canonical backend smoke"}'
 )"
 export SMOKE_THREAD_ID="$(jq -er '.thread.id' <<<"$SMOKE_THREAD_JSON")"
 export SMOKE_USER_ID="$(jq -er '.thread.user_id' <<<"$SMOKE_THREAD_JSON")"
@@ -204,11 +232,9 @@ jq -e \
 test "$SMOKE_USER_ID" = "$SMOKE_CONFIGURED_USER_ID"
 
 SMOKE_MESSAGE_JSON="$(
-  curl --fail --silent --show-error \
-    --request POST \
-    --header 'Content-Type: application/json' \
-    --data '{"content":"Generate a USD comps table comparing IBM with MSFT."}' \
-    "${SMOKE_BASE_URL}/v1/threads/${SMOKE_THREAD_ID}/messages"
+  post_json_created \
+    "${SMOKE_BASE_URL}/v1/threads/${SMOKE_THREAD_ID}/messages" \
+    '{"content":"Generate a USD comps table comparing IBM with MSFT."}'
 )"
 export SMOKE_MESSAGE_ID="$(jq -er '.user_message.id' <<<"$SMOKE_MESSAGE_JSON")"
 export SMOKE_RUN_ID="$(jq -er '.run.id' <<<"$SMOKE_MESSAGE_JSON")"
