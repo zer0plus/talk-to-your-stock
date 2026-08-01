@@ -346,14 +346,20 @@ function FailedRun({ onRetry, compact = false }: { onRetry: () => void; compact?
 
 function VariantA(props: SharedVariantProps) {
   const { state, setState, prompt, setPrompt, error, runRequest, traceOpen, setTraceOpen } = props;
+  const [shellCollapsed, setShellCollapsed] = useState(false);
   return (
-    <main className="variant-a">
+    <main className={`variant-a ${shellCollapsed ? "shell-collapsed" : ""}`}>
       <aside className="a-sidebar">
-        <div className="brand"><div className="brand-mark">T<span>+</span></div><div><strong>TalkToYourStock</strong><small>Evidence before opinion</small></div></div>
-        <button className="new-thread" onClick={() => setState("arrival")}>＋ New comparison</button>
-        <FutureNav />
-        <div className="thread-section"><div className="section-label">THREAD HISTORY <button>⌕</button></div>{threads.map((thread, index) => <button className={`thread ${index === 0 && state !== "arrival" ? "active" : ""}`} key={thread.id} onClick={() => setState("success")}><span>{thread.title}</span><small>{index === 0 ? "Today" : `${index + 2}d ago`} · {thread.message_count} Messages</small></button>)}</div>
-        <div className="profile"><span>MD</span><div><strong>Mitansh</strong><small>Local workspace</small></div><button>•••</button></div>
+        <div className="sidebar-top">
+          <div className="brand"><div className="brand-mark">T<span>+</span></div><div className="sidebar-label"><strong>TalkToYourStock</strong><small>Evidence before opinion</small></div></div>
+          <button className="shell-toggle" onClick={() => setShellCollapsed((collapsed) => !collapsed)} aria-label={shellCollapsed ? "Expand Product Shell" : "Collapse Product Shell"}>{shellCollapsed ? "›" : "‹"}</button>
+        </div>
+        <button className="new-thread" onClick={() => setState("arrival")}><span className="new-thread-icon">＋</span><span className="sidebar-label">New comparison</span></button>
+        <div className="thread-section">
+          <div className="section-label sidebar-label">THREAD HISTORY <button>⌕</button></div>
+          {threads.map((thread, index) => <button className={`thread ${index === 0 && state !== "arrival" ? "active" : ""}`} key={thread.id} onClick={() => setState("success")} title={shellCollapsed ? thread.title : undefined}><b className="thread-glyph">{thread.title.slice(0, 1)}</b><span className="thread-copy"><span>{thread.title}</span><small>{index === 0 ? "Today" : `${index + 2}d ago`} · {thread.message_count} Messages</small></span></button>)}
+        </div>
+        <div className="profile"><span>MD</span><div className="sidebar-label"><strong>Mitansh</strong><small>Local workspace</small></div><button className="sidebar-label">•••</button></div>
       </aside>
       <section className="a-content">
         <header className="a-top"><div><span className="crumb">Comps /</span><strong>{state === "arrival" ? "New comparison" : "Apple vs mega-cap peers"}</strong></div><div className="status-dot">Local fixture data</div></header>
@@ -369,8 +375,7 @@ function VariantA(props: SharedVariantProps) {
             {state === "arrival" || state === "input-error" ? <EmptyAnalysisCanvas mode="guided" /> : state === "waiting" ? <div className="a-state-center"><WaitingCard /></div> : state === "failed" ? <div className="a-state-center"><FailedRun onRetry={runRequest} /></div> : (
               <div className="a-success">
                 <section className="result-hero"><div><span className="eyebrow">COMPARISON TAKEAWAY</span><h1>{takeaways.headline}</h1><p>{takeaways.body}</p><div className="confidence"><span>◒</span><strong>{takeaways.confidence}</strong><em>Small peer set · one missing metric</em></div></div><div className="hero-multiple"><span>AAPL</span><strong>7.96×</strong><small>EV / Revenue</small><div><i style={{ width: "61%" }} /><b>Peer median 7.03×</b></div></div></section>
-                <WarningList quiet />
-                <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div><button className="secondary" onClick={() => setTraceOpen(true)}>Inspect Trace</button><button className="secondary" disabled>Export later</button></div></div><FullTable /></section>
+                <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div><button className="secondary" onClick={() => setTraceOpen(true)}>Inspect Trace</button><button className="secondary" disabled>Export later</button></div></div><FullTable /><div className="a-table-warnings"><WarningList /></div></section>
               </div>
             )}
           </section>

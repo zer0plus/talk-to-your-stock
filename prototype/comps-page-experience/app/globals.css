@@ -162,15 +162,18 @@ button:disabled { cursor: not-allowed; }
 .inputs small { color: #8c9691; font-size: 8px; line-height: 1.45; }
 
 /* Variant A — guided workspace */
-.variant-a { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; background: #f6f7f2; }
-.a-sidebar { position: fixed; inset: 0 auto 0 0; width: 260px; display: flex; flex-direction: column; padding: 24px 17px 18px; color: #dce8e2; background: #103d31; }
-.brand { display: flex; gap: 10px; align-items: center; padding: 0 5px 25px; }
+.variant-a { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; background: #f6f7f2; transition: grid-template-columns .2s ease; }
+.variant-a.shell-collapsed { grid-template-columns: 68px 1fr; }
+.a-sidebar { position: fixed; inset: 0 auto 0 0; width: 260px; display: flex; flex-direction: column; padding: 24px 17px 18px; color: #dce8e2; background: #103d31; transition: width .2s ease, padding .2s ease; }
+.sidebar-top { display: flex; gap: 8px; align-items: center; margin-bottom: 24px; }
+.brand { min-width: 0; display: flex; gap: 10px; align-items: center; flex: 1; padding: 0 5px; }
 .brand-mark { width: 35px; height: 35px; display: grid; place-items: center; border: 1px solid #ffffff44; border-radius: 9px; color: white; font-family: "Newsreader", serif; font-size: 22px; }
 .brand-mark span { color: #72d3aa; }
 .brand strong, .brand small { display: block; }
 .brand strong { color: white; font-size: 14px; }
 .brand small { margin-top: 2px; color: #87a99c; font-size: 9px; }
-.new-thread { width: 100%; padding: 11px; border: 1px solid #80bba3; border-radius: 7px; color: white; background: #1b5947; font-size: 12px; font-weight: 600; text-align: left; }
+.shell-toggle { width: 29px; height: 29px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid #ffffff25; border-radius: 7px; color: #a9c4b8; background: #ffffff0c; font-size: 18px; }.shell-toggle:hover { color: white; background: #ffffff17; }
+.new-thread { width: 100%; display: flex; gap: 7px; align-items: center; padding: 11px; border: 1px solid #80bba3; border-radius: 7px; color: white; background: #1b5947; font-size: 12px; font-weight: 600; text-align: left; }.new-thread-icon { font-size: 14px; line-height: 1; }
 .future-nav { display: flex; flex-direction: column; gap: 4px; margin-top: 22px; }
 .future-nav button { position: relative; display: flex; gap: 10px; align-items: center; width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; color: #97b2a7; background: transparent; font-size: 12px; text-align: left; }
 .future-nav button span { width: 19px; text-align: center; }
@@ -179,15 +182,18 @@ button:disabled { cursor: not-allowed; }
 .thread-section { margin-top: 22px; border-top: 1px solid #ffffff13; padding-top: 17px; }
 .section-label { display: flex; justify-content: space-between; padding: 0 7px 8px; color: #6f9887; font: 500 9px "DM Mono", monospace; letter-spacing: .09em; }
 .section-label button { border: 0; color: inherit; background: transparent; }
-.thread { display: block; width: 100%; padding: 10px; border: 0; border-radius: 7px; color: #adc1b9; background: transparent; text-align: left; }
+.thread { display: flex; gap: 8px; align-items: center; width: 100%; padding: 10px; border: 0; border-radius: 7px; color: #adc1b9; background: transparent; text-align: left; }
 .thread.active { color: white; background: #ffffff12; box-shadow: inset 2px 0 #65c39d; }
-.thread span, .thread small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.thread span { font-size: 11px; font-weight: 600; }
+.thread-copy { min-width: 0; flex: 1; }.thread-copy span, .thread-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-copy span { font-size: 11px; font-weight: 600; }
 .thread small { margin-top: 4px; color: #789b8c; font-size: 8px; }
+.thread-glyph { display: none; width: 30px; height: 30px; place-items: center; flex: 0 0 auto; border-radius: 8px; color: #d9ebe3; background: #ffffff12; font-size: 10px; }
 .profile { display: flex; gap: 9px; align-items: center; margin-top: auto; padding: 12px 5px 0; border-top: 1px solid #ffffff13; }
 .profile > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #124331; background: #b6ddcc; font-size: 10px; font-weight: 700; }
 .profile strong, .profile small { display: block; }
 .profile strong { color: white; font-size: 11px; }.profile small { color: #769b8b; font-size: 8px; }.profile button { margin-left: auto; border: 0; color: #7ca08f; background: transparent; }
+.shell-collapsed .a-sidebar { width: 68px; padding: 18px 10px 16px; }
+.shell-collapsed .sidebar-top { flex-direction: column; gap: 10px; margin-bottom: 18px; }.shell-collapsed .brand { justify-content: center; padding: 0; }.shell-collapsed .brand-mark { width: 38px; height: 38px; }.shell-collapsed .sidebar-label { display: none !important; }.shell-collapsed .shell-toggle { width: 38px; }.shell-collapsed .new-thread { height: 40px; justify-content: center; padding: 0; }.shell-collapsed .thread-section { margin-top: 15px; padding-top: 13px; }.shell-collapsed .thread { justify-content: center; padding: 5px 0; }.shell-collapsed .thread.active { box-shadow: inset 2px 0 #65c39d; }.shell-collapsed .thread-copy { display: none; }.shell-collapsed .thread-glyph { display: grid; }.shell-collapsed .profile { justify-content: center; padding: 12px 0 0; }.shell-collapsed .profile > span { width: 34px; height: 34px; }
 .a-content { grid-column: 2; min-width: 0; }
 .a-top { height: 64px; display: flex; justify-content: space-between; align-items: center; padding: 0 34px; border-bottom: 1px solid #dfe3df; background: #fbfcf8; font-size: 12px; }
 .a-top .crumb { margin-right: 6px; color: #8b958f; }.status-dot { color: #668078; font-size: 10px; }.status-dot:before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: #4ba77f; }
@@ -214,7 +220,7 @@ button:disabled { cursor: not-allowed; }
 .result-hero { display: grid; grid-template-columns: 1.5fr .6fr; gap: 45px; padding: 30px; border-radius: 13px; color: white; background: linear-gradient(125deg, #123f33, #1a5945); box-shadow: 0 18px 45px #143e2e1b; }
 .result-hero .eyebrow { color: #8ad1b3; }.result-hero h1 { max-width: 790px; margin: 10px 0 11px; font-family: "Newsreader", serif; font-size: 31px; font-weight: 500; line-height: 1.1; }.result-hero p { max-width: 850px; margin: 0; color: #c3d8cf; font-size: 12px; line-height: 1.65; }
 .confidence { display: flex; gap: 7px; align-items: center; margin-top: 17px; font-size: 10px; }.confidence em { color: #8eb3a4; font-style: normal; }.hero-multiple { display: flex; flex-direction: column; justify-content: center; padding-left: 28px; border-left: 1px solid #ffffff20; }.hero-multiple > span { color: #91b9aa; font: 500 10px "DM Mono", monospace; }.hero-multiple > strong { margin: 5px 0 0; font: 500 44px "Newsreader", serif; }.hero-multiple > small { color: #b9d0c6; }.hero-multiple div { position: relative; margin-top: 15px; height: 5px; border-radius: 4px; background: #ffffff1f; }.hero-multiple i { display: block; height: 100%; border-radius: inherit; background: #7fd1ad; }.hero-multiple b { display: block; margin-top: 7px; color: #a7c5b8; font-size: 9px; font-weight: 400; }
-.a-success > .warnings { margin-top: 14px; }.a-table-section { margin-top: 30px; padding: 25px; border: 1px solid #dce2de; border-radius: 11px; background: white; }.section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }.section-head h2 { margin: 5px 0 0; font-size: 20px; }.section-head > div:last-child { display: flex; gap: 7px; }
+.a-success > .warnings { margin-top: 14px; }.a-table-section { margin-top: 30px; padding: 25px; border: 1px solid #dce2de; border-radius: 11px; background: white; }.a-table-warnings { margin-top: 18px; padding-top: 18px; border-top: 1px solid #e2e6e3; }.section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }.section-head h2 { margin: 5px 0 0; font-size: 20px; }.section-head > div:last-child { display: flex; gap: 7px; }
 
 /* Variant B — research desk */
 .variant-b { min-height: 100vh; color: #d9dfdc; background: #101513; font-family: "Manrope", sans-serif; }
