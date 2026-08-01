@@ -355,10 +355,10 @@ function VariantA(props: SharedVariantProps) {
           <button className="shell-toggle" onClick={() => setShellCollapsed((collapsed) => !collapsed)} aria-label={shellCollapsed ? "Expand Product Shell" : "Collapse Product Shell"}>{shellCollapsed ? "›" : "‹"}</button>
         </div>
         <button className="new-thread" onClick={() => setState("arrival")}><span className="new-thread-icon">＋</span><span className="sidebar-label">New comparison</span></button>
-        <div className="thread-section">
+        {!shellCollapsed && <div className="thread-section">
           <div className="section-label sidebar-label">THREAD HISTORY <button>⌕</button></div>
-          {threads.map((thread, index) => <button className={`thread ${index === 0 && state !== "arrival" ? "active" : ""}`} key={thread.id} onClick={() => setState("success")} title={shellCollapsed ? thread.title : undefined}><b className="thread-glyph">{thread.title.slice(0, 1)}</b><span className="thread-copy"><span>{thread.title}</span><small>{index === 0 ? "Today" : `${index + 2}d ago`} · {thread.message_count} Messages</small></span></button>)}
-        </div>
+          {threads.map((thread, index) => <button className={`thread ${index === 0 && state !== "arrival" ? "active" : ""}`} key={thread.id} onClick={() => setState("success")}><span className="thread-copy"><span>{thread.title}</span><small>{index === 0 ? "Today" : `${index + 2}d ago`} · {thread.message_count} Messages</small></span></button>)}
+        </div>}
         <div className="profile"><span>MD</span><div className="sidebar-label"><strong>Mitansh</strong><small>Local workspace</small></div><button className="sidebar-label">•••</button></div>
       </aside>
       <section className="a-content">
