@@ -37,6 +37,8 @@ type CompsRow = {
 
 const RUN_ID = "612d1a39-1453-4fe2-9c63-f916d1e85f94";
 const USER_ID = "72384531-04a0-4cb8-a62f-cb49bdb81572";
+const DEFAULT_PROMPT = "Compare Apple with Microsoft, Alphabet, and Meta.";
+const INCOMPLETE_PROMPT = "Compare Apple with Microsoft.";
 
 const threads: Thread[] = [
   {
@@ -153,13 +155,13 @@ function multiple(value: number | null) {
   return value === null ? "—" : `${value.toFixed(2)}×`;
 }
 
-function validateRequest(target: string, peers: string) {
-  const normalizedTarget = target.trim().toUpperCase();
-  const peerList = peers.split(/[ ,]+/).map((peer) => peer.trim().toUpperCase()).filter(Boolean);
-  if (!normalizedTarget) return "Add a Target Ticker to continue.";
-  if (!/^[A-Z.]{1,10}$/.test(normalizedTarget)) return "Use a supported company Ticker, such as AAPL.";
-  if (peerList.length < 2) return "Add at least two Peer Tickers so the comparison has context.";
-  if (peerList.includes(normalizedTarget)) return "The Target Ticker should not also appear in the peer group.";
+function validateChatRequest(prompt: string) {
+  const request = prompt.trim();
+  if (!request) return "Tell me which company you want to compare and name the peers you have in mind.";
+  const companyNames = ["apple", "microsoft", "alphabet", "google", "meta", "nvidia", "amazon", "tesla", "coca-cola", "pepsi", "railway", "railways"];
+  const namedCompanies = companyNames.filter((name) => request.toLowerCase().includes(name));
+  const tickerTokens = request.match(/\b[A-Z.]{2,10}\b/g) ?? [];
+  if (new Set([...namedCompanies, ...tickerTokens]).size < 3) return "I can start with Apple and Microsoft. Which other company should join the peer group?";
   return null;
 }
 
@@ -240,15 +242,84 @@ function FullTable({ selectedMetric = "ev_to_revenue", onMetric }: { selectedMet
   );
 }
 
-function RequestFields({ target, peers, setTarget, setPeers, error, onSubmit, compact = false }: {
-  target: string; peers: string; setTarget: (value: string) => void; setPeers: (value: string) => void; error: string | null; onSubmit: () => void; compact?: boolean;
+function ChatComposer({ prompt, setPrompt, onSubmit, tone = "light", showSuggestion = false }: {
+  prompt: string;
+  setPrompt: (value: string) => void;
+  onSubmit: () => void;
+  tone?: "light" | "dark" | "paper";
+  showSuggestion?: boolean;
 }) {
   return (
-    <div className={compact ? "request-fields compact" : "request-fields"}>
-      <label><span>Target Ticker</span><input value={target} onChange={(event) => setTarget(event.target.value)} placeholder="e.g. AAPL" /></label>
-      <label><span>Peer Tickers <small>Explicit peers</small></span><input value={peers} onChange={(event) => setPeers(event.target.value)} placeholder="e.g. MSFT, GOOGL, META" /></label>
-      <button className="primary" onClick={onSubmit}>Compare <span>→</span></button>
-      {error && <div className="field-error"><strong>Check the peer group</strong><span>{error}</span></div>}
+    <div className={`chat-composer ${tone}`}>
+      {showSuggestion && <button className="prompt-suggestion" onClick={() => setPrompt(DEFAULT_PROMPT)}>Try: “Compare Apple with Microsoft, Alphabet, and Meta”</button>}
+      <div className="composer-box">
+        <textarea
+          aria-label="Message TalkToYourStock"
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+          placeholder="Ask for a comparison in your own words…"
+          rows={3}
+        />
+        <button className="send-message" onClick={onSubmit} aria-label="Send message">↑</button>
+      </div>
+      <small>Enter to send · Shift + Enter for a new line</small>
+    </div>
+  );
+}
+
+function ChatTranscript({ state, prompt, error, style = "calm" }: {
+  state: DemoState;
+  prompt: string;
+  error: string | null;
+  style?: "calm" | "terminal" | "story";
+}) {
+  if (state === "arrival") {
+    return (
+      <div className={`chat-welcome ${style}`}>
+        <span className="eyebrow">NEW THREAD</span>
+        <h2>What would you like to understand?</h2>
+        <p>Ask naturally. Name the company you care about and any peers you want included; I’ll turn the request into an analysis on the canvas.</p>
+      </div>
+    );
+  }
+
+  const assistantMessage = state === "input-error"
+    ? error
+    : state === "waiting"
+      ? "I found the companies. I’m aligning their latest evidence and building the Comps Table now."
+      : state === "failed"
+        ? "I couldn’t complete this Run, but your request and the failure details are saved in this Thread."
+        : "The comparison is ready. I put the table and the main relative-valuation takeaway on the canvas.";
+
+  return (
+    <div className={`chat-transcript ${style}`}>
+      <div className="chat-message user"><span>YOU</span><p>{prompt || DEFAULT_PROMPT}</p></div>
+      <div className={`chat-message assistant ${state === "input-error" ? "clarification" : ""}`}>
+        <span>TALKTOYOURSTOCK</span><p>{assistantMessage}</p>
+        {state === "input-error" && <small>No Run has been created yet.</small>}
+      </div>
+    </div>
+  );
+}
+
+function EmptyAnalysisCanvas({ mode }: { mode: "guided" | "desk" | "story" }) {
+  return (
+    <div className={`empty-analysis ${mode}`}>
+      <div className="artifact-orbit"><i /><i /><i /><span>⌁</span></div>
+      <span className="eyebrow">ANALYSIS CANVAS</span>
+      <h1>{mode === "story" ? "Your request will become a visual analysis story." : "Your analysis will appear here."}</h1>
+      <p>The canvas stays open for the artifact your request needs—starting with a Comps Table, and later other analysis visuals.</p>
+      <div className="artifact-types">
+        <span className="available"><b>Comps Table</b><small>Available now</small></span>
+        <span><b>News signals</b><small>Future analysis</small></span>
+        <span><b>Technical view</b><small>Future analysis</small></span>
+      </div>
     </div>
   );
 }
@@ -274,7 +345,7 @@ function FailedRun({ onRetry, compact = false }: { onRetry: () => void; compact?
 }
 
 function VariantA(props: SharedVariantProps) {
-  const { state, setState, target, peers, setTarget, setPeers, error, runRequest, traceOpen, setTraceOpen } = props;
+  const { state, setState, prompt, setPrompt, error, runRequest, traceOpen, setTraceOpen } = props;
   return (
     <main className="variant-a">
       <aside className="a-sidebar">
@@ -286,19 +357,24 @@ function VariantA(props: SharedVariantProps) {
       </aside>
       <section className="a-content">
         <header className="a-top"><div><span className="crumb">Comps /</span><strong>{state === "arrival" ? "New comparison" : "Apple vs mega-cap peers"}</strong></div><div className="status-dot">Local fixture data</div></header>
-        {state === "arrival" || state === "input-error" ? (
-          <div className="a-arrival">
-            <div className="arrival-copy"><span className="eyebrow">GUIDED COMPS WORKSPACE</span><h1>Compare valuation<br />without guessing what matters.</h1><p>Start with one Target Ticker and a peer group you choose. We’ll organize the evidence and explain the differences—without issuing a buy, sell, or hold recommendation.</p></div>
-            <div className="guided-card"><div className="step-number">01</div><h2>Choose the companies</h2><p>You can change this peer group and run another comparison inside the same Thread.</p><RequestFields {...{ target, peers, setTarget, setPeers, error, onSubmit: runRequest }} /><div className="example"><span>Try an example</span><button onClick={() => { setTarget("CNR"); setPeers("CP, UNP, CSX"); }}>CNR vs North American railways</button></div></div>
-            <div className="learning-strip"><strong>New to Comps?</strong><span>Enterprise value lets you compare the operating value of companies with different debt and cash levels.</span><button>Why these metrics?</button></div>
-          </div>
-        ) : state === "waiting" ? <div className="a-state-center"><WaitingCard /></div> : state === "failed" ? <div className="a-state-center"><FailedRun onRetry={runRequest} /></div> : (
-          <div className="a-success">
-            <section className="result-hero"><div><span className="eyebrow">COMPARISON TAKEAWAY</span><h1>{takeaways.headline}</h1><p>{takeaways.body}</p><div className="confidence"><span>◒</span><strong>{takeaways.confidence}</strong><em>Small peer set · one missing metric</em></div></div><div className="hero-multiple"><span>AAPL</span><strong>7.96×</strong><small>EV / Revenue</small><div><i style={{ width: "61%" }} /><b>Peer median 7.03×</b></div></div></section>
-            <WarningList quiet />
-            <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div><button className="secondary" onClick={() => setTraceOpen(true)}>Inspect Trace</button><button className="secondary" disabled>Export later</button></div></div><FullTable /></section>
-          </div>
-        )}
+        <div className="a-workbench">
+          <aside className="a-chat-panel">
+            <div className="chat-panel-head"><span className="eyebrow">THREAD CHAT</span><strong>{state === "arrival" ? "Start with a question" : "Apple vs mega-cap peers"}</strong></div>
+            <div className="a-chat-scroll"><ChatTranscript {...{ state, prompt, error }} /></div>
+            <ChatComposer {...{ prompt, setPrompt, onSubmit: runRequest }} showSuggestion={state === "arrival"} />
+            <p className="recommendation-boundary">Analysis support only—never a buy, sell, or hold recommendation.</p>
+          </aside>
+          <section className="a-canvas">
+            <header className="canvas-bar"><div><span className="eyebrow">MAIN SURFACE</span><strong>{state === "success" ? "Comps analysis" : "Ready for an analysis artifact"}</strong></div><div className="canvas-destinations"><button className="active">Comps</button><button disabled>News · Later</button><button disabled>Technicals · Later</button></div></header>
+            {state === "arrival" || state === "input-error" ? <EmptyAnalysisCanvas mode="guided" /> : state === "waiting" ? <div className="a-state-center"><WaitingCard /></div> : state === "failed" ? <div className="a-state-center"><FailedRun onRetry={runRequest} /></div> : (
+              <div className="a-success">
+                <section className="result-hero"><div><span className="eyebrow">COMPARISON TAKEAWAY</span><h1>{takeaways.headline}</h1><p>{takeaways.body}</p><div className="confidence"><span>◒</span><strong>{takeaways.confidence}</strong><em>Small peer set · one missing metric</em></div></div><div className="hero-multiple"><span>AAPL</span><strong>7.96×</strong><small>EV / Revenue</small><div><i style={{ width: "61%" }} /><b>Peer median 7.03×</b></div></div></section>
+                <WarningList quiet />
+                <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div><button className="secondary" onClick={() => setTraceOpen(true)}>Inspect Trace</button><button className="secondary" disabled>Export later</button></div></div><FullTable /></section>
+              </div>
+            )}
+          </section>
+        </div>
       </section>
       {traceOpen && <div className="trace-overlay"><TracePanel onClose={() => setTraceOpen(false)} /></div>}
     </main>
@@ -306,30 +382,40 @@ function VariantA(props: SharedVariantProps) {
 }
 
 function VariantB(props: SharedVariantProps) {
-  const { state, setState, target, peers, setTarget, setPeers, error, runRequest, traceOpen, setTraceOpen } = props;
+  const { state, setState, prompt, setPrompt, error, runRequest, traceOpen, setTraceOpen } = props;
   const [metric, setMetric] = useState("ev_to_revenue");
   return (
     <main className="variant-b">
       <header className="b-header"><div className="b-brand"><span>TY</span><strong>TalkToYourStock</strong><em>LAB</em></div><nav><button className="active">Comps</button><button disabled>News <small>Later</small></button><button disabled>Technicals <small>Later</small></button></nav><div className="b-actions"><button>⌘ K</button><button className="avatar">MD</button></div></header>
       <div className="b-threadbar"><strong>Threads</strong>{threads.map((thread, index) => <button key={thread.id} className={index === 0 && state !== "arrival" ? "active" : ""} onClick={() => setState("success")}><i />{thread.title}<small>{index === 0 ? "14:33" : `Jul ${30 - index * 2}`}</small></button>)}<button className="add" onClick={() => setState("arrival")}>＋</button></div>
-      {state === "arrival" || state === "input-error" ? (
-        <section className="b-command-arrival"><div className="b-intro"><span className="terminal-label">COMPS DESK / NEW RUN</span><h1>Put a peer group<br />on the desk.</h1><p>A fast, evidence-forward workspace for comparing the valuation of one company against peers you specify.</p></div><div className="command-box"><div className="command-title"><span>⌁</span><strong>Build Comps Table</strong><kbd>⌘ ↵</kbd></div><RequestFields compact {...{ target, peers, setTarget, setPeers, error, onSubmit: runRequest }} /><footer><span>Latest period</span><span>USD</span><span>User-supplied peers</span></footer></div><div className="recent-runs"><span>RECENT RUNS</span><div><strong>AAPL / MSFT GOOGL META</strong><em className="success-dot">Succeeded</em><small>6s · Today 14:32</small></div><div><strong>CNR / CP UNP CSX</strong><em className="failure-dot">Failed</em><small>Jul 30 19:02</small></div></div></section>
-      ) : state === "waiting" ? <div className="b-wait"><WaitingCard style="bar" /><div className="skeleton-grid">{Array.from({ length: 28 }).map((_, index) => <i key={index} />)}</div></div> : state === "failed" ? <div className="b-failed"><FailedRun compact onRetry={runRequest} /><section><span>RUN EVENT</span><code>UPSTREAM_ERROR</code><p>Alpha Vantage request limit was reached while loading AAPL.</p><small>Thread preserved · Run ID {RUN_ID}</small></section></div> : (
-        <section className="b-workspace">
-          <div className="b-runline"><div><span className="success-dot">SUCCEEDED</span><strong>AAPL</strong><span>vs</span>{run.peer_tickers.map((peer) => <b key={peer}>{peer}</b>)}<small>Latest · USD · 6.2s</small></div><div><button onClick={() => setState("arrival")}>Edit peer group</button><button onClick={() => setTraceOpen(!traceOpen)}>⌁ {traceOpen ? "Hide" : "Open"} Trace</button></div></div>
-          <div className="b-grid">
-            <section className="b-table"><FullTable selectedMetric={metric} onMetric={setMetric} /></section>
-            <aside className="b-inspector"><span className="eyebrow">READOUT</span><h2>{takeaways.headline}</h2><p>{takeaways.body}</p><div className="readout-stat"><span>Target premium</span><strong>+12%</strong><small>vs peer median EV / Revenue</small></div><WarningList /><div className="method"><strong>Interpretation boundary</strong><p>Relative valuation is context, not a recommendation. Price, quality, growth, and risk can move together.</p></div></aside>
-          </div>
-          {traceOpen && <div className="b-trace-drawer"><TracePanel mode="inline" onClose={() => setTraceOpen(false)} /></div>}
+      <div className="b-body">
+        <aside className="b-chat-rail">
+          <div className="command-title"><span>›_</span><strong>Analysis chat</strong><kbd>⌘ ↵</kbd></div>
+          <div className="b-chat-scroll"><ChatTranscript {...{ state, prompt, error }} style="terminal" /></div>
+          <ChatComposer {...{ prompt, setPrompt, onSubmit: runRequest }} tone="dark" showSuggestion={state === "arrival"} />
+          <div className="b-chat-meta"><span>Natural-language request</span><span>Fixture only</span></div>
+        </aside>
+        <section className="b-artifact-area">
+          {state === "arrival" || state === "input-error" ? (
+            <div className="b-empty-wrap"><EmptyAnalysisCanvas mode="desk" /><div className="recent-runs"><span>RECENT ARTIFACTS</span><div><strong>AAPL / MSFT GOOGL META</strong><em className="success-dot">Comps Table</em><small>6s · Today 14:32</small></div><div><strong>CNR / CP UNP CSX</strong><em className="failure-dot">Failed Run</em><small>Jul 30 19:02</small></div></div></div>
+          ) : state === "waiting" ? <div className="b-wait"><WaitingCard style="bar" /><div className="skeleton-grid">{Array.from({ length: 28 }).map((_, index) => <i key={index} />)}</div></div> : state === "failed" ? <div className="b-failed"><FailedRun compact onRetry={runRequest} /><section><span>RUN EVENT</span><code>UPSTREAM_ERROR</code><p>Alpha Vantage request limit was reached while loading AAPL.</p><small>Thread preserved · Run ID {RUN_ID}</small></section></div> : (
+            <section className="b-workspace">
+              <div className="b-runline"><div><span className="success-dot">SUCCEEDED</span><strong>AAPL</strong><span>vs</span>{run.peer_tickers.map((peer) => <b key={peer}>{peer}</b>)}<small>Latest · USD · 6.2s</small></div><div><button onClick={() => setPrompt(DEFAULT_PROMPT)}>Refine in chat</button><button onClick={() => setTraceOpen(!traceOpen)}>⌁ {traceOpen ? "Hide" : "Open"} Trace</button></div></div>
+              <div className="b-grid">
+                <section className="b-table"><FullTable selectedMetric={metric} onMetric={setMetric} /></section>
+                <aside className="b-inspector"><span className="eyebrow">READOUT</span><h2>{takeaways.headline}</h2><p>{takeaways.body}</p><div className="readout-stat"><span>Target premium</span><strong>+12%</strong><small>vs peer median EV / Revenue</small></div><WarningList /><div className="method"><strong>Interpretation boundary</strong><p>Relative valuation is context, not a recommendation. Price, quality, growth, and risk can move together.</p></div></aside>
+              </div>
+              {traceOpen && <div className="b-trace-drawer"><TracePanel mode="inline" onClose={() => setTraceOpen(false)} /></div>}
+            </section>
+          )}
         </section>
-      )}
+      </div>
     </main>
   );
 }
 
 function VariantC(props: SharedVariantProps) {
-  const { state, setState, target, peers, setTarget, setPeers, error, runRequest, traceOpen, setTraceOpen } = props;
+  const { state, setState, prompt, setPrompt, error, runRequest, setTraceOpen } = props;
   const [chapter, setChapter] = useState<"takeaway" | "table" | "trace">("takeaway");
   return (
     <main className="variant-c">
@@ -337,14 +423,12 @@ function VariantC(props: SharedVariantProps) {
       <section className="c-conversation">
         <header><div><span>Thread</span><strong>{state === "arrival" ? "Untitled comparison" : "Apple vs mega-cap peers"}</strong></div><button className="icon-button" onClick={() => setState("arrival")}>＋</button></header>
         <div className="c-thread-list"><span className="eyebrow">YOUR THREADS</span>{threads.map((thread, index) => <button key={thread.id} className={index === 0 && state !== "arrival" ? "active" : ""} onClick={() => setState("success")}><i>{thread.title.slice(0, 1)}</i><span>{thread.title}<small>{thread.message_count} Messages · {index === 0 ? "Today" : `${index + 2}d`}</small></span></button>)}</div>
-        <div className="c-chat">
-          {state === "arrival" || state === "input-error" ? <div className="c-welcome"><span className="eyebrow">START A THREAD</span><h1>What would you like to compare?</h1><p>Name a Target Ticker and the peers you want beside it. The analysis will unfold as a story you can audit.</p></div> : <><div className="message user"><span>YOU</span><p>Compare Apple with Microsoft, Alphabet, and Meta.</p></div><div className="message assistant"><span>TALKTOYOURSTOCK</span><p>{state === "waiting" ? "I’m gathering the latest evidence and aligning the peer group now." : state === "failed" ? "I couldn’t complete this Run, but I saved your request and the failure details." : "I built the Comps Table. The clearest difference is in revenue valuation; open the analysis story to see why."}</p></div></>}
-        </div>
-        <div className="c-composer"><RequestFields compact {...{ target, peers, setTarget, setPeers, error, onSubmit: runRequest }} /><small>TalkToYourStock provides analysis support, not buy, sell, or hold recommendations.</small></div>
+        <div className="c-chat"><ChatTranscript {...{ state, prompt, error }} style="story" /></div>
+        <div className="c-composer"><ChatComposer {...{ prompt, setPrompt, onSubmit: runRequest }} tone="paper" showSuggestion={state === "arrival"} /><small>TalkToYourStock provides analysis support, not buy, sell, or hold recommendations.</small></div>
       </section>
       <section className="c-canvas">
         <header className="c-canvas-head"><div><span className="eyebrow">ANALYSIS STORY</span><strong>{state === "arrival" ? "Nothing on the canvas yet" : "AAPL relative valuation"}</strong></div>{state === "success" && <div className="chapter-nav"><button className={chapter === "takeaway" ? "active" : ""} onClick={() => setChapter("takeaway")}>01 Takeaway</button><button className={chapter === "table" ? "active" : ""} onClick={() => setChapter("table")}>02 Evidence</button><button className={chapter === "trace" ? "active" : ""} onClick={() => setChapter("trace")}>03 Trace</button></div>}</header>
-        {state === "arrival" || state === "input-error" ? <div className="empty-canvas"><div className="orbit"><i /><i /><i /><span>t+</span></div><h2>Your comparison will become a three-part story.</h2><div><span><b>01</b>Plain-language takeaway</span><span><b>02</b>Comps Table evidence</span><span><b>03</b>Calculation Trace</span></div></div> : state === "waiting" ? <WaitingCard style="story" /> : state === "failed" ? <FailedRun onRetry={runRequest} /> : chapter === "takeaway" ? (
+        {state === "arrival" || state === "input-error" ? <EmptyAnalysisCanvas mode="story" /> : state === "waiting" ? <WaitingCard style="story" /> : state === "failed" ? <FailedRun onRetry={runRequest} /> : chapter === "takeaway" ? (
           <article className="story-takeaway"><div className="story-number">01</div><span className="eyebrow">COMPARISON TAKEAWAY</span><h1>{takeaways.headline}</h1><p>{takeaways.body}</p><div className="story-chart"><div><span>AAPL</span><i style={{ width: "80%" }} /><strong>7.96×</strong></div><div><span>Peer median</span><i style={{ width: "70%" }} /><strong>7.03×</strong></div><small>EV / Revenue</small></div><div className="confidence-story"><strong>{takeaways.confidence}</strong><span>Because the group is small and META is missing one core metric.</span></div><button className="story-next" onClick={() => setChapter("table")}>See the evidence <span>→</span></button></article>
         ) : chapter === "table" ? <article className="story-table"><div className="story-number">02</div><div className="story-heading"><div><span className="eyebrow">COMPS TABLE</span><h1>The evidence in one view</h1></div><button onClick={() => setChapter("trace")}>How was this calculated? →</button></div><WarningList quiet /><FullTable /></article> : <TracePanel mode="inline" onClose={() => { setTraceOpen(false); setChapter("table"); }} />}
       </section>
@@ -355,10 +439,8 @@ function VariantC(props: SharedVariantProps) {
 type SharedVariantProps = {
   state: DemoState;
   setState: (state: DemoState) => void;
-  target: string;
-  peers: string;
-  setTarget: (value: string) => void;
-  setPeers: (value: string) => void;
+  prompt: string;
+  setPrompt: (value: string) => void;
   error: string | null;
   runRequest: () => void;
   traceOpen: boolean;
@@ -404,8 +486,7 @@ function PrototypePageContent() {
   const variant: VariantKey = param === "B" || param === "C" ? param : "A";
   const initialState = searchParams.get("state") as DemoState | null;
   const [state, setStateValue] = useState<DemoState>(initialState && initialState in stateLabels ? initialState : "arrival");
-  const [target, setTarget] = useState("AAPL");
-  const [peers, setPeers] = useState("MSFT, GOOGL, META");
+  const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [traceOpen, setTraceOpen] = useState(false);
 
@@ -418,20 +499,21 @@ function PrototypePageContent() {
   const setState = useCallback((next: DemoState) => {
     setStateValue(next);
     setTraceOpen(false);
-    setError(next === "input-error" ? "Add at least two Peer Tickers so the comparison has context." : null);
-    if (next === "input-error") setPeers("MSFT");
-    if (next === "arrival") { setTarget("AAPL"); setPeers("MSFT, GOOGL, META"); }
+    setError(next === "input-error" ? "I can start with Apple and Microsoft. Which other company should join the peer group?" : null);
+    if (next === "input-error") setPrompt(INCOMPLETE_PROMPT);
+    if (next === "arrival") setPrompt("");
+    if (["waiting", "success", "failed"].includes(next)) setPrompt(DEFAULT_PROMPT);
   }, []);
 
   const runRequest = useCallback(() => {
-    const validationError = validateRequest(target, peers);
+    const validationError = validateChatRequest(prompt);
     if (validationError) { setError(validationError); setStateValue("input-error"); return; }
     setError(null);
     setStateValue("waiting");
     window.setTimeout(() => setStateValue("success"), 1500);
-  }, [target, peers]);
+  }, [prompt]);
 
-  const props = useMemo<SharedVariantProps>(() => ({ state, setState, target, peers, setTarget, setPeers, error, runRequest, traceOpen, setTraceOpen }), [state, setState, target, peers, error, runRequest, traceOpen]);
+  const props = useMemo<SharedVariantProps>(() => ({ state, setState, prompt, setPrompt, error, runRequest, traceOpen, setTraceOpen }), [state, setState, prompt, error, runRequest, traceOpen]);
 
   return (
     <>
