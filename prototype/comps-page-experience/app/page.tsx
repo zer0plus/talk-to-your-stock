@@ -89,7 +89,6 @@ const run = {
   as_of: "2026-07-31T20:00:00Z",
   warnings: [
     "META EV / EBITDA is unavailable because current EBITDA evidence was incomplete.",
-    "GOOGL P / E uses the latest available net income filing, dated 12 days before the quote.",
   ],
   error_message: null,
   created_at: "2026-08-01T14:32:08Z",
@@ -202,7 +201,7 @@ function FutureNav({ compact = false }: { compact?: boolean }) {
 function WarningList({ quiet = false }: { quiet?: boolean }) {
   return (
     <div className={quiet ? "warnings quiet" : "warnings"}>
-      <div className="warning-title"><span>!</span><strong>2 things to keep in mind</strong></div>
+      <div className="warning-title"><span>!</span><strong>Note</strong></div>
       {run.warnings.map((warning) => <p key={warning}>{warning}</p>)}
     </div>
   );
@@ -286,6 +285,7 @@ function FullTable({ selectedMetric = "ev_to_revenue", onMetric, allMetrics = tr
       <div className="metric-tabs">
         {metrics.map(([key, label]) => <button key={key} className={selectedMetric === key ? "selected" : ""} onClick={() => onMetric?.(key)}>{label}</button>)}
       </div>
+      <div className="table-scroll">
       <table>
         <thead><tr><th>Company</th><th>Revenue LTM</th><th>EBITDA LTM</th><th>EV / Revenue{!allMetrics && <small className="spread-badge">Largest spread</small>}</th><th>EV / EBITDA</th><th>P / E</th><th className="supplemental market-cap">Market cap</th><th className="supplemental enterprise-value">Enterprise value</th><th className="supplemental share-price">Share price</th></tr></thead>
         <tbody>
@@ -304,6 +304,7 @@ function FullTable({ selectedMetric = "ev_to_revenue", onMetric, allMetrics = tr
           ))}
         </tbody>
       </table>
+      </div>
       <p className="table-foot">USD billions except share price and multiples · Latest available evidence as of Jul 31, 2026</p>
     </div>
   );
@@ -427,15 +428,15 @@ function VariantA(props: SharedVariantProps) {
           <div className="brand"><div className="brand-mark">T<span>+</span></div><div className="sidebar-label"><strong>TalkToYourStock</strong><small>Evidence before opinion</small></div></div>
           <button className="shell-toggle" onClick={() => setShellCollapsed((collapsed) => !collapsed)} aria-label={shellCollapsed ? "Expand Product Shell" : "Collapse Product Shell"}>{shellCollapsed ? "›" : "‹"}</button>
         </div>
-        <button className="new-thread" onClick={() => setState("arrival")}><span className="new-thread-icon">＋</span><span className="sidebar-label">New comparison</span></button>
+        <button className="new-thread" onClick={() => setState("arrival")}><span className="new-thread-icon">＋</span><span className="sidebar-label">New analysis</span></button>
         {!shellCollapsed && <div className="thread-section">
           <div className="section-label sidebar-label">THREAD HISTORY <button>⌕</button></div>
-          {threads.map((thread, index) => <button className={`thread ${index === 0 && state !== "arrival" ? "active" : ""}`} key={thread.id} onClick={() => setState("success")}><span className="thread-copy"><span>{thread.title}</span><small>{index === 0 ? "Today" : `${index + 2}d ago`} · {thread.message_count} Messages</small></span></button>)}
+          {threads.map((thread, index) => <button className={`thread ${index === 0 && state !== "arrival" ? "active" : ""}`} key={thread.id} onClick={() => setState("success")}><span className="thread-copy"><span>{thread.title}</span><small>{index === 0 ? "Edited today" : `Edited ${index + 2}d ago`}</small></span></button>)}
         </div>}
         <div className="profile"><span>MD</span><div className="sidebar-label"><strong>Mitansh</strong><small>Local workspace</small></div><button className="sidebar-label">•••</button></div>
       </aside>
       <section className="a-content">
-        <header className="a-top"><div><span className="crumb">Comps /</span><strong>{state === "arrival" ? "New comparison" : "Apple vs mega-cap peers"}</strong></div><div className="status-dot">Local fixture data</div></header>
+        <header className="a-top"><div><span className="crumb">Comps /</span><strong>{state === "arrival" ? "New analysis" : "Apple vs mega-cap peers"}</strong></div></header>
         <div className="a-workbench">
           <aside className="a-chat-panel">
             <div className="chat-panel-head"><span className="eyebrow">THREAD CHAT</span><strong>{state === "arrival" ? "Start with a question" : "Apple vs mega-cap peers"}</strong></div>
@@ -448,7 +449,7 @@ function VariantA(props: SharedVariantProps) {
             {state === "arrival" || state === "input-error" ? <EmptyAnalysisCanvas mode="guided" /> : state === "waiting" ? <div className="a-state-center"><WaitingCard /></div> : state === "failed" ? <div className="a-state-center"><FailedRun onRetry={runRequest} onPrevious={() => setState("success")} /></div> : (
               <div className="a-success">
                 <section className="result-hero"><div><span className="eyebrow">COMPARISON TAKEAWAY</span><h1>{takeaways.headline}</h1><p>Apple’s revenue multiple is modestly above this peer group, while its EBITDA multiple sits closer to the companies with usable evidence.</p><details className="takeaway-why"><summary>Why?</summary><p>{takeaways.body}</p><div><strong>EV / Revenue</strong><span>How much the market values the whole business for each dollar of recent revenue.</span><strong>Peer median</strong><span>The middle peer value, used to reduce the influence of one unusually high or low company.</span></div></details><div className="confidence"><span>◒</span><strong>{takeaways.confidence}</strong><em>Small peer set · one missing metric</em></div></div><div className="hero-multiple"><span>AAPL</span><strong>7.96×</strong><small>EV / Revenue</small><div><i style={{ width: "61%" }} /><b>Peer median 7.03×</b></div></div></section>
-                <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div className="table-actions"><div className="view-toggle" aria-label="Comps Table view"><button className={!allMetrics ? "active" : ""} onClick={() => setAllMetrics(false)}>Guided</button><button className={allMetrics ? "active" : ""} onClick={() => setAllMetrics(true)}>All metrics</button></div><button className="secondary" onClick={() => openTrace()}>Inspect Trace</button><button className="secondary" disabled>Export later</button></div></div><FullTable allMetrics={allMetrics} onTrace={openTrace} /><div className="a-table-warnings"><WarningList /></div></section>
+                <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div className="table-actions"><div className="view-toggle" aria-label="Comps Table view"><button className={!allMetrics ? "active" : ""} onClick={() => setAllMetrics(false)}>Guided</button><button className={allMetrics ? "active" : ""} onClick={() => setAllMetrics(true)}>All metrics</button></div><button className="secondary" onClick={() => openTrace()}>Inspect Trace</button><button className="secondary" disabled>Export</button></div></div><FullTable allMetrics={allMetrics} onTrace={openTrace} /><div className="a-table-warnings"><WarningList /></div></section>
               </div>
             )}
           </section>
