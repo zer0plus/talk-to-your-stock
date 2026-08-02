@@ -35,6 +35,11 @@ type CompsRow = {
   as_of: string;
 };
 
+type TraceFocus = {
+  ticker: string;
+  field: "ev_to_revenue" | "ev_to_ebitda" | "pe";
+};
+
 const RUN_ID = "612d1a39-1453-4fe2-9c63-f916d1e85f94";
 const USER_ID = "72384531-04a0-4cb8-a62f-cb49bdb81572";
 const DEFAULT_PROMPT = "Compare Apple with Microsoft, Alphabet, and Meta.";
@@ -155,6 +160,21 @@ function multiple(value: number | null) {
   return value === null ? "—" : `${value.toFixed(2)}×`;
 }
 
+function traceFieldLabel(field: string) {
+  const labels: Record<string, string> = {
+    ev_to_revenue: "EV / Revenue",
+    ev_to_ebitda: "EV / EBITDA",
+    pe: "P / E",
+  };
+  return labels[field] ?? field.replaceAll("_", " ");
+}
+
+function traceInputValue(field: string, value: number) {
+  if (value > 1_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (field === "share_price") return `$${value.toFixed(2)}`;
+  return value.toFixed(2);
+}
+
 function validateChatRequest(prompt: string) {
   const request = prompt.trim();
   if (!request) return "Tell me which company you want to compare and name the peers you have in mind.";
@@ -188,21 +208,60 @@ function WarningList({ quiet = false }: { quiet?: boolean }) {
   );
 }
 
-function TracePanel({ onClose, mode = "panel" }: { onClose: () => void; mode?: "panel" | "inline" }) {
+function focusedFormula(focus: TraceFocus) {
+  const row = rows.find((candidate) => candidate.ticker === focus.ticker) ?? rows[0];
+  if (focus.field === "ev_to_revenue") {
+    return {
+      ticker: row.ticker,
+      output_field: focus.field,
+      expression: "enterprise_value / revenue_ltm",
+      output_value: row.ev_to_revenue ?? 0,
+      inputs: [
+        { field: "enterprise_value", value: (row.enterprise_value ?? 0) * 1_000_000_000, source: "Calculated", as_of: row.as_of },
+        { field: "revenue_ltm", value: (row.revenue_ltm ?? 0) * 1_000_000_000, source: "Alpha Vantage INCOME_STATEMENT", as_of: "2026-06-28T00:00:00Z" },
+      ],
+    };
+  }
+  if (focus.field === "ev_to_ebitda") {
+    return {
+      ticker: row.ticker,
+      output_field: focus.field,
+      expression: "enterprise_value / ebitda_ltm",
+      output_value: row.ev_to_ebitda ?? 0,
+      inputs: [
+        { field: "enterprise_value", value: (row.enterprise_value ?? 0) * 1_000_000_000, source: "Calculated", as_of: row.as_of },
+        { field: "ebitda_ltm", value: (row.ebitda_ltm ?? 0) * 1_000_000_000, source: "Normalized Fundamentals", as_of: "2026-06-28T00:00:00Z" },
+      ],
+    };
+  }
+  return {
+    ticker: row.ticker,
+    output_field: focus.field,
+    expression: "share_price / earnings_per_share_ltm",
+    output_value: row.pe ?? 0,
+    inputs: [
+      { field: "share_price", value: row.share_price ?? 0, source: "Alpha Vantage GLOBAL_QUOTE", as_of: row.as_of },
+      { field: "earnings_per_share_ltm", value: (row.share_price ?? 0) / (row.pe ?? 1), source: "Alpha Vantage EARNINGS", as_of: "2026-06-28T00:00:00Z" },
+    ],
+  };
+}
+
+function TracePanel({ onClose, mode = "panel", focus }: { onClose: () => void; mode?: "panel" | "inline"; focus?: TraceFocus | null }) {
+  const formulas = focus ? [focusedFormula(focus)] : trace.formulas;
   return (
     <section className={`trace-panel ${mode}`} aria-label="Trace inspection">
       <div className="trace-head">
-        <div><span className="eyebrow">TRACE · RUN {RUN_ID.slice(0, 8)}</span><h2>How the numbers were built</h2></div>
+        <div><span className="eyebrow">TRACE · RUN {RUN_ID.slice(0, 8)}</span><h2>{focus ? "How this number was built" : "How the numbers were built"}</h2></div>
         <button className="icon-button" onClick={onClose} aria-label="Close trace">×</button>
       </div>
       <p className="trace-intro">Every calculated value points back to a formula and the evidence used. This is the product Trace—not an agent log.</p>
-      {trace.formulas.map((formula) => (
+      {formulas.map((formula) => (
         <article className="formula" key={formula.output_field}>
-          <div className="formula-top"><strong>{formula.ticker} · {formula.output_field.replaceAll("_", " ")}</strong><b>{typeof formula.output_value === "number" && formula.output_value < 100 ? multiple(formula.output_value) : money(3251)}</b></div>
+          <div className="formula-top"><strong>{formula.ticker} · {traceFieldLabel(formula.output_field)}</strong><b>{typeof formula.output_value === "number" && formula.output_value < 100 ? multiple(formula.output_value) : money(3251)}</b></div>
           <code>{formula.expression}</code>
           <div className="inputs">
             {formula.inputs.map((input) => (
-              <div key={input.field}><span>{input.field.replaceAll("_", " ")}</span><strong>{typeof input.value === "number" && input.value > 1000000 ? `$${(input.value / 1_000_000_000).toFixed(1)}B` : input.value}</strong><small>{input.source}<br />As of {new Date(input.as_of).toLocaleDateString("en-CA")}</small></div>
+              <div key={input.field}><span>{input.field.replaceAll("_", " ")}</span><strong>{traceInputValue(input.field, input.value)}</strong><small>{input.source}<br />As of {new Date(input.as_of).toLocaleDateString("en-CA")}</small></div>
             ))}
           </div>
         </article>
@@ -211,28 +270,36 @@ function TracePanel({ onClose, mode = "panel" }: { onClose: () => void; mode?: "
   );
 }
 
-function FullTable({ selectedMetric = "ev_to_revenue", onMetric }: { selectedMetric?: string; onMetric?: (metric: string) => void }) {
+function FullTable({ selectedMetric = "ev_to_revenue", onMetric, allMetrics = true, onTrace }: {
+  selectedMetric?: string;
+  onMetric?: (metric: string) => void;
+  allMetrics?: boolean;
+  onTrace?: (focus: TraceFocus) => void;
+}) {
   const metrics = [
     ["ev_to_revenue", "EV / Revenue"],
     ["ev_to_ebitda", "EV / EBITDA"],
     ["pe", "P / E"],
   ];
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap ${allMetrics ? "all-metrics" : "guided-metrics"}`}>
       <div className="metric-tabs">
         {metrics.map(([key, label]) => <button key={key} className={selectedMetric === key ? "selected" : ""} onClick={() => onMetric?.(key)}>{label}</button>)}
       </div>
       <table>
-        <thead><tr><th>Company</th><th>Share price</th><th>Market cap</th><th>Enterprise value</th><th>Revenue LTM</th><th>EBITDA LTM</th><th>EV / Revenue</th><th>EV / EBITDA</th><th>P / E</th></tr></thead>
+        <thead><tr><th>Company</th><th>Revenue LTM</th><th>EBITDA LTM</th><th>EV / Revenue{!allMetrics && <small className="spread-badge">Largest spread</small>}</th><th>EV / EBITDA</th><th>P / E</th><th className="supplemental market-cap">Market cap</th><th className="supplemental enterprise-value">Enterprise value</th><th className="supplemental share-price">Share price</th></tr></thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.ticker} className={row.is_target ? "target-row" : ""}>
               <td><strong>{row.ticker}</strong><small>{row.company_name}</small>{row.is_target && <em>Target</em>}</td>
-              <td>${row.share_price?.toFixed(2)}</td><td>{money(row.market_cap)}</td><td>{money(row.enterprise_value)}</td><td>{money(row.revenue_ltm)}</td>
+              <td>{money(row.revenue_ltm)}</td>
               <td className={row.ebitda_ltm === null ? "missing" : ""}>{money(row.ebitda_ltm)}{row.ebitda_ltm === null && <small>Evidence missing</small>}</td>
-              <td className={selectedMetric === "ev_to_revenue" ? "metric-focus" : ""}>{multiple(row.ev_to_revenue)}</td>
-              <td className={`${selectedMetric === "ev_to_ebitda" ? "metric-focus" : ""} ${row.ev_to_ebitda === null ? "missing" : ""}`}>{multiple(row.ev_to_ebitda)}{row.ev_to_ebitda === null && <small>Not calculated</small>}</td>
-              <td className={selectedMetric === "pe" ? "metric-focus" : ""}>{multiple(row.pe)}</td>
+              <td className={selectedMetric === "ev_to_revenue" ? "metric-focus" : ""}>{onTrace ? <button className="trace-cell" onClick={() => onTrace({ ticker: row.ticker, field: "ev_to_revenue" })} aria-label={`Inspect Trace for ${row.ticker} EV / Revenue`}>{multiple(row.ev_to_revenue)}<small>Inspect</small></button> : multiple(row.ev_to_revenue)}</td>
+              <td className={`${selectedMetric === "ev_to_ebitda" ? "metric-focus" : ""} ${row.ev_to_ebitda === null ? "missing" : ""}`}>{onTrace && row.ev_to_ebitda !== null ? <button className="trace-cell" onClick={() => onTrace({ ticker: row.ticker, field: "ev_to_ebitda" })} aria-label={`Inspect Trace for ${row.ticker} EV / EBITDA`}>{multiple(row.ev_to_ebitda)}<small>Inspect</small></button> : <>{multiple(row.ev_to_ebitda)}{row.ev_to_ebitda === null && <small>Not calculated</small>}</>}</td>
+              <td className={selectedMetric === "pe" ? "metric-focus" : ""}>{onTrace ? <button className="trace-cell" onClick={() => onTrace({ ticker: row.ticker, field: "pe" })} aria-label={`Inspect Trace for ${row.ticker} P / E`}>{multiple(row.pe)}<small>Inspect</small></button> : multiple(row.pe)}</td>
+              <td className="supplemental market-cap">{money(row.market_cap)}</td>
+              <td className="supplemental enterprise-value">{money(row.enterprise_value)}</td>
+              <td className="supplemental share-price">${row.share_price?.toFixed(2)}</td>
             </tr>
           ))}
         </tbody>
@@ -334,12 +401,12 @@ function WaitingCard({ style = "card" }: { style?: "card" | "bar" | "story" }) {
   );
 }
 
-function FailedRun({ onRetry, compact = false }: { onRetry: () => void; compact?: boolean }) {
+function FailedRun({ onRetry, onPrevious, compact = false }: { onRetry: () => void; onPrevious?: () => void; compact?: boolean }) {
   return (
     <div className={compact ? "failed-run compact" : "failed-run"}>
       <span className="failure-mark">×</span>
       <div><span className="eyebrow">RUN FAILED · {RUN_ID.slice(0, 8)}</span><h2>We couldn’t finish this comparison</h2><p>Alpha Vantage’s request limit was reached while loading AAPL. Your Thread and request are saved.</p><small>No Comps Table was produced, so there is no result to interpret.</small></div>
-      <button className="primary" onClick={onRetry}>Try the Run again</button>
+      <div className="failed-actions"><button className="primary" onClick={onRetry}>Try the Run again</button>{onPrevious && <button className="secondary" onClick={onPrevious}>View previous analysis</button>}</div>
     </div>
   );
 }
@@ -347,6 +414,12 @@ function FailedRun({ onRetry, compact = false }: { onRetry: () => void; compact?
 function VariantA(props: SharedVariantProps) {
   const { state, setState, prompt, setPrompt, error, runRequest, traceOpen, setTraceOpen } = props;
   const [shellCollapsed, setShellCollapsed] = useState(false);
+  const [allMetrics, setAllMetrics] = useState(false);
+  const [traceFocus, setTraceFocus] = useState<TraceFocus | null>(null);
+  const openTrace = (focus: TraceFocus | null = null) => {
+    setTraceFocus(focus);
+    setTraceOpen(true);
+  };
   return (
     <main className={`variant-a ${shellCollapsed ? "shell-collapsed" : ""}`}>
       <aside className="a-sidebar">
@@ -372,16 +445,16 @@ function VariantA(props: SharedVariantProps) {
           </aside>
           <section className="a-canvas">
             <header className="canvas-bar"><div><span className="eyebrow">MAIN SURFACE</span><strong>{state === "success" ? "Comps analysis" : "Ready for an analysis artifact"}</strong></div><div className="canvas-destinations"><button className="active">Comps</button><button disabled>News · Later</button><button disabled>Technicals · Later</button></div></header>
-            {state === "arrival" || state === "input-error" ? <EmptyAnalysisCanvas mode="guided" /> : state === "waiting" ? <div className="a-state-center"><WaitingCard /></div> : state === "failed" ? <div className="a-state-center"><FailedRun onRetry={runRequest} /></div> : (
+            {state === "arrival" || state === "input-error" ? <EmptyAnalysisCanvas mode="guided" /> : state === "waiting" ? <div className="a-state-center"><WaitingCard /></div> : state === "failed" ? <div className="a-state-center"><FailedRun onRetry={runRequest} onPrevious={() => setState("success")} /></div> : (
               <div className="a-success">
-                <section className="result-hero"><div><span className="eyebrow">COMPARISON TAKEAWAY</span><h1>{takeaways.headline}</h1><p>{takeaways.body}</p><div className="confidence"><span>◒</span><strong>{takeaways.confidence}</strong><em>Small peer set · one missing metric</em></div></div><div className="hero-multiple"><span>AAPL</span><strong>7.96×</strong><small>EV / Revenue</small><div><i style={{ width: "61%" }} /><b>Peer median 7.03×</b></div></div></section>
-                <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div><button className="secondary" onClick={() => setTraceOpen(true)}>Inspect Trace</button><button className="secondary" disabled>Export later</button></div></div><FullTable /><div className="a-table-warnings"><WarningList /></div></section>
+                <section className="result-hero"><div><span className="eyebrow">COMPARISON TAKEAWAY</span><h1>{takeaways.headline}</h1><p>Apple’s revenue multiple is modestly above this peer group, while its EBITDA multiple sits closer to the companies with usable evidence.</p><details className="takeaway-why"><summary>Why?</summary><p>{takeaways.body}</p><div><strong>EV / Revenue</strong><span>How much the market values the whole business for each dollar of recent revenue.</span><strong>Peer median</strong><span>The middle peer value, used to reduce the influence of one unusually high or low company.</span></div></details><div className="confidence"><span>◒</span><strong>{takeaways.confidence}</strong><em>Small peer set · one missing metric</em></div></div><div className="hero-multiple"><span>AAPL</span><strong>7.96×</strong><small>EV / Revenue</small><div><i style={{ width: "61%" }} /><b>Peer median 7.03×</b></div></div></section>
+                <section className="a-table-section"><div className="section-head"><div><span className="eyebrow">COMPS TABLE</span><h2>See the comparison behind the takeaway</h2></div><div className="table-actions"><div className="view-toggle" aria-label="Comps Table view"><button className={!allMetrics ? "active" : ""} onClick={() => setAllMetrics(false)}>Guided</button><button className={allMetrics ? "active" : ""} onClick={() => setAllMetrics(true)}>All metrics</button></div><button className="secondary" onClick={() => openTrace()}>Inspect Trace</button><button className="secondary" disabled>Export later</button></div></div><FullTable allMetrics={allMetrics} onTrace={openTrace} /><div className="a-table-warnings"><WarningList /></div></section>
               </div>
             )}
           </section>
         </div>
       </section>
-      {traceOpen && <div className="trace-overlay"><TracePanel onClose={() => setTraceOpen(false)} /></div>}
+      {traceOpen && <div className="trace-overlay"><TracePanel focus={traceFocus} onClose={() => { setTraceOpen(false); setTraceFocus(null); }} /></div>}
     </main>
   );
 }
