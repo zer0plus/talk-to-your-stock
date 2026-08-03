@@ -4,14 +4,18 @@ import os
 import subprocess
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID, uuid4
 
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 
+from comps_service.main import app as comps_app
 from talk_to_your_stock_shared import AgentMessageResponse
+from tests.live_service import running_service
 from web_bff.main import app, get_agent_client
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -181,6 +185,129 @@ class WebBffMigrationsTest(unittest.TestCase):
                             "VALIDATION_ERROR",
                         )
             finally:
+                command.downgrade(migration_config, "base")
+
+    @unittest.skipUnless(
+        os.environ.get("WEB_BFF_MIGRATION_TEST_DATABASE_URL"),
+        "WEB_BFF_MIGRATION_TEST_DATABASE_URL is required for PostgreSQL integration.",
+    )
+    def test_migrated_database_supports_latest_successful_run_history(self) -> None:
+        import psycopg
+
+        database_url = os.environ["WEB_BFF_MIGRATION_TEST_DATABASE_URL"]
+        migration_config = Config(str(REPO_ROOT / "alembic.ini"))
+        env = {
+            "DATABASE_URL": database_url,
+            "TALK_TO_YOUR_STOCK_ENV": "test",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service.test",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            command.upgrade(migration_config, "head")
+            try:
+                app.dependency_overrides[get_agent_client] = StubAgentClient
+                client = TestClient(app)
+                thread_id = client.post(
+                    "/v1/threads", json={"title": "Run history"}
+                ).json()["thread"]["id"]
+                trigger_message_id = client.post(
+                    f"/v1/threads/{thread_id}/messages",
+                    json={"content": "Compare AAPL with MSFT"},
+                ).json()["user_message"]["id"]
+                created_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
+                first_successful_run_id = UUID(
+                    "00000000-0000-0000-0000-000000000001"
+                )
+                newest_successful_run_id = UUID(
+                    "00000000-0000-0000-0000-000000000002"
+                )
+                failed_run_id = uuid4()
+
+                with psycopg.connect(database_url) as connection:
+                    with connection.cursor() as cursor:
+                        for run_id, run_status, run_created_at in (
+                            (first_successful_run_id, "succeeded", created_at),
+                            (newest_successful_run_id, "succeeded", created_at),
+                            (
+                                failed_run_id,
+                                "failed",
+                                created_at + timedelta(seconds=1),
+                            ),
+                        ):
+                            cursor.execute(
+                                """
+                                insert into comps_runs (
+                                    id, invocation_id, thread_id,
+                                    trigger_message_id, status, target_ticker,
+                                    peer_tickers, currency, as_of, warnings,
+                                    error_message, created_at, started_at,
+                                    completed_at
+                                )
+                                values (
+                                    %s, %s, %s, %s, %s, 'AAPL',
+                                    array['MSFT'], 'USD', %s, '[]'::jsonb,
+                                    null, %s, %s, %s
+                                )
+                                """,
+                                (
+                                    run_id,
+                                    uuid4(),
+                                    thread_id,
+                                    trigger_message_id,
+                                    run_status,
+                                    run_created_at,
+                                    run_created_at,
+                                    run_created_at,
+                                    run_created_at,
+                                ),
+                            )
+
+                with running_service(comps_app) as comps_service_url:
+                    with patch.dict(
+                        os.environ,
+                        {"COMPS_SERVICE_URL": comps_service_url},
+                        clear=False,
+                    ):
+                        history = client.get(f"/v1/threads/{thread_id}/runs")
+                        latest_successful = client.get(
+                            f"/v1/threads/{thread_id}/runs",
+                            params={"status": "succeeded", "limit": 1},
+                        )
+                        next_successful = client.get(
+                            f"/v1/threads/{thread_id}/runs",
+                            params={
+                                "status": "succeeded",
+                                "limit": 1,
+                                "cursor": latest_successful.json()["page"][
+                                    "next_cursor"
+                                ],
+                            },
+                        )
+
+                self.assertEqual(history.status_code, 200, history.text)
+                self.assertEqual(
+                    [run["id"] for run in history.json()["runs"]],
+                    [
+                        str(failed_run_id),
+                        str(newest_successful_run_id),
+                        str(first_successful_run_id),
+                    ],
+                )
+                self.assertEqual(latest_successful.status_code, 200)
+                self.assertEqual(
+                    [run["id"] for run in latest_successful.json()["runs"]],
+                    [str(newest_successful_run_id)],
+                )
+                self.assertTrue(latest_successful.json()["page"]["has_more"])
+                self.assertEqual(next_successful.status_code, 200)
+                self.assertEqual(
+                    [run["id"] for run in next_successful.json()["runs"]],
+                    [str(first_successful_run_id)],
+                )
+            finally:
+                app.dependency_overrides.clear()
                 command.downgrade(migration_config, "base")
 
 

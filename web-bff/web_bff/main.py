@@ -22,7 +22,9 @@ from talk_to_your_stock_shared import (
     MessageStatus,
     ReadinessResponse,
     Run,
+    RunListResponse,
     RunResponse,
+    RunStatus,
     RunTableResponse,
     ServiceName,
     ServiceStatus,
@@ -44,6 +46,7 @@ from web_bff.agent_client import (
 from web_bff.auth import AuthenticationError, authenticate_user
 from web_bff.comps_client import (
     CompsArtifactNotFound,
+    CompsRequestInvalid,
     CompsServiceUnavailable,
     HttpCompsClient,
 )
@@ -126,6 +129,22 @@ def handle_comps_artifact_not_found(
         content=ErrorResponse(
             error=ErrorDetail(
                 code=ErrorCode.NOT_FOUND,
+                message=str(exc),
+            )
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(CompsRequestInvalid)
+def handle_comps_request_invalid(
+    _request,
+    exc: CompsRequestInvalid,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content=ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.VALIDATION_ERROR,
                 message=str(exc),
             )
         ).model_dump(mode="json"),
@@ -316,6 +335,47 @@ def list_messages(
             message="Thread not found.",
         )
     return MessageListResponse(messages=messages, page=page)
+
+
+@app.get(
+    "/v1/threads/{thread_id}/runs",
+    response_model=RunListResponse,
+    summary="List table-generation Runs in a Thread",
+    description=(
+        "Returns owned Runs newest first using deterministic created-at and Run-ID "
+        "ordering. The status filter is applied before limit and cursor pagination."
+    ),
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def list_runs(
+    thread_id: Annotated[UUID, Path()],
+    repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
+    comps_client: Annotated[HttpCompsClient, Depends(get_comps_client)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: Annotated[RunStatus | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    cursor: str | None = None,
+) -> RunListResponse:
+    user = repository.upsert_user(current_user)
+    thread = repository.get_thread(thread_id=thread_id, user_id=user.id)
+    if thread is None:
+        raise ApiException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=ErrorCode.NOT_FOUND,
+            message="Thread not found.",
+        )
+    return comps_client.list_runs(
+        thread_id=thread.id,
+        status=status_filter,
+        limit=limit,
+        cursor=cursor,
+    )
 
 
 @app.post(

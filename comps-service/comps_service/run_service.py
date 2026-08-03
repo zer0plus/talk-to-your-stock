@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from talk_to_your_stock_shared import (
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
+    PaginationMeta,
     Run,
     RunStatus,
     RunTableResponse,
@@ -101,6 +102,15 @@ class CompsRunRepository(Protocol):
     ) -> None: ...
 
     def get_run(self, run_id: UUID) -> Run | None: ...
+
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[Run], PaginationMeta]: ...
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None: ...
 
