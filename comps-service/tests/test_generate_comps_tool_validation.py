@@ -41,6 +41,12 @@ class RecordingUnavailableCompanyDataSource:
 class GenerateCompsToolValidationTest(unittest.TestCase):
     _last_live_validation_at = 0.0
 
+    def setUp(self) -> None:
+        self.repository = Mock()
+        self.repository.get_calculated_run_by_invocation.return_value = None
+        app.dependency_overrides[get_repository] = lambda: self.repository
+        self.addCleanup(app.dependency_overrides.clear)
+
     def _internal_tool_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"}
 
@@ -106,9 +112,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
     def test_generate_comps_table_accepts_case_insensitive_bearer_scheme(self) -> None:
         ticker_validator = Mock()
         ticker_validator.is_supported.return_value = True
-        repository = Mock()
-        app.dependency_overrides[get_repository] = lambda: repository
-        self.addCleanup(app.dependency_overrides.clear)
+        repository = self.repository
 
         with (
             patch.dict(

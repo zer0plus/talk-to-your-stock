@@ -59,6 +59,7 @@ from .tool_validation import (
     UpstreamValidationError,
     ValidatedTickerMatches,
     validate_generate_comps_request,
+    validate_generate_comps_request_locally,
 )
 
 COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
@@ -245,6 +246,24 @@ def generate_comps_table(
         )
 
     try:
+        validate_generate_comps_request_locally(request)
+    except ToolValidationError as exc:
+        return _error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message=exc.message,
+            details=exc.details,
+        )
+
+    run_service = CompsRunService(
+        repository=repository,
+        company_data_source=company_data_source,
+    )
+    existing = run_service.resume(request)
+    if existing is not None:
+        return existing
+
+    try:
         validate_generate_comps_request(request, ticker_validator=ticker_validator)
     except ToolValidationError as exc:
         return _error_response(
@@ -278,10 +297,7 @@ def generate_comps_table(
         )
 
     try:
-        return CompsRunService(
-            repository=repository,
-            company_data_source=company_data_source,
-        ).generate(request)
+        return run_service.generate(request)
     except FailedCompsRun as exc:
         dependency_unavailable = isinstance(exc.cause, CompanyDataUnavailable)
         failure_details = {

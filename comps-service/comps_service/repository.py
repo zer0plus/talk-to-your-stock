@@ -7,6 +7,7 @@ from typing import NoReturn
 from uuid import UUID
 
 from talk_to_your_stock_shared import (
+    GenerateCompsDraftResponse,
     Run,
     RunTableDraftResponse,
     RunTableResponse,
@@ -227,6 +228,40 @@ class PostgresCompsRunRepository:
         except Exception as exc:
             self._raise_unavailable(exc)
         return Run.model_validate(row) if row is not None else None
+
+    def get_calculated_run_by_invocation(
+        self,
+        invocation_id: UUID,
+    ) -> GenerateCompsDraftResponse | None:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        select id
+                        from comps_runs
+                        where invocation_id = %s and status = %s
+                        """,
+                        (invocation_id, "running"),
+                    )
+                    row = cursor.fetchone()
+        except Exception as exc:
+            self._raise_unavailable(exc)
+        if row is None:
+            return None
+
+        run_id = row[0]
+        run = self.get_run(run_id)
+        table = self.get_draft_table(run_id)
+        trace = self.get_trace(run_id)
+        if run is None or table is None or trace is None:
+            return None
+        return GenerateCompsDraftResponse(
+            run=run,
+            table=table,
+            trace=trace,
+            warnings=run.warnings,
+        )
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         try:

@@ -17,7 +17,8 @@ from agent_service.comps_client import (
     CompsToolValidationError,
     HttpCompsToolClient,
 )
-from comps_service.main import app as real_comps_app
+from comps_service.main import app as real_comps_app, get_repository
+from comps_service.repository import CompsPersistenceUnavailable
 from talk_to_your_stock_shared import (
     AnalysisPeriod,
     ErrorCode,
@@ -203,6 +204,13 @@ class HttpCompsToolClientTest(unittest.TestCase):
     def test_calls_real_comps_service_route_with_service_credential(self) -> None:
         ticker_validator = Mock()
         ticker_validator.is_supported.return_value = True
+        repository = Mock()
+        repository.get_calculated_run_by_invocation.return_value = None
+        repository.save_failed_run.side_effect = CompsPersistenceUnavailable(
+            "Comps persistence is unavailable."
+        )
+        real_comps_app.dependency_overrides[get_repository] = lambda: repository
+        self.addCleanup(real_comps_app.dependency_overrides.clear)
         request = _tool_request(thread_id=uuid4(), trigger_message_id=uuid4())
 
         with (

@@ -893,13 +893,45 @@ components:
                   $ref: '#/components/schemas/MinMedianMax'
 
     RunTableResponse:
-      allOf:
-        - $ref: '#/components/schemas/RunTableDraftResponse'
-        - type: object
-          required: [comparison_takeaway]
+      type: object
+      required:
+        [run_id, target_ticker, currency, as_of, rows, summary, comparison_takeaway]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        target_ticker:
+          type: string
+          pattern: ^[A-Z.]{1,10}$
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        as_of:
+          type: string
+          format: date-time
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompsRow'
+        summary:
+          type: object
+          required: [stats]
           properties:
-            comparison_takeaway:
-              $ref: '#/components/schemas/ComparisonTakeaway'
+            stats:
+              type: object
+              required: [ev_to_revenue, ev_to_ebit, ev_to_ebitda, pe]
+              properties:
+                ev_to_revenue:
+                  $ref: '#/components/schemas/MinMedianMax'
+                ev_to_ebit:
+                  $ref: '#/components/schemas/MinMedianMax'
+                ev_to_ebitda:
+                  $ref: '#/components/schemas/MinMedianMax'
+                pe:
+                  $ref: '#/components/schemas/MinMedianMax'
+        comparison_takeaway:
+          $ref: '#/components/schemas/ComparisonTakeaway'
 
     MinMedianMax:
       type: object

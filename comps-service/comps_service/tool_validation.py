@@ -217,6 +217,28 @@ def validate_generate_comps_request(
     *,
     ticker_validator: AlphaVantageTickerValidator | None = None,
 ) -> None:
+    validate_generate_comps_request_locally(request)
+
+    validator = ticker_validator or AlphaVantageTickerValidator()
+    requested_tickers = [
+        request.target_ticker.upper(),
+        *[ticker.upper() for ticker in request.peer_tickers],
+    ]
+    unsupported_tickers = [
+        ticker
+        for ticker in sorted(set(requested_tickers))
+        if not validator.is_supported(ticker)
+    ]
+    if unsupported_tickers:
+        raise ToolValidationError(
+            message=f"Unsupported ticker: {', '.join(unsupported_tickers)}.",
+            details={"unsupported_tickers": unsupported_tickers},
+        )
+
+
+def validate_generate_comps_request_locally(
+    request: GenerateCompsToolRequest,
+) -> None:
     # Future auto mode should select Peer Tickers before this explicit-peer validation.
     target_ticker = request.target_ticker.upper()
     peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
@@ -239,20 +261,4 @@ def validate_generate_comps_request(
                 "target_ticker": target_ticker,
                 "self_comparison_tickers": self_comparison_tickers,
             },
-        )
-
-    validator = ticker_validator or AlphaVantageTickerValidator()
-    requested_tickers = [
-        target_ticker,
-        *peer_tickers,
-    ]
-    unsupported_tickers = [
-        ticker
-        for ticker in sorted(set(requested_tickers))
-        if not validator.is_supported(ticker)
-    ]
-    if unsupported_tickers:
-        raise ToolValidationError(
-            message=f"Unsupported ticker: {', '.join(unsupported_tickers)}.",
-            details={"unsupported_tickers": unsupported_tickers},
         )

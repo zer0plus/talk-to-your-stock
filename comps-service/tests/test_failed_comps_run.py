@@ -29,7 +29,9 @@ from comps_service.run_service import (
     LoadedCompanyData,
 )
 from talk_to_your_stock_shared import (
+    GenerateCompsDraftResponse,
     Run,
+    RunStatus,
     RunTableDraftResponse,
     RunTableResponse,
     TraceResponse,
@@ -89,6 +91,23 @@ class InMemoryCompsRunRepository:
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)
 
+    def get_calculated_run_by_invocation(
+        self,
+        invocation_id: UUID,
+    ) -> GenerateCompsDraftResponse | None:
+        run_id = self.invocations.get(invocation_id)
+        if run_id is None:
+            return None
+        run = self.runs[run_id]
+        if run.status != RunStatus.RUNNING:
+            return None
+        return GenerateCompsDraftResponse(
+            run=run,
+            table=self.draft_tables[run_id],
+            trace=self.traces[run_id],
+            warnings=run.warnings,
+        )
+
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
 
@@ -109,6 +128,9 @@ class InMemoryCompsRunRepository:
     ) -> None:
         self.runs[run.id] = run
         self.tables[run.id] = table
+
+    def finalize_failed_run(self, *, run: Run) -> None:
+        self.runs[run.id] = run
 
 
 def company_input(ticker: str) -> CompanyCompsInput:

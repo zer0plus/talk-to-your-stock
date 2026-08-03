@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -42,6 +43,7 @@ VALIDATION_CLARIFICATION = (
     "I couldn't validate those Tickers after one correction. "
     "Please confirm the Target Ticker and Peer Tickers."
 )
+logger = logging.getLogger(__name__)
 
 
 class _ToolInvocationGate:
@@ -330,8 +332,12 @@ class FundamentalAnalysisAgent:
                     )
                 ),
             )
-        except (CompsToolError, CompsToolUnavailable):
-            pass
+        except (CompsToolError, CompsToolUnavailable) as exc:
+            logger.error(
+                "Calculated Run failure transition unavailable: run_id=%s message=%s",
+                run_id,
+                str(exc),
+            )
 
 
 def _keep_first_comps_tool_call(callback_context: Any, llm_response: Any) -> Any:

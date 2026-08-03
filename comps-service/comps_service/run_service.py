@@ -126,6 +126,11 @@ class CompsRunRepository(Protocol):
 
     def finalize_failed_run(self, *, run: Run) -> None: ...
 
+    def get_calculated_run_by_invocation(
+        self,
+        invocation_id: UUID,
+    ) -> GenerateCompsDraftResponse | None: ...
+
 
 class CompsRunService:
     def __init__(
@@ -140,6 +145,10 @@ class CompsRunService:
         self._calculator = calculator or CompsCalculator()
 
     def generate(self, request: GenerateCompsToolRequest) -> GenerateCompsDraftResponse:
+        existing = self.resume(request)
+        if existing is not None:
+            return existing
+
         target_ticker = request.target_ticker.upper()
         peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
         requested_tickers = [target_ticker, *peer_tickers]
@@ -205,19 +214,47 @@ class CompsRunService:
             normalized_inputs=companies,
             created_at=utc_now(),
         )
-        self._repository.save_calculated_run(
-            invocation_id=request.invocation_id,
-            run=run,
-            table=table,
-            trace=trace,
-            source_snapshot=source_snapshot,
-        )
+        try:
+            self._repository.save_calculated_run(
+                invocation_id=request.invocation_id,
+                run=run,
+                table=table,
+                trace=trace,
+                source_snapshot=source_snapshot,
+            )
+        except DuplicateToolInvocation:
+            existing = self.resume(request)
+            if existing is not None:
+                return existing
+            raise
         return GenerateCompsDraftResponse(
             run=run,
             table=table,
             trace=trace,
             warnings=run.warnings,
         )
+
+    def resume(
+        self,
+        request: GenerateCompsToolRequest,
+    ) -> GenerateCompsDraftResponse | None:
+        existing = self._repository.get_calculated_run_by_invocation(
+            request.invocation_id
+        )
+        if existing is None:
+            return None
+        if (
+            existing.run.thread_id != request.thread_id
+            or existing.run.trigger_message_id != request.trigger_message_id
+            or existing.run.target_ticker != request.target_ticker.upper()
+            or existing.run.peer_tickers
+            != [ticker.upper() for ticker in request.peer_tickers]
+            or existing.run.currency != request.currency.upper()
+        ):
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a different Run."
+            )
+        return existing
 
     def finalize(
         self,

@@ -26,7 +26,9 @@ from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLink
 from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
 from comps_service.tool_validation import AlphaVantageTickerValidator
 from talk_to_your_stock_shared import (
+    GenerateCompsDraftResponse,
     Run,
+    RunStatus,
     RunTableDraftResponse,
     RunTableResponse,
     TraceResponse,
@@ -41,6 +43,11 @@ FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "alpha_vantage"
 class SupportedTickerValidator:
     def is_supported(self, _ticker: str) -> bool:
         return True
+
+
+class UnexpectedTickerValidator:
+    def is_supported(self, _ticker: str) -> bool:
+        raise AssertionError("Ticker validation must not run during draft recovery.")
 
 
 class ControlledCompanyDataSource:
@@ -113,6 +120,12 @@ class ControlledCompanyDataSource:
         )
 
 
+class UnexpectedCompanyDataSource:
+    def load(self, *, tickers: list[str], currency: str) -> LoadedCompanyData:
+        del tickers, currency
+        raise AssertionError("Provider loading must not run during draft recovery.")
+
+
 class ReverseOrderCompanyDataSource(ControlledCompanyDataSource):
     def load(
         self,
@@ -172,6 +185,23 @@ class InMemoryCompsRunRepository:
 
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)
+
+    def get_calculated_run_by_invocation(
+        self,
+        invocation_id: UUID,
+    ) -> GenerateCompsDraftResponse | None:
+        run_id = self.invocations.get(invocation_id)
+        if run_id is None:
+            return None
+        run = self.runs[run_id]
+        if run.status != RunStatus.RUNNING:
+            return None
+        return GenerateCompsDraftResponse(
+            run=run,
+            table=self.draft_tables[run_id],
+            trace=self.traces[run_id],
+            warnings=run.warnings,
+        )
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
@@ -1087,7 +1117,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertNotIn("raw-provider", created.text)
         self.assertNotIn("raw-provider", trace_readback.text)
 
-    def test_repeated_invocation_returns_conflict_without_duplicate_artifacts(
+    def test_repeated_invocation_recovers_the_existing_calculated_run(
         self,
     ) -> None:
         invocation_id = uuid4()
@@ -1112,6 +1142,10 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 json=request,
                 headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
             )
+            app.dependency_overrides[get_company_data_source] = (
+                UnexpectedCompanyDataSource
+            )
+            app.dependency_overrides[get_ticker_validator] = UnexpectedTickerValidator
             repeated = client.post(
                 "/v1/internal/tools/generate-comps-table",
                 json=request,
@@ -1119,14 +1153,46 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             )
 
         self.assertEqual(created.status_code, 200, created.text)
-        self.assertEqual(repeated.status_code, 409, repeated.text)
-        self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
-        self.assertIsNone(repeated.json()["error"]["details"])
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json(), created.json())
         self.assertEqual(len(self.repository.runs), 1)
         self.assertEqual(len(self.repository.draft_tables), 1)
         self.assertEqual(len(self.repository.tables), 0)
         self.assertEqual(len(self.repository.traces), 1)
         self.assertEqual(len(self.repository.source_snapshots), 1)
+
+    def test_repeated_invocation_with_different_input_returns_conflict(self) -> None:
+        invocation_id = uuid4()
+        request = {
+            "invocation_id": str(invocation_id),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            created = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            repeated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json={**request, "peer_tickers": ["GOOG"]},
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(repeated.status_code, 409, repeated.text)
+        self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
 
     def test_runtime_path_fails_clearly_without_provider_configuration(
         self,
