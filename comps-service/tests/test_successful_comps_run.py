@@ -246,6 +246,34 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             {"limited", "moderate", "strong"},
         )
 
+    def test_verdict_word_ticker_still_returns_a_successful_takeaway(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "HOLD",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                    "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(
+            response.json()["table"]["comparison_takeaway"]["headline"].startswith(
+                "HOLD "
+            )
+        )
+
     def test_provider_payload_with_missing_currency_is_persisted(
         self,
     ) -> None:

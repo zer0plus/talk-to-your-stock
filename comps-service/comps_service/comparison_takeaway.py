@@ -94,7 +94,13 @@ def verify_comparison_takeaway(table: RunTableResponse) -> None:
         f"{table.comparison_takeaway.headline} "
         f"{table.comparison_takeaway.interpretation}"
     )
-    if _VERDICT_PATTERN.search(prose):
+    prose_without_ticker = re.sub(
+        rf"\b{re.escape(table.target_ticker)}\b",
+        "",
+        prose,
+        flags=re.IGNORECASE,
+    )
+    if _VERDICT_PATTERN.search(prose_without_ticker):
         raise InvalidComparisonTakeaway(
             "The Comparison Takeaway must not contain a buy, sell, or hold verdict."
         )

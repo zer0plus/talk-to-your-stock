@@ -151,6 +151,19 @@ class CompsCalculatorTest(unittest.TestCase):
         for verdict in ("buy", "sell", "hold"):
             self.assertNotRegex(prose, rf"\b{verdict}\b")
 
+    def test_verdict_word_in_target_ticker_is_not_treated_as_a_recommendation(
+        self,
+    ) -> None:
+        table, _trace, _warnings = self.calculator.generate(
+            run_id=uuid4(),
+            target_ticker="HOLD",
+            companies=[self._company("HOLD"), self._company("MSFT")],
+            currency="USD",
+        )
+
+        self.assertEqual(table.comparison_takeaway.confidence.value, "limited")
+        self.assertTrue(table.comparison_takeaway.headline.startswith("HOLD "))
+
     def test_missing_target_ticker_raises(self) -> None:
         with self.assertRaisesRegex(CompsCalculationError, "Target ticker AAPL is missing"):
             self.calculator.generate(

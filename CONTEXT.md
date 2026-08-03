@@ -40,6 +40,14 @@ _Avoid_: Comparable companies analysis, peer table unless user-facing copy requi
 The tabular output of a comps run, containing company rows and deterministic valuation metrics.
 _Avoid_: Spreadsheet, valuation table
 
+**Comparison Takeaway**:
+A plain-language, Comps Table-backed interpretation of the Target Ticker's relative valuation, its main driver, and its uncertainty. It does not issue a buy, sell, or hold recommendation.
+_Avoid_: Investment recommendation, buy/sell signal, verdict
+
+**Comparison Confidence**:
+The evidence-strength label stored with a Comparison Takeaway. It is `limited` when the selected comparison has one usable Peer Ticker Metric, `moderate` with two, and `strong` with three or more; a Takeaway with insufficient comparable valuation evidence is also `limited`.
+_Avoid_: Confidence score, investment conviction
+
 **Run**:
 A persisted execution record for a valid table-generation comps attempt, including attempts that fail during execution. Invalid tool calls and conversational responses do not create a Run.
 _Avoid_: Job, task
