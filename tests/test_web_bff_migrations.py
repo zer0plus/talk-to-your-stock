@@ -7,13 +7,15 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 
+from comps_service.main import app as comps_app
 from talk_to_your_stock_shared import AgentMessageResponse
+from tests.live_service import running_service
 from web_bff.main import app, get_agent_client
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -215,13 +217,19 @@ class WebBffMigrationsTest(unittest.TestCase):
                     json={"content": "Compare AAPL with MSFT"},
                 ).json()["user_message"]["id"]
                 created_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
-                successful_run_id = uuid4()
+                first_successful_run_id = UUID(
+                    "00000000-0000-0000-0000-000000000001"
+                )
+                newest_successful_run_id = UUID(
+                    "00000000-0000-0000-0000-000000000002"
+                )
                 failed_run_id = uuid4()
 
                 with psycopg.connect(database_url) as connection:
                     with connection.cursor() as cursor:
                         for run_id, run_status, run_created_at in (
-                            (successful_run_id, "succeeded", created_at),
+                            (first_successful_run_id, "succeeded", created_at),
+                            (newest_successful_run_id, "succeeded", created_at),
                             (
                                 failed_run_id,
                                 "failed",
@@ -256,21 +264,47 @@ class WebBffMigrationsTest(unittest.TestCase):
                                 ),
                             )
 
-                history = client.get(f"/v1/threads/{thread_id}/runs")
-                latest_successful = client.get(
-                    f"/v1/threads/{thread_id}/runs",
-                    params={"status": "succeeded", "limit": 1},
-                )
+                with running_service(comps_app) as comps_service_url:
+                    with patch.dict(
+                        os.environ,
+                        {"COMPS_SERVICE_URL": comps_service_url},
+                        clear=False,
+                    ):
+                        history = client.get(f"/v1/threads/{thread_id}/runs")
+                        latest_successful = client.get(
+                            f"/v1/threads/{thread_id}/runs",
+                            params={"status": "succeeded", "limit": 1},
+                        )
+                        next_successful = client.get(
+                            f"/v1/threads/{thread_id}/runs",
+                            params={
+                                "status": "succeeded",
+                                "limit": 1,
+                                "cursor": latest_successful.json()["page"][
+                                    "next_cursor"
+                                ],
+                            },
+                        )
 
                 self.assertEqual(history.status_code, 200, history.text)
                 self.assertEqual(
                     [run["id"] for run in history.json()["runs"]],
-                    [str(failed_run_id), str(successful_run_id)],
+                    [
+                        str(failed_run_id),
+                        str(newest_successful_run_id),
+                        str(first_successful_run_id),
+                    ],
                 )
                 self.assertEqual(latest_successful.status_code, 200)
                 self.assertEqual(
                     [run["id"] for run in latest_successful.json()["runs"]],
-                    [str(successful_run_id)],
+                    [str(newest_successful_run_id)],
+                )
+                self.assertTrue(latest_successful.json()["page"]["has_more"])
+                self.assertEqual(next_successful.status_code, 200)
+                self.assertEqual(
+                    [run["id"] for run in next_successful.json()["runs"]],
+                    [str(first_successful_run_id)],
                 )
             finally:
                 app.dependency_overrides.clear()

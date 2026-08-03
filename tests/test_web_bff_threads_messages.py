@@ -33,6 +33,7 @@ from talk_to_your_stock_shared import (
     MinMedianMax,
     PaginationMeta,
     Run,
+    RunListResponse,
     RunStatus,
     RunTableResponse,
     Thread,
@@ -49,6 +50,7 @@ from web_bff.main import (
     get_thread_turn_coordinator,
 )
 from web_bff.agent_client import AgentServiceResponseError
+from web_bff.comps_client import CompsArtifactNotFound, CompsRequestInvalid
 from web_bff.turn_coordinator import ThreadTurnCoordinator
 
 
@@ -158,12 +160,45 @@ class ControlledCompsClient:
         return self.trace
 
 
+class ControlledRunHistoryCompsClient:
+    def __init__(self, *, runs: list[Run]) -> None:
+        self.runs = runs
+        self.reads: list[tuple[UUID, RunStatus | None, int, str | None]] = []
+
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> RunListResponse:
+        self.reads.append((thread_id, status, limit, cursor))
+        runs = [run for run in self.runs if run.thread_id == thread_id]
+        if status is not None:
+            runs = [run for run in runs if run.status == status]
+        runs.sort(key=lambda run: (run.created_at, run.id), reverse=True)
+        return RunListResponse(
+            runs=runs[:limit],
+            page=PaginationMeta(has_more=False, next_cursor=None),
+        )
+
+
+class MissingRunCompsClient:
+    def get_run(self, _run_id: UUID) -> Run:
+        raise CompsArtifactNotFound("Comps artifact not found.")
+
+
+class InvalidRunHistoryCompsClient:
+    def list_runs(self, **_kwargs: object) -> RunListResponse:
+        raise CompsRequestInvalid("Run cursor is invalid.")
+
+
 class RecordingRepository:
     def __init__(self) -> None:
         self.users: dict[UUID, User] = {}
         self.threads: dict[UUID, Thread] = {}
         self.messages: list[Message] = []
-        self.runs: list[Run] = []
         self.events: list[str] = []
 
     def upsert_user(self, user: User) -> User:
@@ -243,24 +278,6 @@ class RecordingRepository:
             return None, PaginationMeta(has_more=False, next_cursor=None)
         messages = [message for message in self.messages if message.thread_id == thread_id]
         return messages[:limit], PaginationMeta(has_more=False, next_cursor=None)
-
-    def list_runs(
-        self,
-        *,
-        thread_id: UUID,
-        user_id: UUID,
-        status: RunStatus | None,
-        limit: int,
-        cursor: str | None,
-    ) -> tuple[list[Run] | None, PaginationMeta]:
-        del cursor
-        if self.get_thread(thread_id=thread_id, user_id=user_id) is None:
-            return None, PaginationMeta(has_more=False, next_cursor=None)
-        runs = [run for run in self.runs if run.thread_id == thread_id]
-        if status is not None:
-            runs = [run for run in runs if run.status == status]
-        runs.sort(key=lambda run: (run.created_at, run.id), reverse=True)
-        return runs[:limit], PaginationMeta(has_more=False, next_cursor=None)
 
     def has_message(self, message_id: UUID) -> bool:
         return any(message.id == message_id for message in self.messages)
@@ -516,7 +533,8 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
                 "completed_at": successful.completed_at + timedelta(seconds=1),
             }
         )
-        repository.runs.extend([successful, failed])
+        comps_client = ControlledRunHistoryCompsClient(runs=[successful, failed])
+        app.dependency_overrides[get_comps_client] = lambda: comps_client
 
         response = client.get(
             f"/v1/threads/{thread_id}/runs",
@@ -527,6 +545,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(
             [run["id"] for run in response.json()["runs"]],
             [str(successful.id)],
+        )
+        self.assertEqual(
+            comps_client.reads,
+            [(thread_id, RunStatus.SUCCEEDED, 1, None)],
         )
 
     def test_thread_run_history_is_newest_first_and_thread_scoped(self) -> None:
@@ -553,7 +575,8 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
             thread_id=UUID(other_thread["id"]),
             trigger_message_id=uuid4(),
         )
-        repository.runs.extend([older, other, newer])
+        comps_client = ControlledRunHistoryCompsClient(runs=[older, other, newer])
+        app.dependency_overrides[get_comps_client] = lambda: comps_client
 
         response = client.get(f"/v1/threads/{selected_thread_id}/runs")
 
@@ -598,6 +621,21 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         response = client.get(
             f"/v1/threads/{thread_id}/runs", params={"status": "unknown"}
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
+
+    def test_thread_run_history_rejects_invalid_cursor(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        thread_id = client.post(
+            "/v1/threads", json={"title": "Comps"}
+        ).json()["thread"]["id"]
+        app.dependency_overrides[get_comps_client] = InvalidRunHistoryCompsClient
+
+        response = client.get(
+            f"/v1/threads/{thread_id}/runs", params={"cursor": "bad"}
         )
 
         self.assertEqual(response.status_code, 400)
@@ -669,6 +707,16 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
         self.assertEqual(comps_client.reads, [("run", run.id)])
+
+    def test_unknown_run_readback_is_not_found(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        app.dependency_overrides[get_comps_client] = MissingRunCompsClient
+
+        response = client.get(f"/v1/runs/{uuid4()}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
 
     def test_agent_run_must_belong_to_current_thread_and_user_message(self) -> None:
         repository = RecordingRepository()
@@ -832,12 +880,23 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
                 if key != "COMPS_SERVICE_URL"
             },
         )
+        thread_id = client.post(
+            "/v1/threads", json={"title": "Comps"}
+        ).json()["thread"]["id"]
 
-        response = client.get(f"/v1/runs/{uuid4()}")
+        responses = [
+            client.get(f"/v1/runs/{uuid4()}"),
+            client.get(f"/v1/threads/{thread_id}/runs"),
+        ]
 
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
-        self.assertIn("COMPS_SERVICE_URL", response.json()["error"]["message"])
+        for response in responses:
+            with self.subTest(path=response.request.url.path):
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["error"]["code"], "UPSTREAM_ERROR")
+                self.assertIn(
+                    "COMPS_SERVICE_URL",
+                    response.json()["error"]["message"],
+                )
 
     def test_invalid_run_id_returns_validation_error(self) -> None:
         repository = RecordingRepository()

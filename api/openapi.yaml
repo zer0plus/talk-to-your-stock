@@ -262,6 +262,9 @@ paths:
       description: |
         Returns owned Runs newest first using deterministic created-at and Run-ID
         ordering. The status filter is applied before limit and cursor pagination.
+      security:
+        - {}
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/ThreadIdParam'
         - $ref: '#/components/parameters/LimitParam'
@@ -292,6 +295,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/runs/{run_id}:
     get:

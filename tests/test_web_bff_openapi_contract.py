@@ -109,22 +109,89 @@ def test_thread_run_history_contract_matches_implemented_behavior() -> None:
         "/v1/threads/{thread_id}/runs"
     ]["get"]
     assert "newest first" in source_operation["description"]
-    assert [
-        parameter.get("name")
-        for parameter in source_operation["parameters"]
-        if "name" in parameter
-    ] == ["status"]
-    assert set(source_operation["responses"]) == {"200", "400", "401", "404"}
+    assert source_operation["security"] == [{}, {"bearerAuth": []}]
+    source_parameters = {}
+    for parameter in source_operation["parameters"]:
+        if "$ref" in parameter:
+            parameter = source_contract["components"]["parameters"][
+                parameter["$ref"].rsplit("/", maxsplit=1)[-1]
+            ]
+        source_parameters[parameter["name"]] = parameter
+    assert set(source_parameters) == {"thread_id", "status", "limit", "cursor"}
+    assert source_parameters["status"]["schema"]["enum"] == [
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+    ]
+    assert source_parameters["limit"]["schema"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200,
+        "default": 20,
+    }
+    assert set(source_operation["responses"]) == {
+        "200",
+        "400",
+        "401",
+        "404",
+        "503",
+    }
 
     generated_contract = TestClient(app).get("/openapi.json").json()
     generated_operation = generated_contract["paths"][
         "/v1/threads/{thread_id}/runs"
     ]["get"]
     assert "newest first" in generated_operation["description"]
-    assert set(generated_operation["responses"]) == {"200", "400", "401", "404"}
+    generated_parameters = {
+        parameter["name"]: parameter
+        for parameter in generated_operation["parameters"]
+    }
+    assert set(generated_parameters) == {
+        "thread_id",
+        "status",
+        "limit",
+        "cursor",
+        "authorization",
+    }
+    assert generated_parameters["authorization"]["required"] is False
+    assert generated_contract["components"]["schemas"]["RunStatus"]["enum"] == (
+        source_parameters["status"]["schema"]["enum"]
+    )
+    generated_limit = generated_parameters["limit"]["schema"]
+    assert {
+        key: generated_limit[key]
+        for key in ("type", "minimum", "maximum", "default")
+    } == source_parameters["limit"]["schema"]
+    assert set(generated_operation["responses"]) == {
+        "200",
+        "400",
+        "401",
+        "404",
+        "503",
+    }
     assert generated_operation["responses"]["200"]["content"][
         "application/json"
     ]["schema"] == {"$ref": "#/components/schemas/RunListResponse"}
     assert generated_contract["components"]["schemas"]["RunListResponse"][
         "required"
     ] == ["runs", "page"]
+    source_pagination = source_contract["components"]["schemas"]["PaginationMeta"]
+    generated_pagination = generated_contract["components"]["schemas"][
+        "PaginationMeta"
+    ]
+    assert generated_pagination["required"] == source_pagination["required"]
+    assert set(generated_pagination["properties"]) == set(
+        source_pagination["properties"]
+    )
+    source_run = source_contract["components"]["schemas"]["Run"]
+    generated_run = generated_contract["components"]["schemas"]["Run"]
+    assert generated_run["required"] == source_run["required"]
+    assert set(generated_run["properties"]) == set(source_run["properties"])
+    source_error = source_contract["components"]["schemas"]["ErrorResponse"][
+        "properties"
+    ]["error"]["properties"]
+    generated_error = generated_contract["components"]["schemas"]["ErrorDetail"][
+        "properties"
+    ]
+    assert set(generated_error) == set(source_error)

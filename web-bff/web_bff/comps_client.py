@@ -10,8 +10,11 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from talk_to_your_stock_shared import (
+    ErrorResponse,
     Run,
+    RunListResponse,
     RunResponse,
+    RunStatus,
     RunTableResponse,
     TraceResponse,
 )
@@ -25,6 +28,10 @@ class CompsServiceUnavailable(RuntimeError):
 
 
 class CompsArtifactNotFound(LookupError):
+    pass
+
+
+class CompsRequestInvalid(ValueError):
     pass
 
 
@@ -57,6 +64,30 @@ class HttpCompsClient:
         self._require_run_id(requested=run_id, returned=trace.run_id)
         return trace
 
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> RunListResponse:
+        params: dict[str, str | int] = {"limit": limit}
+        if status is not None:
+            params["status"] = status.value
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = self._get(
+            f"/v1/threads/{thread_id}/runs",
+            RunListResponse,
+            params=params,
+        )
+        if any(run.thread_id != thread_id for run in response.runs):
+            raise CompsServiceUnavailable(
+                "Comps Service returned mismatched Thread Run linkage."
+            )
+        return response
+
     @staticmethod
     def _require_run_id(*, requested: UUID, returned: UUID) -> None:
         if returned != requested:
@@ -68,14 +99,26 @@ class HttpCompsClient:
         self,
         path: str,
         response_model: type[ResponseModel],
+        *,
+        params: Mapping[str, str | int] | None = None,
     ) -> ResponseModel:
         try:
-            response = httpx.get(f"{self._base_url}{path}", timeout=30)
+            response = httpx.get(
+                f"{self._base_url}{path}",
+                params=params,
+                timeout=30,
+            )
         except httpx.HTTPError as exc:
             raise CompsServiceUnavailable("Comps Service unavailable.") from exc
 
         if response.status_code == 404:
             raise CompsArtifactNotFound("Comps artifact not found.")
+        if response.status_code == 400:
+            try:
+                error = ErrorResponse.model_validate(response.json())
+            except (JSONDecodeError, ValidationError, ValueError):
+                raise CompsRequestInvalid("Comps request is invalid.") from None
+            raise CompsRequestInvalid(error.error.message)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

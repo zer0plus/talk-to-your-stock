@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Path, Request, Response, status
+from fastapi import Depends, FastAPI, Path, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
@@ -20,8 +20,10 @@ from talk_to_your_stock_shared import (
     GenerateCompsToolResponse,
     HealthResponse,
     PeerSelectionMode,
+    RunListResponse,
     ReadinessResponse,
     RunResponse,
+    RunStatus,
     RunTableResponse,
     ServiceName,
     ServiceStatus,
@@ -37,6 +39,7 @@ from .readiness import check_comps_database, check_run_data_source
 from .provider import AlphaVantageCompanyDataSource
 from .repository import (
     CompsPersistenceUnavailable,
+    InvalidRunCursor,
     InvalidRunLinkage,
     PostgresCompsRunRepository,
 )
@@ -73,6 +76,18 @@ app = FastAPI(
 def invalid_run_linkage_exception_handler(
     _request: object,
     exc: InvalidRunLinkage,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=ErrorCode.VALIDATION_ERROR,
+        message=str(exc),
+    )
+
+
+@app.exception_handler(InvalidRunCursor)
+def invalid_run_cursor_exception_handler(
+    _request: object,
+    exc: InvalidRunCursor,
 ) -> JSONResponse:
     return _error_response(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -320,6 +335,28 @@ def get_run(
             message="Run not found.",
         )
     return RunResponse(run=run)
+
+
+@app.get(
+    "/v1/threads/{thread_id}/runs",
+    response_model=RunListResponse,
+    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["Runs"],
+)
+def list_runs(
+    thread_id: Annotated[UUID, Path()],
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+    status_filter: Annotated[RunStatus | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    cursor: str | None = None,
+) -> RunListResponse:
+    runs, page = repository.list_runs(
+        thread_id=thread_id,
+        status=status_filter,
+        limit=limit,
+        cursor=cursor,
+    )
+    return RunListResponse(runs=runs, page=page)
 
 
 @app.get(
