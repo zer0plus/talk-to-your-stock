@@ -641,6 +641,14 @@ def _successful_tool_response(
                 pe=empty_stats,
             )
         ),
+        comparison_takeaway={
+            "headline": "AAPL trades at a discount to its peers on EV / EBITDA.",
+            "interpretation": (
+                "The Comps Table shows AAPL's EV / EBITDA is lower than the peer "
+                "median. Review the table evidence before drawing a conclusion."
+            ),
+            "confidence": "moderate",
+        },
     )
     return GenerateCompsToolResponse(
         run=run,

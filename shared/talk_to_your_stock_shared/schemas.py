@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from talk_to_your_stock_shared.enums import (
     AnalysisPeriod,
+    ComparisonConfidence,
     DependencyStatus,
     ErrorCode,
     MessageRole,
@@ -177,6 +178,12 @@ class RunTableSummary(ContractModel):
     stats: RunTableSummaryStats
 
 
+class ComparisonTakeaway(ContractModel):
+    headline: str = Field(min_length=1)
+    interpretation: str = Field(min_length=1)
+    confidence: ComparisonConfidence
+
+
 class RunTableResponse(ContractModel):
     run_id: UUID
     target_ticker: Ticker
@@ -184,6 +191,7 @@ class RunTableResponse(ContractModel):
     as_of: datetime
     rows: list[CompsRow]
     summary: RunTableSummary
+    comparison_takeaway: ComparisonTakeaway
 
 
 class TraceInput(ContractModel):

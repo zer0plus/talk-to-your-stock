@@ -210,6 +210,11 @@ def _tool_response() -> GenerateCompsToolResponse:
                         )
                     }
                 },
+                "comparison_takeaway": {
+                    "headline": "AAPL's relative valuation is inconclusive.",
+                    "interpretation": "The Comps Table has insufficient evidence.",
+                    "confidence": "limited",
+                },
             },
             "trace": {"run_id": run_id, "formulas": []},
             "warnings": [],

@@ -2,6 +2,7 @@
 
 from talk_to_your_stock_shared.enums import (
     AnalysisPeriod,
+    ComparisonConfidence,
     DependencyStatus,
     ErrorCode,
     EventType,
@@ -18,6 +19,7 @@ from talk_to_your_stock_shared.schemas import (
     AgentMessageRequest,
     AgentMessageResponse,
     CompsRow,
+    ComparisonTakeaway,
     CreateMessageRequest,
     CreateMessageResponse,
     CreateThreadRequest,
@@ -55,6 +57,8 @@ __all__ = [
     "AgentMessageRequest",
     "AgentMessageResponse",
     "CompsRow",
+    "ComparisonConfidence",
+    "ComparisonTakeaway",
     "CreateMessageRequest",
     "CreateMessageResponse",
     "CreateThreadRequest",

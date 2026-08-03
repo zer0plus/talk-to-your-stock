@@ -33,8 +33,9 @@ from talk_to_your_stock_shared.readiness import (
 )
 from talk_to_your_stock_shared.time import utc_now
 
-from .readiness import check_comps_database, check_run_data_source
+from .comparison_takeaway import InvalidComparisonTakeaway
 from .provider import AlphaVantageCompanyDataSource
+from .readiness import check_comps_database, check_run_data_source
 from .repository import (
     CompsPersistenceUnavailable,
     InvalidRunLinkage,
@@ -85,6 +86,18 @@ def invalid_run_linkage_exception_handler(
 def persistence_exception_handler(
     _request: object,
     exc: CompsPersistenceUnavailable,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code=ErrorCode.INTERNAL_ERROR,
+        message=str(exc),
+    )
+
+
+@app.exception_handler(InvalidComparisonTakeaway)
+def invalid_comparison_takeaway_exception_handler(
+    _request: object,
+    exc: InvalidComparisonTakeaway,
 ) -> JSONResponse:
     return _error_response(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

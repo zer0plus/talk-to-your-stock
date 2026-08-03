@@ -55,6 +55,12 @@ class RunStatus(str, Enum):
     FAILED = "failed"
 
 
+class ComparisonConfidence(str, Enum):
+    LIMITED = "limited"
+    MODERATE = "moderate"
+    STRONG = "strong"
+
+
 class PeerSelectionMode(str, Enum):
     USER_SUPPLIED = "user_supplied"
     # Future scope: accepted by the contract, not implemented in this PRD slice.

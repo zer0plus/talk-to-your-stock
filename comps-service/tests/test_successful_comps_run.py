@@ -237,6 +237,14 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             ["AAPL"],
         )
         self.assertEqual(body["table"]["run_id"], body["run"]["id"])
+        self.assertEqual(
+            set(body["table"]["comparison_takeaway"]),
+            {"headline", "interpretation", "confidence"},
+        )
+        self.assertIn(
+            body["table"]["comparison_takeaway"]["confidence"],
+            {"limited", "moderate", "strong"},
+        )
 
     def test_provider_payload_with_missing_currency_is_persisted(
         self,

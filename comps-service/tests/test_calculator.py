@@ -10,6 +10,10 @@ from comps_service.calculator import (
     CompsCalculationError,
     CompsCalculator,
 )
+from comps_service.comparison_takeaway import (
+    InvalidComparisonTakeaway,
+    verify_comparison_takeaway,
+)
 from talk_to_your_stock_shared import TraceOutputField
 
 
@@ -95,6 +99,57 @@ class CompsCalculatorTest(unittest.TestCase):
                 "AAPL.net_income_ltm is zero; pe is null.",
             ],
         )
+        self.assertEqual(
+            table.comparison_takeaway.headline,
+            "AAPL's relative valuation is inconclusive.",
+        )
+        self.assertEqual(table.comparison_takeaway.confidence.value, "limited")
+
+    def test_takeaway_is_verified_against_its_comps_table(self) -> None:
+        table, _trace, _warnings = self.calculator.generate(
+            run_id=uuid4(),
+            target_ticker="AAPL",
+            companies=[self._company("AAPL"), self._company("MSFT")],
+            currency="USD",
+        )
+        altered = table.model_copy(
+            update={
+                "comparison_takeaway": table.comparison_takeaway.model_copy(
+                    update={"headline": "This prose is not table-backed."}
+                )
+            }
+        )
+
+        with self.assertRaisesRegex(
+            InvalidComparisonTakeaway,
+            "not supported by its enclosing Comps Table",
+        ):
+            verify_comparison_takeaway(altered)
+
+    def test_takeaway_reports_table_relationship_without_an_investment_verdict(
+        self,
+    ) -> None:
+        table, _trace, _warnings = self.calculator.generate(
+            run_id=uuid4(),
+            target_ticker="AAPL",
+            companies=[
+                self._company("AAPL", revenue_ltm=100.0),
+                self._company("MSFT"),
+                self._company("NVDA"),
+                self._company("GOOG"),
+            ],
+            currency="USD",
+        )
+
+        takeaway = table.comparison_takeaway
+        self.assertEqual(
+            takeaway.headline,
+            "AAPL trades at a premium to its peers on EV / Revenue.",
+        )
+        self.assertEqual(takeaway.confidence.value, "strong")
+        prose = f"{takeaway.headline} {takeaway.interpretation}".lower()
+        for verdict in ("buy", "sell", "hold"):
+            self.assertNotRegex(prose, rf"\b{verdict}\b")
 
     def test_missing_target_ticker_raises(self) -> None:
         with self.assertRaisesRegex(CompsCalculationError, "Target ticker AAPL is missing"):

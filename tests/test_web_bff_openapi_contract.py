@@ -99,3 +99,56 @@ def test_run_as_of_is_nullable_in_source_and_generated_contracts() -> None:
         {"type": "string", "format": "date-time"},
         {"type": "null"},
     ]
+
+
+def test_run_table_requires_the_comparison_takeaway_contract() -> None:
+    source_contract = yaml.safe_load(
+        (REPO_ROOT / "api" / "openapi.yaml").read_text()
+    )
+    source_table = source_contract["components"]["schemas"]["RunTableResponse"]
+    assert "comparison_takeaway" in source_table["required"]
+    assert source_table["properties"]["comparison_takeaway"] == {
+        "$ref": "#/components/schemas/ComparisonTakeaway"
+    }
+    assert source_contract["components"]["schemas"]["ComparisonTakeaway"] == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["headline", "interpretation", "confidence"],
+        "properties": {
+            "headline": {"type": "string", "minLength": 1},
+            "interpretation": {"type": "string", "minLength": 1},
+            "confidence": {
+                "type": "string",
+                "enum": ["limited", "moderate", "strong"],
+            },
+        },
+    }
+
+    generated_contract = TestClient(app).get("/openapi.json").json()
+    generated_table = generated_contract["components"]["schemas"][
+        "RunTableResponse"
+    ]
+    assert "comparison_takeaway" in generated_table["required"]
+    generated_takeaway = generated_contract["components"]["schemas"][
+        "ComparisonTakeaway"
+    ]
+    assert generated_takeaway["additionalProperties"] is False
+    assert generated_takeaway["required"] == [
+        "headline",
+        "interpretation",
+        "confidence",
+    ]
+    confidence_ref = generated_takeaway["properties"]["confidence"]["$ref"]
+    assert generated_contract["components"]["schemas"][
+        confidence_ref.rsplit("/", 1)[-1]
+    ]["enum"] == ["limited", "moderate", "strong"]
+
+
+def test_comparison_takeaway_has_no_separate_endpoint() -> None:
+    source_contract = yaml.safe_load(
+        (REPO_ROOT / "api" / "openapi.yaml").read_text()
+    )
+    generated_contract = TestClient(app).get("/openapi.json").json()
+
+    for contract in (source_contract, generated_contract):
+        assert all("takeaway" not in path for path in contract["paths"])

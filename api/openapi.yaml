@@ -776,9 +776,25 @@ components:
           type: string
           format: date-time
 
+    ComparisonTakeaway:
+      type: object
+      additionalProperties: false
+      required: [headline, interpretation, confidence]
+      properties:
+        headline:
+          type: string
+          minLength: 1
+        interpretation:
+          type: string
+          minLength: 1
+        confidence:
+          type: string
+          enum: [limited, moderate, strong]
+
     RunTableResponse:
       type: object
-      required: [run_id, target_ticker, currency, as_of, rows, summary]
+      required:
+        [run_id, target_ticker, currency, as_of, rows, summary, comparison_takeaway]
       properties:
         run_id:
           type: string
@@ -813,6 +829,8 @@ components:
                   $ref: '#/components/schemas/MinMedianMax'
                 pe:
                   $ref: '#/components/schemas/MinMedianMax'
+        comparison_takeaway:
+          $ref: '#/components/schemas/ComparisonTakeaway'
 
     MinMedianMax:
       type: object

@@ -108,6 +108,11 @@ def _artifacts(
                 pe=empty_stats,
             )
         ),
+        comparison_takeaway={
+            "headline": "AAPL's relative valuation is inconclusive.",
+            "interpretation": "The Comps Table has insufficient evidence.",
+            "confidence": "limited",
+        },
     )
     return run, table, TraceResponse(run_id=run_id, formulas=[])
 

@@ -205,6 +205,14 @@ class CanonicalBackendPathTest(unittest.TestCase):
             {row["ticker"] for row in table.json()["rows"]},
             {"AAPL", "MSFT", "NVDA"},
         )
+        persisted_takeaway = comps_repository.tables[
+            UUID(run_id)
+        ].comparison_takeaway.model_dump(mode="json")
+        self.assertEqual(table.json()["comparison_takeaway"], persisted_takeaway)
+        self.assertEqual(
+            set(table.json()["comparison_takeaway"]),
+            {"headline", "interpretation", "confidence"},
+        )
         self.assertEqual(trace.status_code, 200, trace.text)
         self.assertEqual(trace.json()["run_id"], run_id)
         self.assertEqual(len(web_repository.messages), 2)

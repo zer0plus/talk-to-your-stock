@@ -11,6 +11,7 @@ from talk_to_your_stock_shared.readiness import DATABASE_URL_VAR
 from talk_to_your_stock_shared.time import utc_now
 
 from .artifacts import SourceSnapshot
+from .comparison_takeaway import verify_comparison_takeaway
 from .run_service import DuplicateToolInvocation
 
 
@@ -50,6 +51,7 @@ class PostgresCompsRunRepository:
     ) -> None:
         from psycopg.types.json import Jsonb
 
+        verify_comparison_takeaway(table)
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -85,9 +87,9 @@ class PostgresCompsRunRepository:
                         """
                         insert into comps_tables (
                             run_id, target_ticker, currency, as_of, rows, summary,
-                            created_at
+                            comparison_takeaway, created_at
                         )
-                        values (%s, %s, %s, %s, %s, %s, %s)
+                        values (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             table.run_id,
@@ -98,6 +100,9 @@ class PostgresCompsRunRepository:
                                 [row.model_dump(mode="json") for row in table.rows]
                             ),
                             Jsonb(table.summary.model_dump(mode="json")),
+                            Jsonb(
+                                table.comparison_takeaway.model_dump(mode="json")
+                            ),
                             utc_now(),
                         ),
                     )
@@ -228,7 +233,8 @@ class PostgresCompsRunRepository:
                 with connection.cursor(row_factory=self._dict_row()) as cursor:
                     cursor.execute(
                         """
-                        select run_id, target_ticker, currency, as_of, rows, summary
+                        select run_id, target_ticker, currency, as_of, rows, summary,
+                            comparison_takeaway
                         from comps_tables
                         where run_id = %s
                         """,
@@ -237,7 +243,9 @@ class PostgresCompsRunRepository:
                     row = cursor.fetchone()
         except Exception as exc:
             self._raise_unavailable(exc)
-        return RunTableResponse.model_validate(row) if row is not None else None
+        if row is None:
+            return None
+        return RunTableResponse.model_validate(row)
 
     def get_trace(self, run_id: UUID) -> TraceResponse | None:
         try:

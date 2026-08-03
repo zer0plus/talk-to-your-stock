@@ -806,6 +806,11 @@ def _artifacts(run: Run) -> tuple[RunTableResponse, TraceResponse]:
                 pe=empty_stats,
             )
         ),
+        comparison_takeaway={
+            "headline": "AAPL's relative valuation is inconclusive.",
+            "interpretation": "The Comps Table has insufficient evidence.",
+            "confidence": "limited",
+        },
     )
     return table, TraceResponse(run_id=run.id, formulas=[])
 

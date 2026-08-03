@@ -15,6 +15,11 @@ from talk_to_your_stock_shared import (
     TraceResponse,
 )
 
+from .comparison_takeaway import (
+    build_comparison_takeaway,
+    verify_comparison_takeaway,
+)
+
 
 class CompsCalculationError(RuntimeError):
     pass
@@ -140,6 +145,10 @@ class CompsCalculator:
                 )
             )
 
+        comparison_takeaway = build_comparison_takeaway(
+            target_ticker=target,
+            rows=rows,
+        )
         table = RunTableResponse(
             run_id=run_id,
             target_ticker=target,
@@ -154,7 +163,9 @@ class CompsCalculator:
                     "pe": self._stats([row.pe for row in rows]),
                 }
             },
+            comparison_takeaway=comparison_takeaway,
         )
+        verify_comparison_takeaway(table)
         return table, TraceResponse(run_id=run_id, formulas=formulas), warnings
 
     def _validate_inputs(
