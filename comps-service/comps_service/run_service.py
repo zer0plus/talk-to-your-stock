@@ -20,7 +20,6 @@ from talk_to_your_stock_shared.time import utc_now
 
 from .artifacts import SourceSnapshot
 from .calculator import CompanyCompsInput, CompsCalculationError, CompsCalculator
-from .comparison_takeaway import verify_comparison_takeaway
 
 
 class CompanyDataUnavailable(RuntimeError):
@@ -124,6 +123,8 @@ class CompsRunRepository(Protocol):
         run: Run,
         table: RunTableResponse,
     ) -> None: ...
+
+    def finalize_failed_run(self, *, run: Run) -> None: ...
 
 
 class CompsRunService:
@@ -235,10 +236,6 @@ class CompsRunService:
         ):
             raise CalculatedRunNotFound("Calculated Comps Run not found.")
 
-        verify_comparison_takeaway(
-            table=table,
-            takeaway=comparison_takeaway,
-        )
         completed_at = utc_now()
         succeeded_run = run.model_copy(
             update={
@@ -260,6 +257,23 @@ class CompsRunService:
             trace=trace,
             warnings=succeeded_run.warnings,
         )
+
+    def fail(self, *, run_id: UUID, error_message: str) -> Run:
+        run = self._repository.get_run(run_id)
+        if run is None:
+            raise CalculatedRunNotFound("Calculated Comps Run not found.")
+        if run.status != RunStatus.RUNNING:
+            return run
+
+        failed_run = run.model_copy(
+            update={
+                "status": RunStatus.FAILED,
+                "error_message": error_message,
+                "completed_at": utc_now(),
+            }
+        )
+        self._repository.finalize_failed_run(run=failed_run)
+        return failed_run
 
     def _save_failed_run(
         self,

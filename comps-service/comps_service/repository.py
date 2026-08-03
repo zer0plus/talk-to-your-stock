@@ -16,7 +16,6 @@ from talk_to_your_stock_shared.readiness import DATABASE_URL_VAR
 from talk_to_your_stock_shared.time import utc_now
 
 from .artifacts import SourceSnapshot
-from .comparison_takeaway import verify_comparison_takeaway
 from .run_service import CalculatedRunNotFound, DuplicateToolInvocation
 
 
@@ -276,13 +275,6 @@ class PostgresCompsRunRepository:
     ) -> None:
         from psycopg.types.json import Jsonb
 
-        draft = RunTableDraftResponse.model_validate(
-            table.model_dump(exclude={"comparison_takeaway"})
-        )
-        verify_comparison_takeaway(
-            table=draft,
-            takeaway=table.comparison_takeaway,
-        )
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -311,6 +303,31 @@ class PostgresCompsRunRepository:
                         """,
                         (
                             run.status.value,
+                            run.completed_at,
+                            run.id,
+                            "running",
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise CalculatedRunNotFound(
+                            "Calculated Comps Run not found."
+                        )
+        except Exception as exc:
+            self._raise_unavailable(exc)
+
+    def finalize_failed_run(self, *, run: Run) -> None:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        update comps_runs
+                        set status = %s, error_message = %s, completed_at = %s
+                        where id = %s and status = %s
+                        """,
+                        (
+                            run.status.value,
+                            run.error_message,
                             run.completed_at,
                             run.id,
                             "running",

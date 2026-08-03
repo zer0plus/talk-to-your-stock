@@ -261,6 +261,10 @@ class FinalizeComparisonTakeawayRequest(ContractModel):
     comparison_takeaway: ComparisonTakeaway
 
 
+class FailCalculatedRunRequest(ContractModel):
+    error_message: str = Field(min_length=1)
+
+
 class AgentMessageRequest(ContractModel):
     user_id: UUID
     thread_id: UUID

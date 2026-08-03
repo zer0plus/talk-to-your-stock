@@ -16,6 +16,7 @@ from talk_to_your_stock_shared import (
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
+    FailCalculatedRunRequest,
     FinalizeComparisonTakeawayRequest,
     GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
@@ -35,7 +36,6 @@ from talk_to_your_stock_shared.readiness import (
 )
 from talk_to_your_stock_shared.time import utc_now
 
-from .comparison_takeaway import InvalidComparisonTakeaway
 from .provider import AlphaVantageCompanyDataSource
 from .readiness import check_comps_database, check_run_data_source
 from .repository import (
@@ -64,6 +64,7 @@ from .tool_validation import (
 COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
 GENERATE_COMPS_TOOL_PATH = "/v1/internal/tools/generate-comps-table"
 FINALIZE_COMPS_RUN_PATH = "/v1/internal/runs/{run_id}/finalize"
+FAIL_COMPS_RUN_PATH = "/v1/internal/runs/{run_id}/fail"
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -94,18 +95,6 @@ def persistence_exception_handler(
     return _error_response(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code=ErrorCode.INTERNAL_ERROR,
-        message=str(exc),
-    )
-
-
-@app.exception_handler(InvalidComparisonTakeaway)
-def invalid_comparison_takeaway_exception_handler(
-    _request: object,
-    exc: InvalidComparisonTakeaway,
-) -> JSONResponse:
-    return _error_response(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        code=ErrorCode.VALIDATION_ERROR,
         message=str(exc),
     )
 
@@ -354,6 +343,33 @@ def finalize_comps_run(
         run_id=run_id,
         comparison_takeaway=request.comparison_takeaway,
     )
+
+
+@app.post(
+    FAIL_COMPS_RUN_PATH,
+    response_model=RunResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Internal"],
+)
+def fail_comps_run(
+    run_id: Annotated[UUID, Path()],
+    request: FailCalculatedRunRequest,
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+    company_data_source: Annotated[
+        CompanyDataSource,
+        Depends(get_company_data_source),
+    ],
+) -> RunResponse:
+    run = CompsRunService(
+        repository=repository,
+        company_data_source=company_data_source,
+    ).fail(run_id=run_id, error_message=request.error_message)
+    return RunResponse(run=run)
 
 
 @app.get(

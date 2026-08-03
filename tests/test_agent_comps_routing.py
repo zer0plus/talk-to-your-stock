@@ -15,7 +15,11 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from agent_service.comps_client import CompsToolUnavailable, CompsToolValidationError
+from agent_service.comps_client import (
+    CompsToolError,
+    CompsToolUnavailable,
+    CompsToolValidationError,
+)
 from agent_service.fundamental_agent import FundamentalAnalysisAgent
 from agent_service.main import app, get_fundamental_agent, get_session_context
 from agent_service.session_context import AdkSessionContext
@@ -24,12 +28,14 @@ from talk_to_your_stock_shared import (
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
+    FailCalculatedRunRequest,
     FinalizeComparisonTakeawayRequest,
     GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     MinMedianMax,
     Run,
+    RunResponse,
     RunStatus,
     RunTableDraftResponse,
     RunTableResponse,
@@ -56,13 +62,16 @@ class RecordingCompsClient:
     def __init__(
         self,
         *responses: GenerateCompsToolResponse | Exception,
+        finalize_error: Exception | None = None,
     ) -> None:
         self.responses = list(responses)
         self.requests: list[GenerateCompsToolRequest] = []
         self.finalize_requests: list[
             tuple[UUID, FinalizeComparisonTakeawayRequest]
         ] = []
+        self.fail_requests: list[tuple[UUID, FailCalculatedRunRequest]] = []
         self.pending_final: GenerateCompsToolResponse | None = None
+        self.finalize_error = finalize_error
 
     async def generate_comps_table(
         self,
@@ -90,6 +99,8 @@ class RecordingCompsClient:
         request: FinalizeComparisonTakeawayRequest,
     ) -> GenerateCompsToolResponse:
         self.finalize_requests.append((run_id, request))
+        if self.finalize_error is not None:
+            raise self.finalize_error
         assert self.pending_final is not None
         final = self.pending_final.model_copy(
             update={
@@ -102,6 +113,22 @@ class RecordingCompsClient:
         )
         self.pending_final = None
         return final
+
+    async def fail_comps_run(
+        self,
+        run_id: UUID,
+        request: FailCalculatedRunRequest,
+    ) -> RunResponse:
+        self.fail_requests.append((run_id, request))
+        assert self.pending_final is not None
+        return RunResponse(
+            run=self.pending_final.run.model_copy(
+                update={
+                    "status": RunStatus.FAILED,
+                    "error_message": request.error_message,
+                }
+            )
+        )
 
 
 class AgentCompsRoutingTest(unittest.TestCase):
@@ -252,6 +279,82 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
         self.assertEqual(len(comps_client.requests), 1)
+
+    def test_invalid_model_output_fails_the_calculated_run(self) -> None:
+        tool_response = _successful_tool_response(
+            thread_id=uuid4(),
+            trigger_message_id=uuid4(),
+        )
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                types.Content(role="model", parts=[types.Part(text="{")]),
+            ],
+        )
+        comps_client = RecordingCompsClient(tool_response)
+        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(tool_response.run.thread_id),
+                "user_message_id": str(tool_response.run.trigger_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(len(comps_client.fail_requests), 1)
+        self.assertEqual(comps_client.fail_requests[0][0], tool_response.run.id)
+        self.assertEqual(
+            comps_client.fail_requests[0][1].error_message,
+            "The Agent could not complete the calculated analysis.",
+        )
+
+    def test_finalization_error_fails_the_calculated_run(self) -> None:
+        tool_response = _successful_tool_response(
+            thread_id=uuid4(),
+            trigger_message_id=uuid4(),
+        )
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                _agent_output("AAPL is compared with MSFT."),
+            ],
+        )
+        finalization_error = CompsToolError(
+            status_code=503,
+            error=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.INTERNAL_ERROR,
+                    message="Comps finalization unavailable.",
+                )
+            ),
+        )
+        comps_client = RecordingCompsClient(
+            tool_response,
+            finalize_error=finalization_error,
+        )
+        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(tool_response.run.thread_id),
+                "user_message_id": str(tool_response.run.trigger_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(len(comps_client.fail_requests), 1)
+        self.assertEqual(comps_client.fail_requests[0][0], tool_response.run.id)
 
     def test_parallel_sibling_does_not_consume_validation_retry(self) -> None:
         user_id = uuid4()

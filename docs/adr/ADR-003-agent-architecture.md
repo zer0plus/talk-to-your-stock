@@ -45,7 +45,7 @@ Notes:
 * Google ADK owns orchestration behavior.
 * Google ADK-native observability is the primary surface for agent internals, including tool-call history and model/tool traces.
 * This ADR describes agent behavior and tool boundaries.
-* The Fundamental Analysis Agent is instructed to use the Tool rather than invent or recalculate final comps metrics. After receiving the calculated table, it authors the freeform Comparison Takeaway. The Comps Service validates that prose against the table and persists it before the Run succeeds.
+* The Fundamental Analysis Agent is instructed to use the Tool rather than invent or recalculate final comps metrics. After receiving the calculated table, it authors the freeform Comparison Takeaway. The Comps Service validates only its required contract shape and persists the exact prose before the Run succeeds; it does not inspect or judge the prose.
 
 ### Agent Observability
 
@@ -71,7 +71,7 @@ The agent decides whether a message is:
 * **Fundamental/comps analysis with Tool selected**: call `generate_comps_table`, create a running calculation, author a structured freeform Comparison Takeaway from the returned table, and finalize the Run through the Comps Service.
 * **Ambiguous**: ask a short clarifying question before tool execution.
 
-If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. A Run may be claimed or linked only after the Comps Service accepts and persists the Agent-authored Comparison Takeaway with the deterministic Comps Table.
+If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. A Run may be claimed or linked only after the Comps Service accepts the Comparison Takeaway's required shape and persists the exact Agent-authored value with the deterministic Comps Table. If any Agent or finalization failure happens after calculation but before success, the Agent Service asks the Comps Service to transition the Run to `failed`; a calculated Run must not remain indefinitely nonterminal.
 
 If the Comps Service rejects a tool call before creating a Run because the structured input is invalid, the Agent may perform one internal correction retry. If the corrected tool call is still invalid, the Agent surfaces a concise clarification or error to the User instead of looping.
 
@@ -102,13 +102,13 @@ Initial conceptual output:
 * `trace`
 * `warnings`
 
-After Tool execution, the Agent produces a structured response containing its user-facing content and a freeform Comparison Takeaway (`headline`, `interpretation`, and `confidence`). The Agent Service sends that Takeaway to an internal Comps Service finalization boundary. The Comps Service verifies that it names the Target Ticker, refers only to available table evidence, and contains no buy/sell/hold verdict; it does not generate or rewrite the prose. Finalization persists the exact Agent output with the table and transitions the Run from `running` to `succeeded` atomically.
+After Tool execution, the Agent produces a structured response containing its user-facing content and a freeform Comparison Takeaway (`headline`, `interpretation`, and `confidence`). The Agent Service sends that Takeaway to an internal Comps Service finalization boundary. The Comps Service validates only that exact shape: both strings are non-empty, confidence is `limited`, `moderate`, or `strong`, and no extra fields are present. It does not parse, verify, generate, or rewrite the prose. Finalization persists the exact Agent output with the table and transitions the Run from `running` to `succeeded` atomically. An internal failure transition moves an unfinished calculated Run from `running` to `failed` when the Agent cannot complete finalization.
 
 When auto peer selection is supported, it remains a Comps Service responsibility: if the User provides only one company, the Comps Service selects comparable peers deterministically and exposes traceable selection reasoning.
 
 ### Decision Summary
 
-> We decided to use **Google ADK for agent orchestration and agent-internal observability** with one active MVP agent, the **Fundamental Analysis Agent**, which can answer conversational questions directly or call one deterministic tool, `generate_comps_table`, then author a freeform table-backed Comparison Takeaway that the Comps Service validates and persists.
+> We decided to use **Google ADK for agent orchestration and agent-internal observability** with one active MVP agent, the **Fundamental Analysis Agent**, which can answer conversational questions directly or call one deterministic tool, `generate_comps_table`, then author a freeform table-backed Comparison Takeaway that the Comps Service shape-validates and persists exactly.
 
 ### Rationale
 

@@ -406,11 +406,11 @@ paths:
               $ref: '#/components/schemas/GenerateCompsToolRequest'
       responses:
         '200':
-          description: Run and table payload
+          description: Calculated running Run and table draft
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GenerateCompsToolResponse'
+                $ref: '#/components/schemas/GenerateCompsDraftResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -423,6 +423,68 @@ paths:
           $ref: '#/components/responses/NotImplemented'
         '502':
           $ref: '#/components/responses/UpstreamError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/internal/runs/{run_id}/finalize:
+    post:
+      tags: [Internal]
+      summary: Finalize a calculated Run with an Agent-authored Takeaway
+      x-internal: true
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinalizeComparisonTakeawayRequest'
+      responses:
+        '200':
+          description: Finalized successful Run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateCompsToolResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/internal/runs/{run_id}/fail:
+    post:
+      tags: [Internal]
+      summary: Mark an unfinished calculated Run as failed
+      x-internal: true
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailCalculatedRunRequest'
+      responses:
+        '200':
+          description: Terminal Run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run]
+                properties:
+                  run:
+                    $ref: '#/components/schemas/Run'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
@@ -791,10 +853,10 @@ components:
           type: string
           enum: [limited, moderate, strong]
 
-    RunTableResponse:
+    RunTableDraftResponse:
       type: object
       required:
-        [run_id, target_ticker, currency, as_of, rows, summary, comparison_takeaway]
+        [run_id, target_ticker, currency, as_of, rows, summary]
       properties:
         run_id:
           type: string
@@ -829,8 +891,15 @@ components:
                   $ref: '#/components/schemas/MinMedianMax'
                 pe:
                   $ref: '#/components/schemas/MinMedianMax'
-        comparison_takeaway:
-          $ref: '#/components/schemas/ComparisonTakeaway'
+
+    RunTableResponse:
+      allOf:
+        - $ref: '#/components/schemas/RunTableDraftResponse'
+        - type: object
+          required: [comparison_takeaway]
+          properties:
+            comparison_takeaway:
+              $ref: '#/components/schemas/ComparisonTakeaway'
 
     MinMedianMax:
       type: object
@@ -971,6 +1040,38 @@ components:
           type: array
           items:
             type: string
+
+    GenerateCompsDraftResponse:
+      type: object
+      required: [run, table, trace, warnings]
+      properties:
+        run:
+          $ref: '#/components/schemas/Run'
+        table:
+          $ref: '#/components/schemas/RunTableDraftResponse'
+        trace:
+          $ref: '#/components/schemas/TraceResponse'
+        warnings:
+          type: array
+          items:
+            type: string
+
+    FinalizeComparisonTakeawayRequest:
+      type: object
+      additionalProperties: false
+      required: [comparison_takeaway]
+      properties:
+        comparison_takeaway:
+          $ref: '#/components/schemas/ComparisonTakeaway'
+
+    FailCalculatedRunRequest:
+      type: object
+      additionalProperties: false
+      required: [error_message]
+      properties:
+        error_message:
+          type: string
+          minLength: 1
 
     AgentMessageRequest:
       type: object

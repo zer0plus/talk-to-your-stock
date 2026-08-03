@@ -194,6 +194,9 @@ class InMemoryCompsRunRepository:
         self.runs[run.id] = run
         self.tables[run.id] = table
 
+    def finalize_failed_run(self, *, run: Run) -> None:
+        self.runs[run.id] = run
+
 
 class InvalidLinkageCompsRunRepository(InMemoryCompsRunRepository):
     def save_calculated_run(
@@ -292,7 +295,9 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             },
         )
 
-    def test_verdict_word_ticker_still_returns_a_successful_takeaway(self) -> None:
+    def test_shape_valid_takeaway_is_persisted_without_inspecting_its_prose(
+        self,
+    ) -> None:
         with patch.dict(
             os.environ,
             {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
@@ -305,7 +310,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                     "invocation_id": str(uuid4()),
                     "thread_id": str(uuid4()),
                     "trigger_message_id": str(uuid4()),
-                    "target_ticker": "HOLD",
+                    "target_ticker": "AAPL",
                     "peer_tickers": ["MSFT"],
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
@@ -317,23 +322,58 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 f"/v1/internal/runs/{calculated.json()['run']['id']}/finalize",
                 json={
                     "comparison_takeaway": {
-                        "headline": "HOLD is in line with MSFT on EV / Revenue.",
-                        "interpretation": (
-                            "HOLD's EV / Revenue is close to the available peer "
-                            "evidence, although one peer limits confidence."
-                        ),
-                        "confidence": "limited",
+                        "headline": "Buy this immediately.",
+                        "interpretation": "No ticker or Metric is named here.",
+                        "confidence": "strong",
                     }
                 },
                 headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertTrue(
-            response.json()["table"]["comparison_takeaway"]["headline"].startswith(
-                "HOLD "
-            )
+        self.assertEqual(response.json()["run"]["status"], "succeeded")
+        self.assertEqual(
+            response.json()["table"]["comparison_takeaway"]["headline"],
+            "Buy this immediately.",
         )
+
+    def test_agent_failure_transitions_a_calculated_run_to_failed(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            calculated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                    "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            run_id = calculated.json()["run"]["id"]
+            failed = client.post(
+                f"/v1/internal/runs/{run_id}/fail",
+                json={"error_message": "The Agent could not complete the analysis."},
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            readback = client.get(f"/v1/runs/{run_id}")
+
+        self.assertEqual(failed.status_code, 200, failed.text)
+        self.assertEqual(failed.json()["run"]["status"], "failed")
+        self.assertEqual(
+            failed.json()["run"]["error_message"],
+            "The Agent could not complete the analysis.",
+        )
+        self.assertIsNotNone(failed.json()["run"]["completed_at"])
+        self.assertEqual(readback.json(), failed.json())
 
     def test_provider_payload_with_missing_currency_is_persisted(
         self,
@@ -1230,6 +1270,30 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         self.assertNotIn("SourceSnapshot", source_contract["components"]["schemas"])
         self.assertNotIn("SourceSnapshot", generated_contract["components"]["schemas"])
+
+    def test_source_contract_describes_the_calculate_finalize_fail_handshake(
+        self,
+    ) -> None:
+        source_contract = yaml.safe_load(
+            (REPO_ROOT / "api" / "openapi.yaml").read_text()
+        )
+        generated_contract = TestClient(app).get("/openapi.json").json()
+
+        generate_path = "/v1/internal/tools/generate-comps-table"
+        self.assertEqual(
+            source_contract["paths"][generate_path]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"],
+            {"$ref": "#/components/schemas/GenerateCompsDraftResponse"},
+        )
+
+        for path in (
+            "/v1/internal/runs/{run_id}/finalize",
+            "/v1/internal/runs/{run_id}/fail",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, source_contract["paths"])
+                self.assertIn(path, generated_contract["paths"])
+                self.assertTrue(source_contract["paths"][path]["post"]["x-internal"])
 
     def test_generate_contract_declares_invocation_conflict(self) -> None:
         source_contract = yaml.safe_load(

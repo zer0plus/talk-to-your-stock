@@ -10,11 +10,7 @@ from comps_service.calculator import (
     CompsCalculationError,
     CompsCalculator,
 )
-from comps_service.comparison_takeaway import (
-    InvalidComparisonTakeaway,
-    verify_comparison_takeaway,
-)
-from talk_to_your_stock_shared import ComparisonTakeaway, TraceOutputField
+from talk_to_your_stock_shared import TraceOutputField
 
 
 class CompsCalculatorTest(unittest.TestCase):
@@ -99,108 +95,6 @@ class CompsCalculatorTest(unittest.TestCase):
                 "AAPL.net_income_ltm is zero; pe is null.",
             ],
         )
-
-    def test_agent_takeaway_is_verified_against_its_comps_table(self) -> None:
-        table, _trace, _warnings = self.calculator.generate(
-            run_id=uuid4(),
-            target_ticker="AAPL",
-            companies=[self._company("AAPL"), self._company("MSFT")],
-            currency="USD",
-        )
-        unsupported = ComparisonTakeaway(
-            headline="NVDA trades at a premium on EV / Revenue.",
-            interpretation="NVDA is above the peer median.",
-            confidence="limited",
-        )
-
-        with self.assertRaisesRegex(
-            InvalidComparisonTakeaway,
-            "must identify its Target Ticker",
-        ):
-            verify_comparison_takeaway(table=table, takeaway=unsupported)
-
-    def test_ev_to_ebitda_does_not_also_reference_ev_to_ebit(self) -> None:
-        table, _trace, _warnings = self.calculator.generate(
-            run_id=uuid4(),
-            target_ticker="AAPL",
-            companies=[
-                self._company("AAPL", ebit_ltm=0),
-                self._company("MSFT", ebit_ltm=0),
-            ],
-            currency="USD",
-        )
-        takeaway = ComparisonTakeaway(
-            headline="AAPL is comparable to MSFT on EV / EBITDA.",
-            interpretation=(
-                "AAPL's EV / EBITDA is supported by the available peer evidence."
-            ),
-            confidence="limited",
-        )
-
-        verify_comparison_takeaway(table=table, takeaway=takeaway)
-
-    def test_agent_takeaway_with_an_investment_verdict_is_rejected(
-        self,
-    ) -> None:
-        table, _trace, _warnings = self.calculator.generate(
-            run_id=uuid4(),
-            target_ticker="AAPL",
-            companies=[
-                self._company("AAPL"),
-                self._company("MSFT"),
-            ],
-            currency="USD",
-        )
-        verdict = ComparisonTakeaway(
-            headline="AAPL trades below MSFT on EV / Revenue.",
-            interpretation="This makes AAPL a buy.",
-            confidence="limited",
-        )
-
-        with self.assertRaisesRegex(
-            InvalidComparisonTakeaway,
-            "must not contain a buy, sell, or hold verdict",
-        ):
-            verify_comparison_takeaway(table=table, takeaway=verdict)
-
-    def test_verdict_word_in_target_ticker_is_not_treated_as_a_recommendation(
-        self,
-    ) -> None:
-        table, _trace, _warnings = self.calculator.generate(
-            run_id=uuid4(),
-            target_ticker="HOLD",
-            companies=[self._company("HOLD"), self._company("MSFT")],
-            currency="USD",
-        )
-
-        takeaway = ComparisonTakeaway(
-            headline="HOLD trades in line with MSFT on EV / Revenue.",
-            interpretation="HOLD is close to the peer median.",
-            confidence="limited",
-        )
-
-        verify_comparison_takeaway(table=table, takeaway=takeaway)
-
-    def test_verdict_word_ticker_does_not_hide_an_actual_recommendation(
-        self,
-    ) -> None:
-        table, _trace, _warnings = self.calculator.generate(
-            run_id=uuid4(),
-            target_ticker="BUY",
-            companies=[self._company("BUY"), self._company("MSFT")],
-            currency="USD",
-        )
-        takeaway = ComparisonTakeaway(
-            headline="BUY trades below MSFT on EV / Revenue.",
-            interpretation="That evidence makes BUY a buy.",
-            confidence="limited",
-        )
-
-        with self.assertRaisesRegex(
-            InvalidComparisonTakeaway,
-            "must not contain a buy, sell, or hold verdict",
-        ):
-            verify_comparison_takeaway(table=table, takeaway=takeaway)
 
     def test_missing_target_ticker_raises(self) -> None:
         with self.assertRaisesRegex(CompsCalculationError, "Target ticker AAPL is missing"):

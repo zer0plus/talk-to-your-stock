@@ -114,7 +114,7 @@ The service boundary that hosts Google ADK orchestration and the Fundamental Ana
 _Avoid_: Orchestrator service unless discussing implementation mechanics
 
 **Comps Service**:
-The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports. It validates an Agent-authored Comparison Takeaway against the calculated Comps Table and persists both atomically when finalizing a successful Run.
+The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports. It validates only the required shape of an Agent-authored Comparison Takeaway, persists the exact prose with the calculated Comps Table when finalizing a successful Run, and owns terminal Run lifecycle transitions.
 _Avoid_: Calculation service, data service
 
 **Conversation Response**:

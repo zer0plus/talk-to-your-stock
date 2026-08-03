@@ -19,6 +19,7 @@ from talk_to_your_stock_shared import (
     AnalysisPeriod,
     ComparisonTakeaway,
     ErrorResponse,
+    FailCalculatedRunRequest,
     FinalizeComparisonTakeawayRequest,
     GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
@@ -48,6 +49,8 @@ class _ToolInvocationGate:
         self.lock = asyncio.Lock()
         self.validation_failures = 0
         self.completed = False
+        self.calculated_run_id: UUID | None = None
+        self.run_is_terminal = False
 
 
 FUNDAMENTAL_ANALYSIS_INSTRUCTION = """
@@ -150,6 +153,11 @@ class FundamentalAnalysisAgent:
                 session_context=session_context,
             )
         finally:
+            if (
+                invocation_gate.calculated_run_id is not None
+                and not invocation_gate.run_is_terminal
+            ):
+                await self._fail_calculated_run(invocation_gate.calculated_run_id)
             if self._tool_invocation_gates.get(invocation_key) is invocation_gate:
                 self._tool_invocation_gates.pop(invocation_key)
 
@@ -246,6 +254,9 @@ class FundamentalAnalysisAgent:
                 ) from None
             except CompsToolUnavailable as exc:
                 raise AgentRoutingUnavailable(str(exc)) from exc
+            self._tool_invocation_gates[
+                str(request.user_message_id)
+            ].run_is_terminal = True
             content = agent_output.content
             session = await session_context.get_session(
                 user_id=request.user_id,
@@ -306,7 +317,21 @@ class FundamentalAnalysisAgent:
                     "retry_allowed": retry_allowed,
                 }
             invocation_gate.completed = True
+            invocation_gate.calculated_run_id = response.run.id
             return response.model_dump(mode="json")
+
+    async def _fail_calculated_run(self, run_id: UUID) -> None:
+        try:
+            await self._comps_client.fail_comps_run(
+                run_id,
+                FailCalculatedRunRequest(
+                    error_message=(
+                        "The Agent could not complete the calculated analysis."
+                    )
+                ),
+            )
+        except (CompsToolError, CompsToolUnavailable):
+            pass
 
 
 def _keep_first_comps_tool_call(callback_context: Any, llm_response: Any) -> Any:

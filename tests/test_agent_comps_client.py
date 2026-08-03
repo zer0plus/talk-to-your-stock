@@ -23,12 +23,14 @@ from talk_to_your_stock_shared import (
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
+    FailCalculatedRunRequest,
     FinalizeComparisonTakeawayRequest,
     GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     PeerSelectionMode,
     RunStatus,
+    RunResponse,
     RunTableDraftResponse,
 )
 from tests.live_service import running_service
@@ -77,6 +79,24 @@ class HttpCompsToolClientTest(unittest.TestCase):
                 }
             )
 
+        @comps_app.post("/v1/internal/runs/{run_id}/fail")
+        def fail_comps_run(
+            run_id: UUID,
+            request: FailCalculatedRunRequest,
+            authorization: str = Header(),
+        ) -> RunResponse:
+            observed["fail_run_id"] = run_id
+            observed["fail_request"] = request
+            observed["fail_authorization"] = authorization
+            return RunResponse(
+                run=tool_response.run.model_copy(
+                    update={
+                        "status": RunStatus.FAILED,
+                        "error_message": request.error_message,
+                    }
+                )
+            )
+
         request = _tool_request(
             thread_id=tool_response.run.thread_id,
             trigger_message_id=tool_response.run.trigger_message_id,
@@ -95,6 +115,12 @@ class HttpCompsToolClientTest(unittest.TestCase):
                     ),
                 )
             )
+            failed = asyncio.run(
+                client.fail_comps_run(
+                    tool_response.run.id,
+                    FailCalculatedRunRequest(error_message="Agent failed."),
+                )
+            )
 
         self.assertEqual(response, draft_response)
         self.assertEqual(finalized, tool_response)
@@ -105,6 +131,9 @@ class HttpCompsToolClientTest(unittest.TestCase):
             observed["finalize_authorization"],
             "Bearer internal-token",
         )
+        self.assertEqual(failed.run.status, RunStatus.FAILED)
+        self.assertEqual(observed["fail_run_id"], tool_response.run.id)
+        self.assertEqual(observed["fail_authorization"], "Bearer internal-token")
 
     def test_preserves_structured_pre_run_validation_error(self) -> None:
         comps_app = FastAPI()
