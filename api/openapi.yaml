@@ -262,13 +262,15 @@ paths:
       description: |
         Returns owned Runs newest first using deterministic created-at and Run-ID
         ordering. The status filter is applied before limit and cursor pagination.
-      security:
-        - {}
-        - bearerAuth: []
+      security: []
       parameters:
         - $ref: '#/components/parameters/ThreadIdParam'
         - $ref: '#/components/parameters/LimitParam'
         - $ref: '#/components/parameters/CursorParam'
+        - in: header
+          name: authorization
+          schema:
+            type: [string, 'null']
         - in: query
           name: status
           schema:
