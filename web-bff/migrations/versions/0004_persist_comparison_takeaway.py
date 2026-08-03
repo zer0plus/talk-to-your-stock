@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column(
         "comps_tables",
-        sa.Column("comparison_takeaway", postgresql.JSONB(), nullable=False),
+        sa.Column("comparison_takeaway", postgresql.JSONB(), nullable=True),
     )
 
 

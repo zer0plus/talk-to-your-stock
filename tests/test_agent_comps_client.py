@@ -23,10 +23,13 @@ from talk_to_your_stock_shared import (
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
+    FinalizeComparisonTakeawayRequest,
+    GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     PeerSelectionMode,
     RunStatus,
+    RunTableDraftResponse,
 )
 from tests.live_service import running_service
 
@@ -35,16 +38,44 @@ class HttpCompsToolClientTest(unittest.TestCase):
     def test_calls_configured_comps_service_with_internal_contract(self) -> None:
         observed: dict[str, object] = {}
         tool_response = _tool_response()
+        draft_response = GenerateCompsDraftResponse(
+            run=tool_response.run.model_copy(
+                update={"status": RunStatus.RUNNING, "completed_at": None}
+            ),
+            table=RunTableDraftResponse.model_validate(
+                tool_response.table.model_dump(exclude={"comparison_takeaway"})
+            ),
+            trace=tool_response.trace,
+        )
         comps_app = FastAPI()
 
         @comps_app.post("/v1/internal/tools/generate-comps-table")
         def generate_comps_table(
             request: GenerateCompsToolRequest,
             authorization: str = Header(),
-        ) -> GenerateCompsToolResponse:
+        ) -> GenerateCompsDraftResponse:
             observed["request"] = request
             observed["authorization"] = authorization
-            return tool_response
+            return draft_response
+
+        @comps_app.post("/v1/internal/runs/{run_id}/finalize")
+        def finalize_comps_run(
+            run_id: UUID,
+            request: FinalizeComparisonTakeawayRequest,
+            authorization: str = Header(),
+        ) -> GenerateCompsToolResponse:
+            observed["finalize_run_id"] = run_id
+            observed["finalize_request"] = request
+            observed["finalize_authorization"] = authorization
+            return tool_response.model_copy(
+                update={
+                    "table": tool_response.table.model_copy(
+                        update={
+                            "comparison_takeaway": request.comparison_takeaway
+                        }
+                    )
+                }
+            )
 
         request = _tool_request(
             thread_id=tool_response.run.thread_id,
@@ -56,10 +87,24 @@ class HttpCompsToolClientTest(unittest.TestCase):
                 internal_token="internal-token",
             )
             response = asyncio.run(client.generate_comps_table(request))
+            finalized = asyncio.run(
+                client.finalize_comps_run(
+                    tool_response.run.id,
+                    FinalizeComparisonTakeawayRequest(
+                        comparison_takeaway=tool_response.table.comparison_takeaway
+                    ),
+                )
+            )
 
-        self.assertEqual(response, tool_response)
+        self.assertEqual(response, draft_response)
+        self.assertEqual(finalized, tool_response)
         self.assertEqual(observed["request"], request)
         self.assertEqual(observed["authorization"], "Bearer internal-token")
+        self.assertEqual(observed["finalize_run_id"], tool_response.run.id)
+        self.assertEqual(
+            observed["finalize_authorization"],
+            "Bearer internal-token",
+        )
 
     def test_preserves_structured_pre_run_validation_error(self) -> None:
         comps_app = FastAPI()

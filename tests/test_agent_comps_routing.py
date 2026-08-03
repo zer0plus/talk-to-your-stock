@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from google.adk.models.base_llm import BaseLlm
@@ -23,11 +24,14 @@ from talk_to_your_stock_shared import (
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
+    FinalizeComparisonTakeawayRequest,
+    GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     MinMedianMax,
     Run,
     RunStatus,
+    RunTableDraftResponse,
     RunTableResponse,
     TraceResponse,
 )
@@ -55,16 +59,49 @@ class RecordingCompsClient:
     ) -> None:
         self.responses = list(responses)
         self.requests: list[GenerateCompsToolRequest] = []
+        self.finalize_requests: list[
+            tuple[UUID, FinalizeComparisonTakeawayRequest]
+        ] = []
+        self.pending_final: GenerateCompsToolResponse | None = None
 
     async def generate_comps_table(
         self,
         request: GenerateCompsToolRequest,
-    ) -> GenerateCompsToolResponse:
+    ) -> GenerateCompsDraftResponse:
         self.requests.append(request)
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
-        return response
+        self.pending_final = response
+        return GenerateCompsDraftResponse(
+            run=response.run.model_copy(
+                update={"status": RunStatus.RUNNING, "completed_at": None}
+            ),
+            table=RunTableDraftResponse.model_validate(
+                response.table.model_dump(exclude={"comparison_takeaway"})
+            ),
+            trace=response.trace,
+            warnings=response.warnings,
+        )
+
+    async def finalize_comps_run(
+        self,
+        run_id: UUID,
+        request: FinalizeComparisonTakeawayRequest,
+    ) -> GenerateCompsToolResponse:
+        self.finalize_requests.append((run_id, request))
+        assert self.pending_final is not None
+        final = self.pending_final.model_copy(
+            update={
+                "table": self.pending_final.table.model_copy(
+                    update={
+                        "comparison_takeaway": request.comparison_takeaway
+                    }
+                )
+            }
+        )
+        self.pending_final = None
+        return final
 
 
 class AgentCompsRoutingTest(unittest.TestCase):
@@ -105,16 +142,8 @@ class AgentCompsRoutingTest(unittest.TestCase):
                         )
                     ],
                 ),
-                types.Content(
-                    role="model",
-                    parts=[
-                        types.Part(
-                            text=(
-                                "AAPL trades at 10.0x EV/EBITDA versus the "
-                                "peer median of 25.0x in the generated Comps Table."
-                            )
-                        )
-                    ],
+                _agent_output(
+                    "AAPL trades below its peers on EV / EBITDA.",
                 ),
             ],
         )
@@ -137,10 +166,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(body["run"], tool_response.run.model_dump(mode="json"))
         self.assertEqual(
             body["content"],
-            (
-                "Generated the Comps Table for AAPL with MSFT and NVDA "
-                f"(Run {tool_response.run.id})."
-            ),
+            "AAPL trades below its peers on EV / EBITDA.",
         )
         self.assertEqual(len(comps_client.requests), 1)
         request = comps_client.requests[0]
@@ -151,7 +177,15 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(request.peer_tickers, ["MSFT", "NVDA"])
         self.assertEqual(request.peer_selection_mode.value, "user_supplied")
         self.assertEqual(request.analysis_period.value, "latest")
-        self.assertEqual(len(model.responses), 1)
+        self.assertEqual(len(model.responses), 0)
+        self.assertEqual(len(comps_client.finalize_requests), 1)
+        finalized_takeaway = comps_client.finalize_requests[0][
+            1
+        ].comparison_takeaway
+        self.assertEqual(
+            finalized_takeaway.headline,
+            "AAPL trades at a discount to its peers on EV / EBITDA.",
+        )
 
         session = asyncio.run(
             self.session_context.get_session(user_id=user_id, thread_id=thread_id)
@@ -161,6 +195,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
             [event.author for event in session.events],
             [
                 "user",
+                "fundamental_analysis_agent",
                 "fundamental_analysis_agent",
                 "fundamental_analysis_agent",
                 "fundamental_analysis_agent",
@@ -196,7 +231,8 @@ class AgentCompsRoutingTest(unittest.TestCase):
                             peer_tickers=["MSFT", "NVDA", "AMD"],
                         ),
                     ],
-                )
+                ),
+                _agent_output("AAPL trades below its peers on EV / EBITDA."),
             ],
         )
         comps_client = RecordingCompsClient(tool_response, tool_response)
@@ -236,6 +272,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
                     ],
                 ),
                 _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                _agent_output("AAPL trades below MSFT on EV / EBITDA."),
             ],
         )
         validation_error = CompsToolValidationError(
@@ -289,7 +326,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
             responses=[
                 types.Content(
                     role="model",
-                    parts=[types.Part(text="AAPL looks cheaper than MSFT.")],
+                    parts=[types.Part(text=_conversation_output("AAPL looks cheaper than MSFT."))],
                 )
             ],
         )
@@ -334,7 +371,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
                     responses=[
                         types.Content(
                             role="model",
-                            parts=[types.Part(text=model_response)],
+                            parts=[types.Part(text=_conversation_output(model_response))],
                         )
                     ],
                 )
@@ -375,10 +412,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
             responses=[
                 _tool_call(target_ticker="AAPLL", peer_tickers=["MSFT", "NVDA"]),
                 _tool_call(target_ticker="AAPL", peer_tickers=["MSFT", "NVDA"]),
-                types.Content(
-                    role="model",
-                    parts=[types.Part(text="The corrected Tickers produced a Comps Table.")],
-                ),
+                _agent_output("AAPL trades below its peers on EV / EBITDA."),
             ],
         )
         validation_error = CompsToolValidationError(
@@ -654,6 +688,42 @@ def _successful_tool_response(
         run=run,
         table=table,
         trace=TraceResponse(run_id=run_id, formulas=[]),
+    )
+
+
+def _agent_output(content: str) -> types.Content:
+    return types.Content(
+        role="model",
+        parts=[
+            types.Part(
+                text=json.dumps(
+                    {
+                        "content": content,
+                        "comparison_takeaway": {
+                            "headline": (
+                                "AAPL trades at a discount to its peers on "
+                                "EV / EBITDA."
+                            ),
+                            "interpretation": (
+                                "AAPL's EV / EBITDA is below the peer median, "
+                                "while the available table evidence supports a "
+                                "moderate-confidence comparison."
+                            ),
+                            "confidence": "moderate",
+                        },
+                    }
+                )
+            )
+        ],
+    )
+
+
+def _conversation_output(content: str) -> str:
+    return json.dumps(
+        {
+            "content": content,
+            "comparison_takeaway": None,
+        }
     )
 
 

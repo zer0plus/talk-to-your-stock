@@ -28,7 +28,12 @@ from comps_service.run_service import (
     DuplicateToolInvocation,
     LoadedCompanyData,
 )
-from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
+from talk_to_your_stock_shared import (
+    Run,
+    RunTableDraftResponse,
+    RunTableResponse,
+    TraceResponse,
+)
 
 
 INTERNAL_TOOL_TOKEN = "test-internal-tool-token"
@@ -43,22 +48,23 @@ class SupportedTickerValidator:
 class InMemoryCompsRunRepository:
     def __init__(self) -> None:
         self.runs: dict[UUID, Run] = {}
+        self.draft_tables: dict[UUID, RunTableDraftResponse] = {}
         self.tables: dict[UUID, RunTableResponse] = {}
         self.traces: dict[UUID, TraceResponse] = {}
         self.source_snapshots: dict[UUID, SourceSnapshot] = {}
         self.invocations: dict[UUID, UUID] = {}
 
-    def save_succeeded_run(
+    def save_calculated_run(
         self,
         *,
         invocation_id: UUID,
         run: Run,
-        table: RunTableResponse,
+        table: RunTableDraftResponse,
         trace: TraceResponse,
         source_snapshot: SourceSnapshot,
     ) -> None:
         self._save_invocation(invocation_id, run)
-        self.tables[run.id] = table
+        self.draft_tables[run.id] = table
         self.traces[run.id] = trace
         self.source_snapshots[run.id] = source_snapshot
 
@@ -86,11 +92,23 @@ class InMemoryCompsRunRepository:
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
 
+    def get_draft_table(self, run_id: UUID) -> RunTableDraftResponse | None:
+        return self.draft_tables.get(run_id)
+
     def get_trace(self, run_id: UUID) -> TraceResponse | None:
         return self.traces.get(run_id)
 
     def get_source_snapshot(self, run_id: UUID) -> SourceSnapshot | None:
         return self.source_snapshots.get(run_id)
+
+    def finalize_succeeded_run(
+        self,
+        *,
+        run: Run,
+        table: RunTableResponse,
+    ) -> None:
+        self.runs[run.id] = run
+        self.tables[run.id] = table
 
 
 def company_input(ticker: str) -> CompanyCompsInput:

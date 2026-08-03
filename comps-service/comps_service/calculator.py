@@ -8,18 +8,12 @@ from uuid import UUID
 from talk_to_your_stock_shared import (
     CompsRow,
     MinMedianMax,
-    RunTableResponse,
+    RunTableDraftResponse,
     TraceFormula,
     TraceInput,
     TraceOutputField,
     TraceResponse,
 )
-
-from .comparison_takeaway import (
-    build_comparison_takeaway,
-    verify_comparison_takeaway,
-)
-
 
 class CompsCalculationError(RuntimeError):
     pass
@@ -63,7 +57,7 @@ class CompsCalculator:
         target_ticker: str,
         companies: list[CompanyCompsInput],
         currency: str,
-    ) -> tuple[RunTableResponse, TraceResponse, list[str]]:
+    ) -> tuple[RunTableDraftResponse, TraceResponse, list[str]]:
         self._validate_inputs(target_ticker=target_ticker, companies=companies)
 
         target = target_ticker.upper()
@@ -145,11 +139,7 @@ class CompsCalculator:
                 )
             )
 
-        comparison_takeaway = build_comparison_takeaway(
-            target_ticker=target,
-            rows=rows,
-        )
-        table = RunTableResponse(
+        table = RunTableDraftResponse(
             run_id=run_id,
             target_ticker=target,
             currency=currency,
@@ -163,9 +153,7 @@ class CompsCalculator:
                     "pe": self._stats([row.pe for row in rows]),
                 }
             },
-            comparison_takeaway=comparison_takeaway,
         )
-        verify_comparison_takeaway(table)
         return table, TraceResponse(run_id=run_id, formulas=formulas), warnings
 
     def _validate_inputs(

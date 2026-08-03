@@ -33,7 +33,12 @@ from comps_service.main import (
 )
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.run_service import LoadedCompanyData
-from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
+from talk_to_your_stock_shared import (
+    Run,
+    RunTableDraftResponse,
+    RunTableResponse,
+    TraceResponse,
+)
 from tests.live_service import running_service
 from tests.test_web_bff_threads_messages import RecordingRepository
 from web_bff.main import app as web_bff_app, get_repository as get_web_repository
@@ -43,12 +48,47 @@ LOCAL_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 
 class CanonicalCompsLlm(BaseLlm):
+    call_count: int = 0
+
     async def generate_content_async(
         self,
         llm_request: LlmRequest,
         stream: bool = False,
     ) -> AsyncGenerator[LlmResponse, None]:
         del llm_request, stream
+        self.call_count += 1
+        if self.call_count > 1:
+            yield LlmResponse(
+                content=types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            text=json.dumps(
+                                {
+                                    "content": (
+                                        "AAPL trades below its peers on "
+                                        "EV / Revenue."
+                                    ),
+                                    "comparison_takeaway": {
+                                        "headline": (
+                                            "AAPL trades at a discount to its "
+                                            "peers on EV / Revenue."
+                                        ),
+                                        "interpretation": (
+                                            "AAPL's EV / Revenue is below the peer "
+                                            "group, while the available evidence "
+                                            "supports moderate confidence."
+                                        ),
+                                        "confidence": "moderate",
+                                    },
+                                }
+                            )
+                        )
+                    ],
+                ),
+                partial=False,
+            )
+            return
         yield LlmResponse(
             content=types.Content(
                 role="model",
@@ -69,22 +109,23 @@ class CanonicalCompsLlm(BaseLlm):
 class InMemoryCompsRepository:
     def __init__(self) -> None:
         self.runs: dict[UUID, Run] = {}
+        self.draft_tables: dict[UUID, RunTableDraftResponse] = {}
         self.tables: dict[UUID, RunTableResponse] = {}
         self.traces: dict[UUID, TraceResponse] = {}
         self.source_snapshots: dict[UUID, SourceSnapshot] = {}
 
-    def save_succeeded_run(
+    def save_calculated_run(
         self,
         *,
         invocation_id: UUID,
         run: Run,
-        table: RunTableResponse,
+        table: RunTableDraftResponse,
         trace: TraceResponse,
         source_snapshot: SourceSnapshot,
     ) -> None:
         del invocation_id
         self.runs[run.id] = run
-        self.tables[run.id] = table
+        self.draft_tables[run.id] = table
         self.traces[run.id] = trace
         self.source_snapshots[run.id] = source_snapshot
 
@@ -105,11 +146,23 @@ class InMemoryCompsRepository:
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
 
+    def get_draft_table(self, run_id: UUID) -> RunTableDraftResponse | None:
+        return self.draft_tables.get(run_id)
+
     def get_trace(self, run_id: UUID) -> TraceResponse | None:
         return self.traces.get(run_id)
 
     def get_source_snapshot(self, run_id: UUID) -> SourceSnapshot | None:
         return self.source_snapshots.get(run_id)
+
+    def finalize_succeeded_run(
+        self,
+        *,
+        run: Run,
+        table: RunTableResponse,
+    ) -> None:
+        self.runs[run.id] = run
+        self.tables[run.id] = table
 
 
 class CanonicalBackendPathTest(unittest.TestCase):
@@ -209,6 +262,10 @@ class CanonicalBackendPathTest(unittest.TestCase):
             UUID(run_id)
         ].comparison_takeaway.model_dump(mode="json")
         self.assertEqual(table.json()["comparison_takeaway"], persisted_takeaway)
+        self.assertEqual(
+            persisted_takeaway["headline"],
+            "AAPL trades at a discount to its peers on EV / Revenue.",
+        )
         self.assertEqual(
             set(table.json()["comparison_takeaway"]),
             {"headline", "interpretation", "confidence"},

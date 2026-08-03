@@ -26,14 +26,16 @@ flowchart LR
   end
 
   TOOL["Tool Contract<br/>generate_comps_table"]
-  COMPS["Comps Service<br/>(deterministic calculations)"]
+  COMPS["Comps Service<br/>(calculations + persistence)"]
 
   WEB -->|"User message"| BFF
   BFF -->|"Invoke agent with chat context"| FUND
   PROMPT --> FUND
   FUND -->|"If comps/fundamental analysis needed"| TOOL
   TOOL -->|"Validated tool input"| COMPS
-  COMPS -->|"Tool result"| FUND
+  COMPS -->|"Calculated table draft"| FUND
+  FUND -->|"Agent-authored freeform takeaway"| COMPS
+  COMPS -->|"Finalized Run"| FUND
   FUND -->|"Assistant response"| BFF
   BFF -->|"Response + optional run_id"| WEB
 ```
@@ -43,7 +45,7 @@ Notes:
 * Google ADK owns orchestration behavior.
 * Google ADK-native observability is the primary surface for agent internals, including tool-call history and model/tool traces.
 * This ADR describes agent behavior and tool boundaries.
-* The Fundamental Analysis Agent is instructed to use the Tool rather than invent or recalculate final comps metrics. A deterministic Comps Table exists only when the Tool returns a Run.
+* The Fundamental Analysis Agent is instructed to use the Tool rather than invent or recalculate final comps metrics. After receiving the calculated table, it authors the freeform Comparison Takeaway. The Comps Service validates that prose against the table and persists it before the Run succeeds.
 
 ### Agent Observability
 
@@ -66,10 +68,10 @@ For the initial MVP, intent handling is expressed through the agent system instr
 
 The agent decides whether a message is:
 * **Conversational or no Tool selected**: answer directly, no run created.
-* **Fundamental/comps analysis with Tool selected**: call `generate_comps_table`, create a run, and return table-backed analysis.
+* **Fundamental/comps analysis with Tool selected**: call `generate_comps_table`, create a running calculation, author a structured freeform Comparison Takeaway from the returned table, and finalize the Run through the Comps Service.
 * **Ambiguous**: ask a short clarifying question before tool execution.
 
-If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. Tool success remains the only path that may claim or link a deterministic Comps Table.
+If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. A Run may be claimed or linked only after the Comps Service accepts and persists the Agent-authored Comparison Takeaway with the deterministic Comps Table.
 
 If the Comps Service rejects a tool call before creating a Run because the structured input is invalid, the Agent may perform one internal correction retry. If the corrected tool call is still invalid, the Agent surfaces a concise clarification or error to the User instead of looping.
 
@@ -96,15 +98,17 @@ Initial conceptual input:
 
 Initial conceptual output:
 * `run_id`
-* `table`
+* calculated `table` draft
 * `trace`
 * `warnings`
+
+After Tool execution, the Agent produces a structured response containing its user-facing content and a freeform Comparison Takeaway (`headline`, `interpretation`, and `confidence`). The Agent Service sends that Takeaway to an internal Comps Service finalization boundary. The Comps Service verifies that it names the Target Ticker, refers only to available table evidence, and contains no buy/sell/hold verdict; it does not generate or rewrite the prose. Finalization persists the exact Agent output with the table and transitions the Run from `running` to `succeeded` atomically.
 
 When auto peer selection is supported, it remains a Comps Service responsibility: if the User provides only one company, the Comps Service selects comparable peers deterministically and exposes traceable selection reasoning.
 
 ### Decision Summary
 
-> We decided to use **Google ADK for agent orchestration and agent-internal observability** with one active MVP agent, the **Fundamental Analysis Agent**, which can answer conversational questions directly or call one deterministic tool, `generate_comps_table`, for table-backed comps analysis.
+> We decided to use **Google ADK for agent orchestration and agent-internal observability** with one active MVP agent, the **Fundamental Analysis Agent**, which can answer conversational questions directly or call one deterministic tool, `generate_comps_table`, then author a freeform table-backed Comparison Takeaway that the Comps Service validates and persists.
 
 ### Rationale
 

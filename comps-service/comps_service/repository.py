@@ -6,13 +6,18 @@ from collections.abc import Mapping
 from typing import NoReturn
 from uuid import UUID
 
-from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
+from talk_to_your_stock_shared import (
+    Run,
+    RunTableDraftResponse,
+    RunTableResponse,
+    TraceResponse,
+)
 from talk_to_your_stock_shared.readiness import DATABASE_URL_VAR
 from talk_to_your_stock_shared.time import utc_now
 
 from .artifacts import SourceSnapshot
 from .comparison_takeaway import verify_comparison_takeaway
-from .run_service import DuplicateToolInvocation
+from .run_service import CalculatedRunNotFound, DuplicateToolInvocation
 
 
 logger = logging.getLogger(__name__)
@@ -40,18 +45,17 @@ class PostgresCompsRunRepository:
         env = os.environ if environ is None else environ
         return cls(database_url=env.get(DATABASE_URL_VAR, ""))
 
-    def save_succeeded_run(
+    def save_calculated_run(
         self,
         *,
         invocation_id: UUID,
         run: Run,
-        table: RunTableResponse,
+        table: RunTableDraftResponse,
         trace: TraceResponse,
         source_snapshot: SourceSnapshot,
     ) -> None:
         from psycopg.types.json import Jsonb
 
-        verify_comparison_takeaway(table)
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -100,9 +104,7 @@ class PostgresCompsRunRepository:
                                 [row.model_dump(mode="json") for row in table.rows]
                             ),
                             Jsonb(table.summary.model_dump(mode="json")),
-                            Jsonb(
-                                table.comparison_takeaway.model_dump(mode="json")
-                            ),
+                            None,
                             utc_now(),
                         ),
                     )
@@ -236,7 +238,7 @@ class PostgresCompsRunRepository:
                         select run_id, target_ticker, currency, as_of, rows, summary,
                             comparison_takeaway
                         from comps_tables
-                        where run_id = %s
+                        where run_id = %s and comparison_takeaway is not null
                         """,
                         (run_id,),
                     )
@@ -246,6 +248,80 @@ class PostgresCompsRunRepository:
         if row is None:
             return None
         return RunTableResponse.model_validate(row)
+
+    def get_draft_table(self, run_id: UUID) -> RunTableDraftResponse | None:
+        try:
+            with self._connect() as connection:
+                with connection.cursor(row_factory=self._dict_row()) as cursor:
+                    cursor.execute(
+                        """
+                        select run_id, target_ticker, currency, as_of, rows, summary
+                        from comps_tables
+                        where run_id = %s
+                        """,
+                        (run_id,),
+                    )
+                    row = cursor.fetchone()
+        except Exception as exc:
+            self._raise_unavailable(exc)
+        if row is None:
+            return None
+        return RunTableDraftResponse.model_validate(row)
+
+    def finalize_succeeded_run(
+        self,
+        *,
+        run: Run,
+        table: RunTableResponse,
+    ) -> None:
+        from psycopg.types.json import Jsonb
+
+        draft = RunTableDraftResponse.model_validate(
+            table.model_dump(exclude={"comparison_takeaway"})
+        )
+        verify_comparison_takeaway(
+            table=draft,
+            takeaway=table.comparison_takeaway,
+        )
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        update comps_tables
+                        set comparison_takeaway = %s
+                        where run_id = %s and comparison_takeaway is null
+                        """,
+                        (
+                            Jsonb(
+                                table.comparison_takeaway.model_dump(mode="json")
+                            ),
+                            run.id,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise CalculatedRunNotFound(
+                            "Calculated Comps Run not found."
+                        )
+                    cursor.execute(
+                        """
+                        update comps_runs
+                        set status = %s, completed_at = %s
+                        where id = %s and status = %s
+                        """,
+                        (
+                            run.status.value,
+                            run.completed_at,
+                            run.id,
+                            "running",
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise CalculatedRunNotFound(
+                            "Calculated Comps Run not found."
+                        )
+        except Exception as exc:
+            self._raise_unavailable(exc)
 
     def get_trace(self, run_id: UUID) -> TraceResponse | None:
         try:
@@ -300,7 +376,12 @@ class PostgresCompsRunRepository:
     def _raise_unavailable(self, exc: Exception) -> NoReturn:
         if isinstance(
             exc,
-            (CompsPersistenceUnavailable, DuplicateToolInvocation, InvalidRunLinkage),
+            (
+                CalculatedRunNotFound,
+                CompsPersistenceUnavailable,
+                DuplicateToolInvocation,
+                InvalidRunLinkage,
+            ),
         ):
             raise exc
         diagnostics = getattr(exc, "diag", None)

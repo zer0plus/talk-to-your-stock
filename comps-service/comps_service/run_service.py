@@ -6,10 +6,13 @@ from typing import NoReturn, Protocol
 from uuid import UUID, uuid4
 
 from talk_to_your_stock_shared import (
+    ComparisonTakeaway,
+    GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     Run,
     RunStatus,
+    RunTableDraftResponse,
     RunTableResponse,
     TraceResponse,
 )
@@ -17,6 +20,7 @@ from talk_to_your_stock_shared.time import utc_now
 
 from .artifacts import SourceSnapshot
 from .calculator import CompanyCompsInput, CompsCalculationError, CompsCalculator
+from .comparison_takeaway import verify_comparison_takeaway
 
 
 class CompanyDataUnavailable(RuntimeError):
@@ -35,6 +39,10 @@ class CompsRunExecutionError(RuntimeError):
 
 
 class DuplicateToolInvocation(RuntimeError):
+    pass
+
+
+class CalculatedRunNotFound(RuntimeError):
     pass
 
 
@@ -82,12 +90,12 @@ class CompanyDataSource(Protocol):
 
 
 class CompsRunRepository(Protocol):
-    def save_succeeded_run(
+    def save_calculated_run(
         self,
         *,
         invocation_id: UUID,
         run: Run,
-        table: RunTableResponse,
+        table: RunTableDraftResponse,
         trace: TraceResponse,
         source_snapshot: SourceSnapshot,
     ) -> None: ...
@@ -104,9 +112,18 @@ class CompsRunRepository(Protocol):
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None: ...
 
+    def get_draft_table(self, run_id: UUID) -> RunTableDraftResponse | None: ...
+
     def get_trace(self, run_id: UUID) -> TraceResponse | None: ...
 
     def get_source_snapshot(self, run_id: UUID) -> SourceSnapshot | None: ...
+
+    def finalize_succeeded_run(
+        self,
+        *,
+        run: Run,
+        table: RunTableResponse,
+    ) -> None: ...
 
 
 class CompsRunService:
@@ -121,7 +138,7 @@ class CompsRunService:
         self._company_data_source = company_data_source
         self._calculator = calculator or CompsCalculator()
 
-    def generate(self, request: GenerateCompsToolRequest) -> GenerateCompsToolResponse:
+    def generate(self, request: GenerateCompsToolRequest) -> GenerateCompsDraftResponse:
         target_ticker = request.target_ticker.upper()
         peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
         requested_tickers = [target_ticker, *peer_tickers]
@@ -168,12 +185,11 @@ class CompsRunService:
                 cause=exc,
             )
 
-        completed_at = utc_now()
         run = Run(
             id=run_id,
             thread_id=request.thread_id,
             trigger_message_id=request.trigger_message_id,
-            status=RunStatus.SUCCEEDED,
+            status=RunStatus.RUNNING,
             target_ticker=target_ticker,
             peer_tickers=peer_tickers,
             currency=request.currency.upper(),
@@ -181,26 +197,68 @@ class CompsRunService:
             warnings=warnings,
             created_at=started_at,
             started_at=started_at,
-            completed_at=completed_at,
         )
         source_snapshot = SourceSnapshot(
             run_id=run_id,
             raw_provider_evidence=loaded.raw_provider_evidence,
             normalized_inputs=companies,
-            created_at=completed_at,
+            created_at=utc_now(),
         )
-        self._repository.save_succeeded_run(
+        self._repository.save_calculated_run(
             invocation_id=request.invocation_id,
             run=run,
             table=table,
             trace=trace,
             source_snapshot=source_snapshot,
         )
-        return GenerateCompsToolResponse(
+        return GenerateCompsDraftResponse(
             run=run,
             table=table,
             trace=trace,
             warnings=run.warnings,
+        )
+
+    def finalize(
+        self,
+        *,
+        run_id: UUID,
+        comparison_takeaway: ComparisonTakeaway,
+    ) -> GenerateCompsToolResponse:
+        run = self._repository.get_run(run_id)
+        table = self._repository.get_draft_table(run_id)
+        trace = self._repository.get_trace(run_id)
+        if (
+            run is None
+            or table is None
+            or trace is None
+            or run.status != RunStatus.RUNNING
+        ):
+            raise CalculatedRunNotFound("Calculated Comps Run not found.")
+
+        verify_comparison_takeaway(
+            table=table,
+            takeaway=comparison_takeaway,
+        )
+        completed_at = utc_now()
+        succeeded_run = run.model_copy(
+            update={
+                "status": RunStatus.SUCCEEDED,
+                "completed_at": completed_at,
+            }
+        )
+        succeeded_table = RunTableResponse(
+            **table.model_dump(),
+            comparison_takeaway=comparison_takeaway,
+        )
+        self._repository.finalize_succeeded_run(
+            run=succeeded_run,
+            table=succeeded_table,
+        )
+        return GenerateCompsToolResponse(
+            run=succeeded_run,
+            table=succeeded_table,
+            trace=trace,
+            warnings=succeeded_run.warnings,
         )
 
     def _save_failed_run(

@@ -77,7 +77,14 @@ class BoundaryConversationLlm(BaseLlm):
         yield LlmResponse(
             content=types.Content(
                 role="model",
-                parts=[types.Part(text="Conversation Response")],
+                parts=[
+                    types.Part(
+                        text=(
+                            '{"content":"Conversation Response",'
+                            '"comparison_takeaway":null}'
+                        )
+                    )
+                ],
             ),
             partial=False,
         )
@@ -437,7 +444,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         )
         self.assertEqual(
             [event.content.parts[0].text for event in session.events],
-            ["What is enterprise value?", body["assistant_message"]["content"]],
+            [
+                "What is enterprise value?",
+                '{"content":"Conversation Response","comparison_takeaway":null}',
+            ],
         )
         self.assertEqual(
             [message.role for message in repository.messages],

@@ -16,6 +16,8 @@ from talk_to_your_stock_shared import (
     ErrorCode,
     ErrorDetail,
     ErrorResponse,
+    FinalizeComparisonTakeawayRequest,
+    GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
     HealthResponse,
@@ -42,6 +44,7 @@ from .repository import (
     PostgresCompsRunRepository,
 )
 from .run_service import (
+    CalculatedRunNotFound,
     CompanyDataSource,
     CompanyDataUnavailable,
     CompsRunRepository,
@@ -60,6 +63,7 @@ from .tool_validation import (
 
 COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
 GENERATE_COMPS_TOOL_PATH = "/v1/internal/tools/generate-comps-table"
+FINALIZE_COMPS_RUN_PATH = "/v1/internal/runs/{run_id}/finalize"
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -100,8 +104,20 @@ def invalid_comparison_takeaway_exception_handler(
     exc: InvalidComparisonTakeaway,
 ) -> JSONResponse:
     return _error_response(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        code=ErrorCode.INTERNAL_ERROR,
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=ErrorCode.VALIDATION_ERROR,
+        message=str(exc),
+    )
+
+
+@app.exception_handler(CalculatedRunNotFound)
+def calculated_run_not_found_exception_handler(
+    _request: object,
+    exc: CalculatedRunNotFound,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_404_NOT_FOUND,
+        code=ErrorCode.NOT_FOUND,
         message=str(exc),
     )
 
@@ -123,7 +139,7 @@ async def authenticate_internal_tool_routes(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
-    if request.url.path == GENERATE_COMPS_TOOL_PATH:
+    if request.url.path.startswith("/v1/internal/"):
         auth_error = _internal_tool_auth_error(request.headers.get("authorization"))
         if auth_error is not None:
             return auth_error
@@ -209,7 +225,7 @@ def get_ticker_validator(
 
 @app.post(
     GENERATE_COMPS_TOOL_PATH,
-    response_model=GenerateCompsToolResponse,
+    response_model=GenerateCompsDraftResponse,
     responses={
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},
@@ -231,7 +247,7 @@ def generate_comps_table(
         AlphaVantageTickerValidator,
         Depends(get_ticker_validator),
     ],
-) -> GenerateCompsToolResponse | JSONResponse:
+) -> GenerateCompsDraftResponse | JSONResponse:
     if request.peer_selection_mode == PeerSelectionMode.AUTO:
         return _error_response(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -309,6 +325,35 @@ def generate_comps_table(
             details=failure_details,
             run_id=exc.run_id,
         )
+
+
+@app.post(
+    FINALIZE_COMPS_RUN_PATH,
+    response_model=GenerateCompsToolResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Internal"],
+)
+def finalize_comps_run(
+    run_id: Annotated[UUID, Path()],
+    request: FinalizeComparisonTakeawayRequest,
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+    company_data_source: Annotated[
+        CompanyDataSource,
+        Depends(get_company_data_source),
+    ],
+) -> GenerateCompsToolResponse:
+    return CompsRunService(
+        repository=repository,
+        company_data_source=company_data_source,
+    ).finalize(
+        run_id=run_id,
+        comparison_takeaway=request.comparison_takeaway,
+    )
 
 
 @app.get(

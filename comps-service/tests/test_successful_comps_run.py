@@ -25,7 +25,12 @@ from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
 from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
 from comps_service.tool_validation import AlphaVantageTickerValidator
-from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
+from talk_to_your_stock_shared import (
+    Run,
+    RunTableDraftResponse,
+    RunTableResponse,
+    TraceResponse,
+)
 
 
 INTERNAL_TOOL_TOKEN = "test-internal-tool-token"
@@ -125,17 +130,18 @@ class ReverseOrderCompanyDataSource(ControlledCompanyDataSource):
 class InMemoryCompsRunRepository:
     def __init__(self) -> None:
         self.runs: dict[UUID, Run] = {}
+        self.draft_tables: dict[UUID, RunTableDraftResponse] = {}
         self.tables: dict[UUID, RunTableResponse] = {}
         self.traces: dict[UUID, TraceResponse] = {}
         self.source_snapshots: dict[UUID, SourceSnapshot] = {}
         self.invocations: dict[UUID, UUID] = {}
 
-    def save_succeeded_run(
+    def save_calculated_run(
         self,
         *,
         invocation_id: UUID,
         run: Run,
-        table: RunTableResponse,
+        table: RunTableDraftResponse,
         trace: TraceResponse,
         source_snapshot: SourceSnapshot,
     ) -> None:
@@ -145,7 +151,7 @@ class InMemoryCompsRunRepository:
             )
         self.invocations[invocation_id] = run.id
         self.runs[run.id] = run
-        self.tables[run.id] = table
+        self.draft_tables[run.id] = table
         self.traces[run.id] = trace
         self.source_snapshots[run.id] = source_snapshot
 
@@ -170,20 +176,32 @@ class InMemoryCompsRunRepository:
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
 
+    def get_draft_table(self, run_id: UUID) -> RunTableDraftResponse | None:
+        return self.draft_tables.get(run_id)
+
     def get_trace(self, run_id: UUID) -> TraceResponse | None:
         return self.traces.get(run_id)
 
     def get_source_snapshot(self, run_id: UUID) -> SourceSnapshot | None:
         return self.source_snapshots.get(run_id)
 
+    def finalize_succeeded_run(
+        self,
+        *,
+        run: Run,
+        table: RunTableResponse,
+    ) -> None:
+        self.runs[run.id] = run
+        self.tables[run.id] = table
+
 
 class InvalidLinkageCompsRunRepository(InMemoryCompsRunRepository):
-    def save_succeeded_run(
+    def save_calculated_run(
         self,
         *,
         invocation_id: UUID,
         run: Run,
-        table: RunTableResponse,
+        table: RunTableDraftResponse,
         trace: TraceResponse,
         source_snapshot: SourceSnapshot,
     ) -> None:
@@ -199,7 +217,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         app.dependency_overrides[get_ticker_validator] = SupportedTickerValidator
         self.addCleanup(app.dependency_overrides.clear)
 
-    def test_explicit_peer_request_returns_succeeded_run_with_every_company(
+    def test_agent_takeaway_finalizes_calculated_run_with_every_company(
         self,
     ) -> None:
         with patch.dict(
@@ -207,7 +225,8 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
             clear=True,
         ):
-            response = TestClient(app).post(
+            client = TestClient(app)
+            response = client.post(
                 "/v1/internal/tools/generate-comps-table",
                 json={
                     "invocation_id": str(uuid4()),
@@ -218,6 +237,28 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                     "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            draft = response.json()
+            self.assertEqual(draft["run"]["status"], "running")
+            self.assertNotIn("comparison_takeaway", draft["table"])
+            response = client.post(
+                f"/v1/internal/runs/{draft['run']['id']}/finalize",
+                json={
+                    "comparison_takeaway": {
+                        "headline": (
+                            "AAPL appears broadly aligned with its peers on "
+                            "EV / Revenue."
+                        ),
+                        "interpretation": (
+                            "AAPL's EV / Revenue sits near the peer group, while "
+                            "the limited group size leaves room for uncertainty."
+                        ),
+                        "confidence": "moderate",
+                    }
                 },
                 headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
             )
@@ -238,12 +279,17 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         self.assertEqual(body["table"]["run_id"], body["run"]["id"])
         self.assertEqual(
-            set(body["table"]["comparison_takeaway"]),
-            {"headline", "interpretation", "confidence"},
-        )
-        self.assertIn(
-            body["table"]["comparison_takeaway"]["confidence"],
-            {"limited", "moderate", "strong"},
+            body["table"]["comparison_takeaway"],
+            {
+                "headline": (
+                    "AAPL appears broadly aligned with its peers on EV / Revenue."
+                ),
+                "interpretation": (
+                    "AAPL's EV / Revenue sits near the peer group, while the "
+                    "limited group size leaves room for uncertainty."
+                ),
+                "confidence": "moderate",
+            },
         )
 
     def test_verdict_word_ticker_still_returns_a_successful_takeaway(self) -> None:
@@ -252,7 +298,8 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
             clear=True,
         ):
-            response = TestClient(app).post(
+            client = TestClient(app)
+            calculated = client.post(
                 "/v1/internal/tools/generate-comps-table",
                 json={
                     "invocation_id": str(uuid4()),
@@ -263,6 +310,20 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                     "peer_selection_mode": "user_supplied",
                     "analysis_period": "latest",
                     "currency": "USD",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            response = client.post(
+                f"/v1/internal/runs/{calculated.json()['run']['id']}/finalize",
+                json={
+                    "comparison_takeaway": {
+                        "headline": "HOLD is in line with MSFT on EV / Revenue.",
+                        "interpretation": (
+                            "HOLD's EV / Revenue is close to the available peer "
+                            "evidence, although one peer limits confidence."
+                        ),
+                        "confidence": "limited",
+                    }
                 },
                 headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
             )
@@ -364,9 +425,30 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         )
         run_id = UUID(body["run"]["id"])
         client = TestClient(app)
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            finalized = client.post(
+                f"/v1/internal/runs/{run_id}/finalize",
+                json={
+                    "comparison_takeaway": {
+                        "headline": "AAPL is comparable to MSFT on EV / Revenue.",
+                        "interpretation": (
+                            "AAPL's EV / Revenue can be compared with the "
+                            "available peer evidence, with limited confidence "
+                            "from one peer."
+                        ),
+                        "confidence": "limited",
+                    }
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
         persisted_run = client.get(f"/v1/runs/{run_id}")
         persisted_table = client.get(f"/v1/runs/{run_id}/table")
         self.assertEqual(persisted_run.status_code, 200)
+        self.assertEqual(finalized.status_code, 200, finalized.text)
         self.assertEqual(persisted_run.json()["run"]["status"], "succeeded")
         self.assertEqual(persisted_table.status_code, 200)
         self.assertEqual(
@@ -840,14 +922,28 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
             )
             run_id = created.json()["run"]["id"]
+            finalized = client.post(
+                f"/v1/internal/runs/{run_id}/finalize",
+                json={
+                    "comparison_takeaway": {
+                        "headline": "AAPL is comparable to MSFT on EV / Revenue.",
+                        "interpretation": (
+                            "AAPL's EV / Revenue is supported by the available "
+                            "peer evidence, with limited confidence from one peer."
+                        ),
+                        "confidence": "limited",
+                    }
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
 
             run_response = client.get(f"/v1/runs/{run_id}")
             table_response = client.get(f"/v1/runs/{run_id}/table")
 
         self.assertEqual(run_response.status_code, 200, run_response.text)
         self.assertEqual(table_response.status_code, 200, table_response.text)
-        self.assertEqual(run_response.json()["run"], created.json()["run"])
-        self.assertEqual(table_response.json(), created.json()["table"])
+        self.assertEqual(run_response.json()["run"], finalized.json()["run"])
+        self.assertEqual(table_response.json(), finalized.json()["table"])
 
     def test_succeeded_run_trace_is_available_through_public_readback(self) -> None:
         with patch.dict(
@@ -987,7 +1083,8 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
         self.assertIsNone(repeated.json()["error"]["details"])
         self.assertEqual(len(self.repository.runs), 1)
-        self.assertEqual(len(self.repository.tables), 1)
+        self.assertEqual(len(self.repository.draft_tables), 1)
+        self.assertEqual(len(self.repository.tables), 0)
         self.assertEqual(len(self.repository.traces), 1)
         self.assertEqual(len(self.repository.source_snapshots), 1)
 

@@ -184,13 +184,16 @@ class ComparisonTakeaway(ContractModel):
     confidence: ComparisonConfidence
 
 
-class RunTableResponse(ContractModel):
+class RunTableDraftResponse(ContractModel):
     run_id: UUID
     target_ticker: Ticker
     currency: Currency = Field(min_length=3, max_length=3)
     as_of: datetime
     rows: list[CompsRow]
     summary: RunTableSummary
+
+
+class RunTableResponse(RunTableDraftResponse):
     comparison_takeaway: ComparisonTakeaway
 
 
@@ -245,6 +248,17 @@ class GenerateCompsToolResponse(ContractModel):
     table: RunTableResponse
     trace: TraceResponse
     warnings: list[str] = Field(default_factory=list)
+
+
+class GenerateCompsDraftResponse(ContractModel):
+    run: Run
+    table: RunTableDraftResponse
+    trace: TraceResponse
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FinalizeComparisonTakeawayRequest(ContractModel):
+    comparison_takeaway: ComparisonTakeaway
 
 
 class AgentMessageRequest(ContractModel):

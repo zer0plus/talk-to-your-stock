@@ -159,7 +159,8 @@ class CompsMigrationsTest(unittest.TestCase):
         sql = " ".join(result.stdout.lower().split())
         self.assertIn("create table comps_runs", sql)
         self.assertIn("create table comps_tables", sql)
-        self.assertIn("comparison_takeaway jsonb not null", sql)
+        self.assertIn("comparison_takeaway jsonb", sql)
+        self.assertNotIn("comparison_takeaway jsonb not null", sql)
         self.assertIn("create table comps_traces", sql)
         self.assertIn("create table comps_source_snapshots", sql)
         self.assertIn(
@@ -232,6 +233,27 @@ class CompsMigrationsTest(unittest.TestCase):
                 )
                 self.assertEqual(created.status_code, 200, created.text)
                 run_id = created.json()["run"]["id"]
+                comparison_takeaway = {
+                    "headline": (
+                        "AAPL trades at a discount to MSFT on EV / EBITDA."
+                    ),
+                    "interpretation": (
+                        "AAPL's EV / EBITDA is below its peer, although the "
+                        "single-company comparison limits the strength of the "
+                        "conclusion."
+                    ),
+                    "confidence": "limited",
+                }
+                finalized = client.post(
+                    f"/v1/internal/runs/{run_id}/finalize",
+                    json={"comparison_takeaway": comparison_takeaway},
+                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                )
+                self.assertEqual(finalized.status_code, 200, finalized.text)
+                self.assertEqual(
+                    finalized.json()["table"]["comparison_takeaway"],
+                    comparison_takeaway,
+                )
 
                 repeated = client.post(
                     "/v1/internal/tools/generate-comps-table",
@@ -316,8 +338,14 @@ class CompsMigrationsTest(unittest.TestCase):
                 self.assertEqual(run_readback.status_code, 200, run_readback.text)
                 self.assertEqual(table_readback.status_code, 200, table_readback.text)
                 self.assertEqual(trace_readback.status_code, 200, trace_readback.text)
-                self.assertEqual(run_readback.json()["run"], created.json()["run"])
-                self.assertEqual(table_readback.json(), created.json()["table"])
+                self.assertEqual(
+                    run_readback.json()["run"], finalized.json()["run"]
+                )
+                self.assertEqual(table_readback.json(), finalized.json()["table"])
+                self.assertEqual(
+                    table_readback.json()["comparison_takeaway"],
+                    comparison_takeaway,
+                )
                 self.assertEqual(
                     run_readback.json()["run"]["as_of"],
                     table_readback.json()["as_of"],

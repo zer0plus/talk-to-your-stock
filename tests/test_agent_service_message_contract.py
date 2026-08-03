@@ -36,7 +36,14 @@ class ConversationLlm(BaseLlm):
         yield LlmResponse(
             content=types.Content(
                 role="model",
-                parts=[types.Part(text="Conversation Response")],
+                parts=[
+                    types.Part(
+                        text=(
+                            '{"content":"Conversation Response",'
+                            '"comparison_takeaway":null}'
+                        )
+                    )
+                ],
             ),
             partial=False,
         )
@@ -122,9 +129,9 @@ class AgentServiceMessageContractTest(unittest.TestCase):
             [event.content.parts[0].text for event in session.events],
             [
                 "What is EBITDA?",
-                "Conversation Response",
+                '{"content":"Conversation Response","comparison_takeaway":null}',
                 "How is it used in valuation?",
-                "Conversation Response",
+                '{"content":"Conversation Response","comparison_takeaway":null}',
             ],
         )
 

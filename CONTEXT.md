@@ -21,7 +21,7 @@ The Google ADK-powered reasoning layer that interprets Messages and decides whet
 _Avoid_: Bot, assistant service
 
 **Fundamental Analysis Agent**:
-The only active MVP Agent. It answers stock and fundamentals questions and triggers deterministic comps generation when needed.
+The only active MVP Agent. It answers stock and fundamentals questions, triggers deterministic comps generation when needed, and authors the freeform Comparison Takeaway from the resulting Comps Table.
 _Avoid_: Stock agent, finance bot
 
 **Tool**:
@@ -45,7 +45,7 @@ A plain-language, Comps Table-backed interpretation of the Target Ticker's relat
 _Avoid_: Investment recommendation, buy/sell signal, verdict
 
 **Comparison Confidence**:
-The evidence-strength label stored with a Comparison Takeaway. It is `limited` when the selected comparison has one usable Peer Ticker Metric, `moderate` with two, and `strong` with three or more; a Takeaway with insufficient comparable valuation evidence is also `limited`.
+The Agent-authored evidence-strength label stored with a Comparison Takeaway. It is one of `limited`, `moderate`, or `strong` and reflects the completeness, consistency, and uncertainty of the table-backed comparison; it is not calculated from a fixed peer-count threshold.
 _Avoid_: Confidence score, investment conviction
 
 **Run**:
@@ -114,7 +114,7 @@ The service boundary that hosts Google ADK orchestration and the Fundamental Ana
 _Avoid_: Orchestrator service unless discussing implementation mechanics
 
 **Comps Service**:
-The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports.
+The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports. It validates an Agent-authored Comparison Takeaway against the calculated Comps Table and persists both atomically when finalizing a successful Run.
 _Avoid_: Calculation service, data service
 
 **Conversation Response**:
