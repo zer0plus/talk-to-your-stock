@@ -22,7 +22,9 @@ from talk_to_your_stock_shared import (
     MessageStatus,
     ReadinessResponse,
     Run,
+    RunListResponse,
     RunResponse,
+    RunStatus,
     RunTableResponse,
     ServiceName,
     ServiceStatus,
@@ -316,6 +318,46 @@ def list_messages(
             message="Thread not found.",
         )
     return MessageListResponse(messages=messages, page=page)
+
+
+@app.get(
+    "/v1/threads/{thread_id}/runs",
+    response_model=RunListResponse,
+    summary="List table-generation Runs in a Thread",
+    description=(
+        "Returns owned Runs newest first using deterministic created-at and Run-ID "
+        "ordering. The status filter is applied before limit and cursor pagination."
+    ),
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def list_runs(
+    thread_id: Annotated[UUID, Path()],
+    repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: Annotated[RunStatus | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    cursor: str | None = None,
+) -> RunListResponse:
+    user = repository.upsert_user(current_user)
+    runs, page = repository.list_runs(
+        thread_id=thread_id,
+        user_id=user.id,
+        status=status_filter,
+        limit=limit,
+        cursor=cursor,
+    )
+    if runs is None:
+        raise ApiException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=ErrorCode.NOT_FOUND,
+            message="Thread not found.",
+        )
+    return RunListResponse(runs=runs, page=page)
 
 
 @app.post(

@@ -99,3 +99,32 @@ def test_run_as_of_is_nullable_in_source_and_generated_contracts() -> None:
         {"type": "string", "format": "date-time"},
         {"type": "null"},
     ]
+
+
+def test_thread_run_history_contract_matches_implemented_behavior() -> None:
+    source_contract = yaml.safe_load(
+        (REPO_ROOT / "api" / "openapi.yaml").read_text()
+    )
+    source_operation = source_contract["paths"][
+        "/v1/threads/{thread_id}/runs"
+    ]["get"]
+    assert "newest first" in source_operation["description"]
+    assert [
+        parameter.get("name")
+        for parameter in source_operation["parameters"]
+        if "name" in parameter
+    ] == ["status"]
+    assert set(source_operation["responses"]) == {"200", "400", "401", "404"}
+
+    generated_contract = TestClient(app).get("/openapi.json").json()
+    generated_operation = generated_contract["paths"][
+        "/v1/threads/{thread_id}/runs"
+    ]["get"]
+    assert "newest first" in generated_operation["description"]
+    assert set(generated_operation["responses"]) == {"200", "400", "401", "404"}
+    assert generated_operation["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/RunListResponse"}
+    assert generated_contract["components"]["schemas"]["RunListResponse"][
+        "required"
+    ] == ["runs", "page"]

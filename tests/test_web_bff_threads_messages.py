@@ -5,7 +5,7 @@ import os
 import unittest
 from collections.abc import AsyncGenerator, Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Event
 from uuid import UUID, uuid4
 
@@ -163,6 +163,7 @@ class RecordingRepository:
         self.users: dict[UUID, User] = {}
         self.threads: dict[UUID, Thread] = {}
         self.messages: list[Message] = []
+        self.runs: list[Run] = []
         self.events: list[str] = []
 
     def upsert_user(self, user: User) -> User:
@@ -242,6 +243,24 @@ class RecordingRepository:
             return None, PaginationMeta(has_more=False, next_cursor=None)
         messages = [message for message in self.messages if message.thread_id == thread_id]
         return messages[:limit], PaginationMeta(has_more=False, next_cursor=None)
+
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        user_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[Run] | None, PaginationMeta]:
+        del cursor
+        if self.get_thread(thread_id=thread_id, user_id=user_id) is None:
+            return None, PaginationMeta(has_more=False, next_cursor=None)
+        runs = [run for run in self.runs if run.thread_id == thread_id]
+        if status is not None:
+            runs = [run for run in runs if run.status == status]
+        runs.sort(key=lambda run: (run.created_at, run.id), reverse=True)
+        return runs[:limit], PaginationMeta(has_more=False, next_cursor=None)
 
     def has_message(self, message_id: UUID) -> bool:
         return any(message.id == message_id for message in self.messages)
@@ -478,6 +497,111 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         fetched = client.get(f"/v1/threads/{created_thread['id']}")
         self.assertEqual(fetched.json()["thread"]["latest_run_id"], body["run"]["id"])
+
+    def test_latest_successful_run_can_be_recovered_after_a_failure(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        thread = client.post("/v1/threads", json={"title": "Comps"}).json()["thread"]
+        thread_id = UUID(thread["id"])
+        trigger_message_id = uuid4()
+        successful = _run(
+            thread_id=thread_id,
+            trigger_message_id=trigger_message_id,
+        )
+        failed = successful.model_copy(
+            update={
+                "id": uuid4(),
+                "status": RunStatus.FAILED,
+                "created_at": successful.created_at + timedelta(seconds=1),
+                "completed_at": successful.completed_at + timedelta(seconds=1),
+            }
+        )
+        repository.runs.extend([successful, failed])
+
+        response = client.get(
+            f"/v1/threads/{thread_id}/runs",
+            params={"status": "succeeded", "limit": 1},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [run["id"] for run in response.json()["runs"]],
+            [str(successful.id)],
+        )
+
+    def test_thread_run_history_is_newest_first_and_thread_scoped(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        selected_thread = client.post(
+            "/v1/threads", json={"title": "Selected"}
+        ).json()["thread"]
+        other_thread = client.post("/v1/threads", json={"title": "Other"}).json()[
+            "thread"
+        ]
+        selected_thread_id = UUID(selected_thread["id"])
+        older = _run(
+            thread_id=selected_thread_id,
+            trigger_message_id=uuid4(),
+        )
+        newer = older.model_copy(
+            update={
+                "id": uuid4(),
+                "created_at": older.created_at + timedelta(seconds=1),
+            }
+        )
+        other = _run(
+            thread_id=UUID(other_thread["id"]),
+            trigger_message_id=uuid4(),
+        )
+        repository.runs.extend([older, other, newer])
+
+        response = client.get(f"/v1/threads/{selected_thread_id}/runs")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [run["id"] for run in response.json()["runs"]],
+            [str(newer.id), str(older.id)],
+        )
+        self.assertTrue(
+            all(
+                run["thread_id"] == str(selected_thread_id)
+                for run in response.json()["runs"]
+            )
+        )
+
+    def test_unknown_or_unowned_thread_run_history_is_not_found(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        unowned_thread = Thread(
+            id=uuid4(),
+            user_id=uuid4(),
+            title="Private",
+            message_count=0,
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        repository.threads[unowned_thread.id] = unowned_thread
+
+        for thread_id in (uuid4(), unowned_thread.id):
+            with self.subTest(thread_id=thread_id):
+                response = client.get(f"/v1/threads/{thread_id}/runs")
+
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+
+    def test_thread_run_history_rejects_unknown_status(self) -> None:
+        repository = RecordingRepository()
+        client = self._client(repository=repository)
+        thread_id = client.post(
+            "/v1/threads", json={"title": "Comps"}
+        ).json()["thread"]["id"]
+
+        response = client.get(
+            f"/v1/threads/{thread_id}/runs", params={"status": "unknown"}
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "VALIDATION_ERROR")
 
     def test_owned_run_table_and_trace_are_read_through_comps_service(self) -> None:
         repository = RecordingRepository()

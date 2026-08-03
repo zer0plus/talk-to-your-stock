@@ -12,6 +12,8 @@ from talk_to_your_stock_shared import (
     MessageRole,
     MessageStatus,
     PaginationMeta,
+    Run,
+    RunStatus,
     Thread,
     User,
 )
@@ -206,6 +208,52 @@ class PostgresWebBffRepository:
         next_cursor = str(offset + limit) if has_more else None
         return messages, PaginationMeta(has_more=has_more, next_cursor=next_cursor)
 
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        user_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[Run] | None, PaginationMeta]:
+        if self.get_thread(thread_id=thread_id, user_id=user_id) is None:
+            return None, PaginationMeta(has_more=False, next_cursor=None)
+
+        page_cursor = _decode_run_cursor(cursor) if cursor is not None else None
+        filters = []
+        parameters: list[object] = [thread_id]
+        if status is not None:
+            filters.append("status = %s")
+            parameters.append(status.value)
+        if page_cursor is not None:
+            filters.append("(created_at, id) < (%s, %s)")
+            parameters.extend(page_cursor)
+        where_suffix = "" if not filters else "and " + " and ".join(filters)
+        parameters.append(limit + 1)
+
+        with self._connect() as connection:
+            with connection.cursor(row_factory=self._dict_row()) as db_cursor:
+                db_cursor.execute(
+                    f"""
+                    select id, thread_id, trigger_message_id, status,
+                        target_ticker, peer_tickers, currency, as_of, warnings,
+                        error_message, created_at, started_at, completed_at
+                    from comps_runs
+                    where thread_id = %s
+                    {where_suffix}
+                    order by created_at desc, id desc
+                    limit %s
+                    """,
+                    parameters,
+                )
+                rows = db_cursor.fetchall()
+
+        has_more = len(rows) > limit
+        runs = [Run.model_validate(row) for row in rows[:limit]]
+        next_cursor = _encode_run_cursor(runs[-1]) if has_more else None
+        return runs, PaginationMeta(has_more=has_more, next_cursor=next_cursor)
+
     def _connect(self):
         import psycopg
 
@@ -231,19 +279,39 @@ def _cursor_to_offset(cursor: str | None) -> int:
 
 
 def _encode_thread_cursor(thread: Thread) -> str:
-    value = f"{thread.updated_at.isoformat()}|{thread.id}".encode()
-    return urlsafe_b64encode(value).decode().rstrip("=")
+    return _encode_keyset_cursor(timestamp=thread.updated_at, entity_id=thread.id)
 
 
 def _decode_thread_cursor(cursor: str) -> tuple[datetime, UUID]:
+    return _decode_keyset_cursor(cursor, entity_name="Thread")
+
+
+def _encode_run_cursor(run: Run) -> str:
+    return _encode_keyset_cursor(timestamp=run.created_at, entity_id=run.id)
+
+
+def _decode_run_cursor(cursor: str) -> tuple[datetime, UUID]:
+    return _decode_keyset_cursor(cursor, entity_name="Run")
+
+
+def _encode_keyset_cursor(*, timestamp: datetime, entity_id: UUID) -> str:
+    value = f"{timestamp.isoformat()}|{entity_id}".encode()
+    return urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _decode_keyset_cursor(
+    cursor: str,
+    *,
+    entity_name: str,
+) -> tuple[datetime, UUID]:
     try:
         padding = "=" * (-len(cursor) % 4)
         value = b64decode(cursor + padding, altchars=b"-_", validate=True).decode()
-        updated_at_value, thread_id_value = value.split("|", maxsplit=1)
-        updated_at = datetime.fromisoformat(updated_at_value)
-        thread_id = UUID(thread_id_value)
+        timestamp_value, entity_id_value = value.split("|", maxsplit=1)
+        timestamp = datetime.fromisoformat(timestamp_value)
+        entity_id = UUID(entity_id_value)
     except (Base64Error, UnicodeDecodeError, ValueError) as exc:
-        raise InvalidCursorError("Thread cursor is invalid.") from exc
-    if updated_at.tzinfo is None:
-        raise InvalidCursorError("Thread cursor is invalid.")
-    return updated_at, thread_id
+        raise InvalidCursorError(f"{entity_name} cursor is invalid.") from exc
+    if timestamp.tzinfo is None:
+        raise InvalidCursorError(f"{entity_name} cursor is invalid.")
+    return timestamp, entity_id

@@ -137,6 +137,11 @@ class RunResponse(ContractModel):
     run: Run
 
 
+class RunListResponse(ContractModel):
+    runs: list[Run]
+    page: PaginationMeta
+
+
 class CompsRow(ContractModel):
     ticker: Ticker
     company_name: str | None = None

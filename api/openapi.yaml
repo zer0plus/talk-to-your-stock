@@ -259,6 +259,9 @@ paths:
     get:
       tags: [Runs]
       summary: List table-generation runs in a thread
+      description: |
+        Returns owned Runs newest first using deterministic created-at and Run-ID
+        ordering. The status filter is applied before limit and cursor pagination.
       parameters:
         - $ref: '#/components/parameters/ThreadIdParam'
         - $ref: '#/components/parameters/LimitParam'
@@ -283,6 +286,8 @@ paths:
                       $ref: '#/components/schemas/Run'
                   page:
                     $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

@@ -4,8 +4,10 @@ import os
 import subprocess
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
@@ -181,6 +183,97 @@ class WebBffMigrationsTest(unittest.TestCase):
                             "VALIDATION_ERROR",
                         )
             finally:
+                command.downgrade(migration_config, "base")
+
+    @unittest.skipUnless(
+        os.environ.get("WEB_BFF_MIGRATION_TEST_DATABASE_URL"),
+        "WEB_BFF_MIGRATION_TEST_DATABASE_URL is required for PostgreSQL integration.",
+    )
+    def test_migrated_database_supports_latest_successful_run_history(self) -> None:
+        import psycopg
+
+        database_url = os.environ["WEB_BFF_MIGRATION_TEST_DATABASE_URL"]
+        migration_config = Config(str(REPO_ROOT / "alembic.ini"))
+        env = {
+            "DATABASE_URL": database_url,
+            "TALK_TO_YOUR_STOCK_ENV": "test",
+            "DEV_AUTH_USER_ID": "00000000-0000-0000-0000-000000000001",
+            "DEV_AUTH_EMAIL": "dev@example.com",
+            "AGENT_SERVICE_URL": "http://agent-service.test",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            command.upgrade(migration_config, "head")
+            try:
+                app.dependency_overrides[get_agent_client] = StubAgentClient
+                client = TestClient(app)
+                thread_id = client.post(
+                    "/v1/threads", json={"title": "Run history"}
+                ).json()["thread"]["id"]
+                trigger_message_id = client.post(
+                    f"/v1/threads/{thread_id}/messages",
+                    json={"content": "Compare AAPL with MSFT"},
+                ).json()["user_message"]["id"]
+                created_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
+                successful_run_id = uuid4()
+                failed_run_id = uuid4()
+
+                with psycopg.connect(database_url) as connection:
+                    with connection.cursor() as cursor:
+                        for run_id, run_status, run_created_at in (
+                            (successful_run_id, "succeeded", created_at),
+                            (
+                                failed_run_id,
+                                "failed",
+                                created_at + timedelta(seconds=1),
+                            ),
+                        ):
+                            cursor.execute(
+                                """
+                                insert into comps_runs (
+                                    id, invocation_id, thread_id,
+                                    trigger_message_id, status, target_ticker,
+                                    peer_tickers, currency, as_of, warnings,
+                                    error_message, created_at, started_at,
+                                    completed_at
+                                )
+                                values (
+                                    %s, %s, %s, %s, %s, 'AAPL',
+                                    array['MSFT'], 'USD', %s, '[]'::jsonb,
+                                    null, %s, %s, %s
+                                )
+                                """,
+                                (
+                                    run_id,
+                                    uuid4(),
+                                    thread_id,
+                                    trigger_message_id,
+                                    run_status,
+                                    run_created_at,
+                                    run_created_at,
+                                    run_created_at,
+                                    run_created_at,
+                                ),
+                            )
+
+                history = client.get(f"/v1/threads/{thread_id}/runs")
+                latest_successful = client.get(
+                    f"/v1/threads/{thread_id}/runs",
+                    params={"status": "succeeded", "limit": 1},
+                )
+
+                self.assertEqual(history.status_code, 200, history.text)
+                self.assertEqual(
+                    [run["id"] for run in history.json()["runs"]],
+                    [str(failed_run_id), str(successful_run_id)],
+                )
+                self.assertEqual(latest_successful.status_code, 200)
+                self.assertEqual(
+                    [run["id"] for run in latest_successful.json()["runs"]],
+                    [str(successful_run_id)],
+                )
+            finally:
+                app.dependency_overrides.clear()
                 command.downgrade(migration_config, "base")
 
 
