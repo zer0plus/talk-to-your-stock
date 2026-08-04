@@ -225,7 +225,6 @@ class AgentCompsRoutingTest(unittest.TestCase):
                 "fundamental_analysis_agent",
                 "fundamental_analysis_agent",
                 "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
             ],
         )
         tool_call = session.events[1].content.parts[0].function_call
@@ -234,6 +233,10 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(tool_call.args["target_ticker"], "AAPL")
         self.assertEqual(tool_result.name, "generate_comps_table")
         self.assertEqual(tool_result.response["run"]["id"], str(tool_response.run.id))
+        self.assertEqual(
+            json.loads(session.events[-1].content.parts[0].text)["content"],
+            "AAPL trades below its peers on EV / EBITDA.",
+        )
 
     def test_multiple_tool_calls_in_one_model_response_create_one_run(self) -> None:
         user_id = uuid4()

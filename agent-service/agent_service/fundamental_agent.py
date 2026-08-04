@@ -260,17 +260,6 @@ class FundamentalAnalysisAgent:
                 str(request.user_message_id)
             ].run_is_terminal = True
             content = agent_output.content
-            session = await session_context.get_session(
-                user_id=request.user_id,
-                thread_id=request.thread_id,
-            )
-            if session is None:
-                raise AgentRoutingUnavailable("Agent session unavailable.")
-            await session_context.complete_turn(
-                session=session,
-                user_message_id=request.user_message_id,
-                assistant_content=content,
-            )
             return AgentMessageResponse(
                 content=content,
                 run=finalized.run,
