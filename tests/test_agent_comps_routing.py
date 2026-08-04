@@ -205,6 +205,12 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(request.peer_selection_mode.value, "user_supplied")
         self.assertEqual(request.analysis_period.value, "latest")
         self.assertEqual(len(model.responses), 0)
+        self.assertEqual(len(model.requests), 2)
+        for model_request in model.requests:
+            self.assertEqual(
+                set(model_request.tools_dict),
+                {"generate_comps_table", "set_model_response"},
+            )
         self.assertEqual(len(comps_client.finalize_requests), 1)
         finalized_takeaway = comps_client.finalize_requests[0][
             1
@@ -225,14 +231,22 @@ class AgentCompsRoutingTest(unittest.TestCase):
                 "fundamental_analysis_agent",
                 "fundamental_analysis_agent",
                 "fundamental_analysis_agent",
+                "fundamental_analysis_agent",
+                "fundamental_analysis_agent",
             ],
         )
         tool_call = session.events[1].content.parts[0].function_call
         tool_result = session.events[2].content.parts[0].function_response
+        structured_response_call = session.events[3].content.parts[0].function_call
+        structured_response_result = (
+            session.events[4].content.parts[0].function_response
+        )
         self.assertEqual(tool_call.name, "generate_comps_table")
         self.assertEqual(tool_call.args["target_ticker"], "AAPL")
         self.assertEqual(tool_result.name, "generate_comps_table")
         self.assertEqual(tool_result.response["run"]["id"], str(tool_response.run.id))
+        self.assertEqual(structured_response_call.name, "set_model_response")
+        self.assertEqual(structured_response_result.name, "set_model_response")
         self.assertEqual(
             json.loads(session.events[-1].content.parts[0].text)["content"],
             "AAPL trades below its peers on EV / EBITDA.",
@@ -419,7 +433,10 @@ class AgentCompsRoutingTest(unittest.TestCase):
             part.function_response.response
             for event in session.events
             for part in event.content.parts
-            if part.function_response is not None
+            if (
+                part.function_response is not None
+                and part.function_response.name == "generate_comps_table"
+            )
         ]
         self.assertEqual(len(tool_results), 2)
         self.assertEqual(tool_results[0]["error"]["code"], "VALIDATION_ERROR")
@@ -558,7 +575,10 @@ class AgentCompsRoutingTest(unittest.TestCase):
             part.function_response.response
             for event in session.events
             for part in event.content.parts
-            if part.function_response is not None
+            if (
+                part.function_response is not None
+                and part.function_response.name == "generate_comps_table"
+            )
         ]
         self.assertEqual(len(tool_results), 2)
         self.assertEqual(tool_results[0]["error"]["code"], "VALIDATION_ERROR")
@@ -801,24 +821,23 @@ def _agent_output(content: str) -> types.Content:
     return types.Content(
         role="model",
         parts=[
-            types.Part(
-                text=json.dumps(
-                    {
-                        "content": content,
-                        "comparison_takeaway": {
-                            "headline": (
-                                "AAPL trades at a discount to its peers on "
-                                "EV / EBITDA."
-                            ),
-                            "interpretation": (
-                                "AAPL's EV / EBITDA is below the peer median, "
-                                "while the available table evidence supports a "
-                                "moderate-confidence comparison."
-                            ),
-                            "confidence": "moderate",
-                        },
-                    }
-                )
+            types.Part.from_function_call(
+                name="set_model_response",
+                args={
+                    "content": content,
+                    "comparison_takeaway": {
+                        "headline": (
+                            "AAPL trades at a discount to its peers on "
+                            "EV / EBITDA."
+                        ),
+                        "interpretation": (
+                            "AAPL's EV / EBITDA is below the peer median, "
+                            "while the available table evidence supports a "
+                            "moderate-confidence comparison."
+                        ),
+                        "confidence": "moderate",
+                    },
+                },
             )
         ],
     )
