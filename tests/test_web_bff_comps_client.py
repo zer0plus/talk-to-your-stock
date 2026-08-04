@@ -8,7 +8,9 @@ from fastapi import FastAPI
 
 from talk_to_your_stock_shared import (
     MinMedianMax,
+    PaginationMeta,
     Run,
+    RunListResponse,
     RunResponse,
     RunStatus,
     RunTableResponse,
@@ -16,7 +18,11 @@ from talk_to_your_stock_shared import (
 )
 from talk_to_your_stock_shared.schemas import RunTableSummary, RunTableSummaryStats
 from tests.live_service import running_service
-from web_bff.comps_client import CompsServiceUnavailable, HttpCompsClient
+from web_bff.comps_client import (
+    CompsRequestInvalid,
+    CompsServiceUnavailable,
+    HttpCompsClient,
+)
 
 
 class WebBffCompsClientTest(unittest.TestCase):
@@ -40,12 +46,37 @@ class WebBffCompsClientTest(unittest.TestCase):
             self.assertEqual(requested_run_id, str(run_id))
             return trace
 
+        @comps_app.get("/v1/threads/{requested_thread_id}/runs")
+        def list_runs(
+            requested_thread_id: str,
+            status: str | None = None,
+            limit: int = 20,
+            cursor: str | None = None,
+        ) -> RunListResponse:
+            self.assertEqual(requested_thread_id, str(run.thread_id))
+            self.assertEqual(status, "succeeded")
+            self.assertEqual(limit, 1)
+            self.assertIsNone(cursor)
+            return RunListResponse(
+                runs=[run],
+                page=PaginationMeta(has_more=False, next_cursor=None),
+            )
+
         with running_service(comps_app) as base_url:
             client = HttpCompsClient(base_url=base_url)
 
             self.assertEqual(client.get_run(run_id), run)
             self.assertEqual(client.get_table(run_id), table)
             self.assertEqual(client.get_trace(run_id), trace)
+            self.assertEqual(
+                client.list_runs(
+                    thread_id=run.thread_id,
+                    status=RunStatus.SUCCEEDED,
+                    limit=1,
+                    cursor=None,
+                ).runs,
+                [run],
+            )
 
     def test_rejects_artifacts_for_a_different_run(self) -> None:
         requested_run_id = uuid4()
@@ -74,6 +105,64 @@ class WebBffCompsClientTest(unittest.TestCase):
                         "mismatched Run linkage",
                     ):
                         read(requested_run_id)
+
+    def test_preserves_invalid_run_history_cursor_as_a_request_error(self) -> None:
+        thread_id = uuid4()
+        comps_app = FastAPI()
+
+        @comps_app.get("/v1/threads/{_thread_id}/runs")
+        def list_runs(_thread_id: str):
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "Run cursor is invalid.",
+                    }
+                },
+            )
+
+        with running_service(comps_app) as base_url:
+            client = HttpCompsClient(base_url=base_url)
+
+            with self.assertRaisesRegex(
+                CompsRequestInvalid,
+                "Run cursor is invalid",
+            ):
+                client.list_runs(
+                    thread_id=thread_id,
+                    status=None,
+                    limit=20,
+                    cursor="bad",
+                )
+
+    def test_rejects_run_history_for_a_different_thread(self) -> None:
+        requested_thread_id = uuid4()
+        run, _, _ = _artifacts(uuid4())
+        comps_app = FastAPI()
+
+        @comps_app.get("/v1/threads/{_thread_id}/runs")
+        def list_runs(_thread_id: str) -> RunListResponse:
+            return RunListResponse(
+                runs=[run],
+                page=PaginationMeta(has_more=False, next_cursor=None),
+            )
+
+        with running_service(comps_app) as base_url:
+            client = HttpCompsClient(base_url=base_url)
+
+            with self.assertRaisesRegex(
+                CompsServiceUnavailable,
+                "mismatched Thread Run linkage",
+            ):
+                client.list_runs(
+                    thread_id=requested_thread_id,
+                    status=None,
+                    limit=20,
+                    cursor=None,
+                )
 
 
 def _artifacts(

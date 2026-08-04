@@ -35,6 +35,7 @@ from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.run_service import LoadedCompanyData
 from talk_to_your_stock_shared import (
     GenerateCompsDraftResponse,
+    PaginationMeta,
     Run,
     RunStatus,
     RunTableDraftResponse,
@@ -163,6 +164,21 @@ class InMemoryCompsRepository:
             warnings=run.warnings,
         )
 
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[Run], PaginationMeta]:
+        del cursor
+        runs = [run for run in self.runs.values() if run.thread_id == thread_id]
+        if status is not None:
+            runs = [run for run in runs if run.status == status]
+        runs.sort(key=lambda run: (run.created_at, run.id), reverse=True)
+        return runs[:limit], PaginationMeta(has_more=False, next_cursor=None)
+
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
 
@@ -273,6 +289,10 @@ class CanonicalBackendPathTest(unittest.TestCase):
                     run = client.get(f"/v1/runs/{run_id}")
                     table = client.get(f"/v1/runs/{run_id}/table")
                     trace = client.get(f"/v1/runs/{run_id}/trace")
+                    history = client.get(
+                        f"/v1/threads/{thread['id']}/runs",
+                        params={"status": "succeeded", "limit": 1},
+                    )
 
         self.assertEqual(run.status_code, 200, run.text)
         self.assertEqual(run.json()["run"]["id"], run_id)
@@ -295,6 +315,11 @@ class CanonicalBackendPathTest(unittest.TestCase):
         )
         self.assertEqual(trace.status_code, 200, trace.text)
         self.assertEqual(trace.json()["run_id"], run_id)
+        self.assertEqual(history.status_code, 200, history.text)
+        self.assertEqual(
+            [run["id"] for run in history.json()["runs"]],
+            [run_id],
+        )
         self.assertEqual(len(web_repository.messages), 2)
         self.assertIn(UUID(run_id), comps_repository.runs)
 

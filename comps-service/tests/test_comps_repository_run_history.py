@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import unittest
+from datetime import UTC, datetime
+from unittest.mock import patch
+from uuid import UUID, uuid4
+
+from comps_service.repository import InvalidRunCursor, PostgresCompsRunRepository
+from talk_to_your_stock_shared import Run, RunStatus
+
+
+class RecordingCursor:
+    def __init__(self, *, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+        self.statement = ""
+        self.parameters: object = None
+
+    def __enter__(self) -> RecordingCursor:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute(self, statement: str, parameters: object = None) -> None:
+        self.statement = " ".join(statement.lower().split())
+        self.parameters = parameters
+
+    def fetchall(self) -> list[dict[str, object]]:
+        return self.rows
+
+
+class RecordingConnection:
+    def __init__(self, cursor: RecordingCursor) -> None:
+        self.cursor_value = cursor
+
+    def __enter__(self) -> RecordingConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def cursor(self, **_kwargs: object) -> RecordingCursor:
+        return self.cursor_value
+
+
+class CompsRepositoryRunHistoryTest(unittest.TestCase):
+    def test_status_filtered_pages_use_deterministic_newest_first_order(self) -> None:
+        created_at = datetime(2026, 8, 3, tzinfo=UTC)
+        thread_id = uuid4()
+        runs = [
+            _run(run_id=run_id, thread_id=thread_id, created_at=created_at)
+            for run_id in sorted([uuid4(), uuid4(), uuid4()], reverse=True)
+        ]
+        first_cursor = RecordingCursor(
+            rows=[run.model_dump() for run in runs]
+        )
+        second_cursor = RecordingCursor(rows=[runs[2].model_dump()])
+        repository = PostgresCompsRunRepository(database_url="postgresql://test")
+
+        with (
+            patch.object(
+                repository,
+                "_connect",
+                side_effect=[
+                    RecordingConnection(first_cursor),
+                    RecordingConnection(second_cursor),
+                ],
+            ),
+            patch.object(repository, "_dict_row", return_value=None),
+        ):
+            first_page, first_meta = repository.list_runs(
+                thread_id=thread_id,
+                status=RunStatus.SUCCEEDED,
+                limit=2,
+                cursor=None,
+            )
+            second_page, second_meta = repository.list_runs(
+                thread_id=thread_id,
+                status=RunStatus.SUCCEEDED,
+                limit=2,
+                cursor=first_meta.next_cursor,
+            )
+
+        self.assertEqual([run.id for run in first_page], [runs[0].id, runs[1].id])
+        self.assertTrue(first_meta.has_more)
+        self.assertEqual([run.id for run in second_page], [runs[2].id])
+        self.assertFalse(second_meta.has_more)
+        self.assertIn("status = %s", first_cursor.statement)
+        self.assertIn("order by created_at desc, id desc", first_cursor.statement)
+        self.assertEqual(
+            second_cursor.parameters,
+            [
+                thread_id,
+                RunStatus.SUCCEEDED.value,
+                created_at,
+                runs[1].id,
+                3,
+            ],
+        )
+
+    def test_invalid_cursor_is_rejected_before_database_access(self) -> None:
+        repository = PostgresCompsRunRepository(database_url="postgresql://test")
+
+        with (
+            patch.object(repository, "_connect") as connect,
+            self.assertRaisesRegex(InvalidRunCursor, "Run cursor is invalid"),
+        ):
+            repository.list_runs(
+                thread_id=uuid4(),
+                status=None,
+                limit=20,
+                cursor="not-a-cursor",
+            )
+
+        connect.assert_not_called()
+
+
+def _run(*, run_id: UUID, thread_id: UUID, created_at: datetime) -> Run:
+    return Run(
+        id=run_id,
+        thread_id=thread_id,
+        trigger_message_id=uuid4(),
+        status=RunStatus.SUCCEEDED,
+        target_ticker="AAPL",
+        peer_tickers=["MSFT"],
+        currency="USD",
+        as_of=created_at,
+        created_at=created_at,
+    )
+
+
+if __name__ == "__main__":
+    unittest.main()

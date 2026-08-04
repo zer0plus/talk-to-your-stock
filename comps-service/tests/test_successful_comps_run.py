@@ -27,6 +27,7 @@ from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
 from comps_service.tool_validation import AlphaVantageTickerValidator
 from talk_to_your_stock_shared import (
     GenerateCompsDraftResponse,
+    PaginationMeta,
     Run,
     RunStatus,
     RunTableDraftResponse,
@@ -202,6 +203,21 @@ class InMemoryCompsRunRepository:
             trace=self.traces[run_id],
             warnings=run.warnings,
         )
+
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[Run], PaginationMeta]:
+        del cursor
+        runs = [run for run in self.runs.values() if run.thread_id == thread_id]
+        if status is not None:
+            runs = [run for run in runs if run.status == status]
+        runs.sort(key=lambda run: (run.created_at, run.id), reverse=True)
+        return runs[:limit], PaginationMeta(has_more=False, next_cursor=None)
 
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         return self.tables.get(run_id)
@@ -526,6 +542,15 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             {"AAPL", "MSFT"},
         )
         self.assertEqual(client.get(f"/v1/runs/{run_id}/trace").status_code, 200)
+        history = client.get(
+            f"/v1/threads/{body['run']['thread_id']}/runs",
+            params={"status": "succeeded", "limit": 1},
+        )
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(
+            [run["id"] for run in history.json()["runs"]],
+            [str(run_id)],
+        )
         snapshot = self.repository.get_source_snapshot(run_id)
         self.assertIsNotNone(snapshot)
         assert snapshot is not None

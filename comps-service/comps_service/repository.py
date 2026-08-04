@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import logging
 import os
+from base64 import b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from collections.abc import Mapping
+from datetime import datetime
 from typing import NoReturn
 from uuid import UUID
 
 from talk_to_your_stock_shared import (
     GenerateCompsDraftResponse,
+    PaginationMeta,
     Run,
+    RunStatus,
     RunTableDraftResponse,
     RunTableResponse,
     TraceResponse,
@@ -30,6 +35,10 @@ class CompsPersistenceUnavailable(RuntimeError):
 
 
 class InvalidRunLinkage(ValueError):
+    pass
+
+
+class InvalidRunCursor(ValueError):
     pass
 
 
@@ -263,6 +272,51 @@ class PostgresCompsRunRepository:
             warnings=run.warnings,
         )
 
+    def list_runs(
+        self,
+        *,
+        thread_id: UUID,
+        status: RunStatus | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[Run], PaginationMeta]:
+        page_cursor = _decode_run_cursor(cursor) if cursor is not None else None
+        filters = []
+        parameters: list[object] = [thread_id]
+        if status is not None:
+            filters.append("status = %s")
+            parameters.append(status.value)
+        if page_cursor is not None:
+            filters.append("(created_at, id) < (%s, %s)")
+            parameters.extend(page_cursor)
+        where_suffix = "" if not filters else "and " + " and ".join(filters)
+        parameters.append(limit + 1)
+
+        try:
+            with self._connect() as connection:
+                with connection.cursor(row_factory=self._dict_row()) as db_cursor:
+                    db_cursor.execute(
+                        f"""
+                        select id, thread_id, trigger_message_id, status,
+                            target_ticker, peer_tickers, currency, as_of, warnings,
+                            error_message, created_at, started_at, completed_at
+                        from comps_runs
+                        where thread_id = %s
+                        {where_suffix}
+                        order by created_at desc, id desc
+                        limit %s
+                        """,
+                        parameters,
+                    )
+                    rows = db_cursor.fetchall()
+        except Exception as exc:
+            self._raise_unavailable(exc)
+
+        has_more = len(rows) > limit
+        runs = [Run.model_validate(row) for row in rows[:limit]]
+        next_cursor = _encode_run_cursor(runs[-1]) if has_more else None
+        return runs, PaginationMeta(has_more=has_more, next_cursor=next_cursor)
+
     def get_table(self, run_id: UUID) -> RunTableResponse | None:
         try:
             with self._connect() as connection:
@@ -452,3 +506,22 @@ class PostgresCompsRunRepository:
         raise CompsPersistenceUnavailable(
             "Comps persistence is unavailable."
         ) from exc
+
+
+def _encode_run_cursor(run: Run) -> str:
+    value = f"{run.created_at.isoformat()}|{run.id}".encode()
+    return urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _decode_run_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        value = b64decode(cursor + padding, altchars=b"-_", validate=True).decode()
+        created_at_value, run_id_value = value.split("|", maxsplit=1)
+        created_at = datetime.fromisoformat(created_at_value)
+        run_id = UUID(run_id_value)
+    except (Base64Error, UnicodeDecodeError, ValueError) as exc:
+        raise InvalidRunCursor("Run cursor is invalid.") from exc
+    if created_at.tzinfo is None:
+        raise InvalidRunCursor("Run cursor is invalid.")
+    return created_at, run_id
