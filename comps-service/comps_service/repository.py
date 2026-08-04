@@ -244,12 +244,41 @@ class PostgresCompsRunRepository:
     ) -> GenerateCompsDraftResponse | None:
         try:
             with self._connect() as connection:
-                with connection.cursor() as cursor:
+                with connection.cursor(row_factory=self._dict_row()) as cursor:
                     cursor.execute(
                         """
-                        select id
-                        from comps_runs
-                        where invocation_id = %s and status = %s
+                        select
+                            jsonb_build_object(
+                                'id', runs.id,
+                                'thread_id', runs.thread_id,
+                                'trigger_message_id', runs.trigger_message_id,
+                                'status', runs.status,
+                                'target_ticker', runs.target_ticker,
+                                'peer_tickers', runs.peer_tickers,
+                                'currency', runs.currency,
+                                'as_of', runs.as_of,
+                                'warnings', runs.warnings,
+                                'error_message', runs.error_message,
+                                'created_at', runs.created_at,
+                                'started_at', runs.started_at,
+                                'completed_at', runs.completed_at
+                            ) as run,
+                            jsonb_build_object(
+                                'run_id', tables.run_id,
+                                'target_ticker', tables.target_ticker,
+                                'currency', tables.currency,
+                                'as_of', tables.as_of,
+                                'rows', tables.rows,
+                                'summary', tables.summary
+                            ) as table,
+                            jsonb_build_object(
+                                'run_id', traces.run_id,
+                                'formulas', traces.formulas
+                            ) as trace
+                        from comps_runs as runs
+                        join comps_tables as tables on tables.run_id = runs.id
+                        join comps_traces as traces on traces.run_id = runs.id
+                        where runs.invocation_id = %s and runs.status = %s
                         """,
                         (invocation_id, "running"),
                     )
@@ -258,13 +287,9 @@ class PostgresCompsRunRepository:
             self._raise_unavailable(exc)
         if row is None:
             return None
-
-        run_id = row[0]
-        run = self.get_run(run_id)
-        table = self.get_draft_table(run_id)
-        trace = self.get_trace(run_id)
-        if run is None or table is None or trace is None:
-            return None
+        run = Run.model_validate(row["run"])
+        table = RunTableDraftResponse.model_validate(row["table"])
+        trace = TraceResponse.model_validate(row["trace"])
         return GenerateCompsDraftResponse(
             run=run,
             table=table,

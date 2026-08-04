@@ -233,6 +233,13 @@ class CompsMigrationsTest(unittest.TestCase):
                 )
                 self.assertEqual(created.status_code, 200, created.text)
                 run_id = created.json()["run"]["id"]
+                recovered = client.post(
+                    "/v1/internal/tools/generate-comps-table",
+                    json=generate_request,
+                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                )
+                self.assertEqual(recovered.status_code, 200, recovered.text)
+                self.assertEqual(recovered.json(), created.json())
                 comparison_takeaway = {
                     "headline": (
                         "AAPL trades at a discount to MSFT on EV / EBITDA."

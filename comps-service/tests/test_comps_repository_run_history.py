@@ -10,8 +10,14 @@ from talk_to_your_stock_shared import Run, RunStatus
 
 
 class RecordingCursor:
-    def __init__(self, *, rows: list[dict[str, object]]) -> None:
+    def __init__(
+        self,
+        *,
+        rows: list[dict[str, object]],
+        single_rows: list[object] | None = None,
+    ) -> None:
         self.rows = rows
+        self.single_rows = iter(single_rows or [])
         self.statement = ""
         self.parameters: object = None
 
@@ -27,6 +33,9 @@ class RecordingCursor:
 
     def fetchall(self) -> list[dict[str, object]]:
         return self.rows
+
+    def fetchone(self) -> object | None:
+        return next(self.single_rows)
 
 
 class RecordingConnection:
@@ -44,6 +53,65 @@ class RecordingConnection:
 
 
 class CompsRepositoryRunHistoryTest(unittest.TestCase):
+    def test_recovery_does_not_return_a_run_that_became_terminal(self) -> None:
+        run_id = uuid4()
+        invocation_id = uuid4()
+        created_at = datetime(2026, 8, 3, tzinfo=UTC)
+        terminal_run = _run(
+            run_id=run_id,
+            thread_id=uuid4(),
+            created_at=created_at,
+        )
+        running_run = terminal_run.model_copy(update={"status": RunStatus.RUNNING})
+        draft_table = {
+            "run_id": run_id,
+            "target_ticker": "AAPL",
+            "currency": "USD",
+            "as_of": created_at,
+            "rows": [],
+            "summary": {
+                "stats": {
+                    metric: {"min": None, "median": None, "max": None}
+                    for metric in (
+                        "ev_to_revenue",
+                        "ev_to_ebit",
+                        "ev_to_ebitda",
+                        "pe",
+                    )
+                }
+            },
+        }
+        trace = {"run_id": run_id, "formulas": []}
+        cursor = RecordingCursor(
+            rows=[],
+            single_rows=[
+                {
+                    0: run_id,
+                    "run": running_run.model_dump(),
+                    "table": draft_table,
+                    "trace": trace,
+                },
+                terminal_run.model_dump(),
+                draft_table,
+                trace,
+            ],
+        )
+        repository = PostgresCompsRunRepository(database_url="postgresql://test")
+
+        with (
+            patch.object(
+                repository,
+                "_connect",
+                return_value=RecordingConnection(cursor),
+            ),
+            patch.object(repository, "_dict_row", return_value=None),
+        ):
+            recovered = repository.get_calculated_run_by_invocation(invocation_id)
+
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        self.assertEqual(recovered.run.status, RunStatus.RUNNING)
+
     def test_status_filtered_pages_use_deterministic_newest_first_order(self) -> None:
         created_at = datetime(2026, 8, 3, tzinfo=UTC)
         thread_id = uuid4()
