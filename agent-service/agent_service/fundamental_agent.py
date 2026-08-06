@@ -250,9 +250,26 @@ class FundamentalAnalysisAgent:
                     ),
                 )
             except CompsToolError as exc:
+                run = calculated_tool_response.run
+                error = exc.error.error
                 raise AgentToolError(
                     status_code=exc.status_code,
-                    error=exc.error,
+                    error=exc.error.model_copy(
+                        update={
+                            "error": error.model_copy(
+                                update={
+                                    "details": {
+                                        **(error.details or {}),
+                                        "thread_id": str(run.thread_id),
+                                        "trigger_message_id": str(
+                                            run.trigger_message_id
+                                        ),
+                                    },
+                                    "run_id": run.id,
+                                }
+                            )
+                        }
+                    ),
                 ) from None
             except CompsToolUnavailable as exc:
                 raise AgentRoutingUnavailable(str(exc)) from exc

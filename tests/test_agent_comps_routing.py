@@ -349,6 +349,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
                 error=ErrorDetail(
                     code=ErrorCode.INTERNAL_ERROR,
                     message="Comps finalization unavailable.",
+                    details={"dependency": "database"},
                 )
             ),
         )
@@ -370,6 +371,22 @@ class AgentCompsRoutingTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(
+            response.json()["error"],
+            {
+                "code": "INTERNAL_ERROR",
+                "message": "Comps finalization unavailable.",
+                "details": {
+                    "dependency": "database",
+                    "thread_id": str(tool_response.run.thread_id),
+                    "trigger_message_id": str(
+                        tool_response.run.trigger_message_id
+                    ),
+                },
+                "run_id": str(tool_response.run.id),
+                "request_id": None,
+            },
+        )
         self.assertEqual(len(comps_client.fail_requests), 1)
         self.assertEqual(comps_client.fail_requests[0][0], tool_response.run.id)
 
