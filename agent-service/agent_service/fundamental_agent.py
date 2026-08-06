@@ -310,7 +310,11 @@ class FundamentalAnalysisAgent:
                 return {
                     "error": {
                         "code": "CONFLICT",
-                        "message": "The Comps Tool invocation limit was reached.",
+                        "message": (
+                            "A Comps Table was already calculated for this Message. "
+                            "Use the existing Tool result to write the Comparison "
+                            "Takeaway."
+                        ),
                     },
                     "retry_allowed": False,
                 }
@@ -408,6 +412,8 @@ def _is_terminal_validation_error(event: Any) -> bool:
             function_response is not None
             and function_response.name == "generate_comps_table"
             and function_response.response.get("retry_allowed") is False
+            and function_response.response.get("error", {}).get("code")
+            == "VALIDATION_ERROR"
         ):
             return True
     return False

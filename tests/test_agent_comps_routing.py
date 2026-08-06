@@ -297,6 +297,64 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
         self.assertEqual(len(comps_client.requests), 1)
 
+    def test_later_duplicate_tool_call_preserves_the_calculated_run(self) -> None:
+        user_id = uuid4()
+        thread_id = uuid4()
+        user_message_id = uuid4()
+        tool_response = _successful_tool_response(
+            thread_id=thread_id,
+            trigger_message_id=user_message_id,
+        )
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                _agent_output("AAPL trades below MSFT on EV / EBITDA."),
+            ],
+        )
+        comps_client = RecordingCompsClient(tool_response)
+        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(user_id),
+                "thread_id": str(thread_id),
+                "user_message_id": str(user_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
+        self.assertEqual(len(comps_client.requests), 1)
+        self.assertEqual(len(comps_client.finalize_requests), 1)
+        self.assertEqual(comps_client.fail_requests, [])
+
+        session = asyncio.run(
+            self.session_context.get_session(user_id=user_id, thread_id=thread_id)
+        )
+        assert session is not None
+        tool_results = [
+            part.function_response.response
+            for event in session.events
+            for part in event.content.parts
+            if (
+                part.function_response is not None
+                and part.function_response.name == "generate_comps_table"
+            )
+        ]
+        self.assertEqual(tool_results[1]["error"]["code"], "CONFLICT")
+        self.assertEqual(
+            tool_results[1]["error"]["message"],
+            (
+                "A Comps Table was already calculated for this Message. "
+                "Use the existing Tool result to write the Comparison Takeaway."
+            ),
+        )
+
     def test_invalid_model_output_fails_the_calculated_run(self) -> None:
         tool_response = _successful_tool_response(
             thread_id=uuid4(),
