@@ -92,6 +92,7 @@ class LoseFirstFinalizeResponse:
 
 class CanonicalCompsLlm(BaseLlm):
     call_count: int = 0
+    final_response: str | None = None
 
     async def generate_content_async(
         self,
@@ -106,7 +107,8 @@ class CanonicalCompsLlm(BaseLlm):
                     role="model",
                     parts=[
                         types.Part(
-                            text=json.dumps(
+                            text=self.final_response
+                            or json.dumps(
                                 {
                                     "content": (
                                         "AAPL trades below its peers on "
@@ -364,6 +366,95 @@ class CanonicalBackendPathTest(unittest.TestCase):
         self.assertEqual(len(web_repository.messages), 2)
         self.assertIn(UUID(run_id), comps_repository.runs)
         self.assertEqual(lost_finalize_app.finalize_attempts, 2)
+
+    def test_agent_output_failure_is_visible_and_linked_to_the_thread(self) -> None:
+        comps_repository = InMemoryCompsRepository()
+        company_data_source = Mock()
+        company_data_source.load.return_value = _loaded_company_data()
+        ticker_validator = Mock()
+        ticker_validator.is_supported.return_value = True
+        comps_app.dependency_overrides[get_comps_repository] = (
+            lambda: comps_repository
+        )
+        comps_app.dependency_overrides[get_company_data_source] = (
+            lambda: company_data_source
+        )
+        comps_app.dependency_overrides[get_ticker_validator] = (
+            lambda: ticker_validator
+        )
+
+        session_context = AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=InMemorySessionService(),
+        )
+        agent_app.dependency_overrides[get_session_context] = (
+            lambda: session_context
+        )
+        web_repository = RecordingRepository()
+        web_bff_app.dependency_overrides[get_web_repository] = (
+            lambda: web_repository
+        )
+
+        with running_service(comps_app) as comps_service_url:
+            fundamental_agent = FundamentalAnalysisAgent(
+                model=CanonicalCompsLlm(
+                    model="canonical-comps",
+                    final_response="{",
+                ),
+                comps_client=HttpCompsToolClient(
+                    base_url=comps_service_url,
+                    internal_token=INTERNAL_TOKEN,
+                ),
+            )
+            agent_app.dependency_overrides[get_fundamental_agent] = (
+                lambda: fundamental_agent
+            )
+            with running_service(agent_app) as agent_service_url:
+                env = {
+                    "TALK_TO_YOUR_STOCK_ENV": "local",
+                    "DATABASE_URL": "postgresql://unused-by-test",
+                    "DEV_AUTH_USER_ID": LOCAL_USER_ID,
+                    "DEV_AUTH_EMAIL": "dev@example.com",
+                    "AGENT_SERVICE_URL": agent_service_url,
+                    "COMPS_SERVICE_URL": comps_service_url,
+                    "COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOKEN,
+                }
+                with patch.dict("os.environ", env, clear=True):
+                    client = TestClient(web_bff_app)
+                    thread = client.post(
+                        "/v1/threads",
+                        json={"title": "AAPL comps"},
+                    ).json()["thread"]
+
+                    failed = client.post(
+                        f"/v1/threads/{thread['id']}/messages",
+                        json={
+                            "content": "Compare Apple with Microsoft and Nvidia"
+                        },
+                    )
+
+                    self.assertEqual(failed.status_code, 502, failed.text)
+                    error = failed.json()["error"]
+                    run_id = error["run_id"]
+                    messages = client.get(
+                        f"/v1/threads/{thread['id']}/messages"
+                    ).json()["messages"]
+                    linked_thread = client.get(
+                        f"/v1/threads/{thread['id']}"
+                    ).json()["thread"]
+                    run = client.get(f"/v1/runs/{run_id}").json()["run"]
+
+        self.assertEqual(
+            error["message"],
+            "Agent returned an invalid structured response.",
+        )
+        self.assertEqual(
+            [(message["role"], message["status"]) for message in messages],
+            [("user", "complete"), ("assistant", "failed")],
+        )
+        self.assertEqual(messages[-1]["run_id"], run_id)
+        self.assertEqual(linked_thread["latest_run_id"], run_id)
+        self.assertEqual(run["status"], "failed")
 
     def test_failed_run_error_is_visible_and_linked_to_the_thread(self) -> None:
         provider_key = "FAKE_BOUNDARY_KEY_123"
