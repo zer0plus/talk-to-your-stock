@@ -14,6 +14,7 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from agent_service.comps_client import HttpCompsToolClient
 from agent_service.fundamental_agent import FundamentalAnalysisAgent
@@ -48,6 +49,45 @@ from web_bff.main import app as web_bff_app, get_repository as get_web_repositor
 
 INTERNAL_TOKEN = "canonical-path-token"
 LOCAL_USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+class LoseFirstFinalizeResponse:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.finalize_attempts = 0
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        is_finalize = (
+            scope["type"] == "http"
+            and scope["method"] == "POST"
+            and scope["path"].endswith("/finalize")
+        )
+        if not is_finalize:
+            await self.app(scope, receive, send)
+            return
+
+        self.finalize_attempts += 1
+        if self.finalize_attempts > 1:
+            await self.app(scope, receive, send)
+            return
+
+        async def discard_response(_message: Message) -> None:
+            pass
+
+        await self.app(scope, receive, discard_response)
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"{"})
 
 
 class CanonicalCompsLlm(BaseLlm):
@@ -240,7 +280,8 @@ class CanonicalBackendPathTest(unittest.TestCase):
             lambda: web_repository
         )
 
-        with running_service(comps_app) as comps_service_url:
+        lost_finalize_app = LoseFirstFinalizeResponse(comps_app)
+        with running_service(lost_finalize_app) as comps_service_url:
             fundamental_agent = FundamentalAnalysisAgent(
                 model=CanonicalCompsLlm(model="canonical-comps"),
                 comps_client=HttpCompsToolClient(
@@ -322,6 +363,7 @@ class CanonicalBackendPathTest(unittest.TestCase):
         )
         self.assertEqual(len(web_repository.messages), 2)
         self.assertIn(UUID(run_id), comps_repository.runs)
+        self.assertEqual(lost_finalize_app.finalize_attempts, 2)
 
     def test_failed_run_error_is_visible_and_linked_to_the_thread(self) -> None:
         provider_key = "FAKE_BOUNDARY_KEY_123"
