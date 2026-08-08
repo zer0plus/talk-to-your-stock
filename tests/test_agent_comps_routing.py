@@ -355,39 +355,86 @@ class AgentCompsRoutingTest(unittest.TestCase):
             ),
         )
 
-    def test_invalid_model_output_fails_the_calculated_run(self) -> None:
-        tool_response = _successful_tool_response(
-            thread_id=uuid4(),
-            trigger_message_id=uuid4(),
-        )
-        model = ScriptedLlm(
-            model="scripted",
-            responses=[
-                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+    def test_agent_output_errors_link_the_failed_calculated_run(self) -> None:
+        cases = (
+            (
+                "invalid structured response",
                 types.Content(role="model", parts=[types.Part(text="{")]),
-            ],
+                "Agent returned an invalid structured response.",
+            ),
+            (
+                "missing Comparison Takeaway",
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            text=_conversation_output("AAPL is compared with MSFT.")
+                        )
+                    ],
+                ),
+                "Agent returned no Comparison Takeaway for the calculated table.",
+            ),
+            (
+                "missing model response",
+                types.Content(role="model", parts=[types.Part(text="")]),
+                "Agent returned no response.",
+            ),
         )
-        comps_client = RecordingCompsClient(tool_response)
-        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
-        app.dependency_overrides[get_fundamental_agent] = lambda: agent
 
-        response = TestClient(app).post(
-            "/v1/internal/agent/respond",
-            json={
-                "user_id": str(uuid4()),
-                "thread_id": str(tool_response.run.thread_id),
-                "user_message_id": str(tool_response.run.trigger_message_id),
-                "content": "Compare Apple with Microsoft",
-            },
-        )
+        for case, model_response, error_message in cases:
+            with self.subTest(case=case):
+                tool_response = _successful_tool_response(
+                    thread_id=uuid4(),
+                    trigger_message_id=uuid4(),
+                )
+                comps_client = RecordingCompsClient(tool_response)
+                agent = FundamentalAnalysisAgent(
+                    model=ScriptedLlm(
+                        model="scripted",
+                        responses=[
+                            _tool_call(
+                                target_ticker="AAPL",
+                                peer_tickers=["MSFT"],
+                            ),
+                            model_response,
+                        ],
+                    ),
+                    comps_client=comps_client,
+                )
+                app.dependency_overrides[get_fundamental_agent] = lambda: agent
 
-        self.assertEqual(response.status_code, 502, response.text)
-        self.assertEqual(len(comps_client.fail_requests), 1)
-        self.assertEqual(comps_client.fail_requests[0][0], tool_response.run.id)
-        self.assertEqual(
-            comps_client.fail_requests[0][1].error_message,
-            "The Agent could not complete the calculated analysis.",
-        )
+                response = TestClient(app).post(
+                    "/v1/internal/agent/respond",
+                    json={
+                        "user_id": str(uuid4()),
+                        "thread_id": str(tool_response.run.thread_id),
+                        "user_message_id": str(
+                            tool_response.run.trigger_message_id
+                        ),
+                        "content": "Compare Apple with Microsoft",
+                    },
+                )
+
+                self.assertEqual(response.status_code, 502, response.text)
+                self.assertEqual(
+                    response.json()["error"],
+                    {
+                        "code": "UPSTREAM_ERROR",
+                        "message": error_message,
+                        "details": {
+                            "thread_id": str(tool_response.run.thread_id),
+                            "trigger_message_id": str(
+                                tool_response.run.trigger_message_id
+                            ),
+                        },
+                        "run_id": str(tool_response.run.id),
+                        "request_id": None,
+                    },
+                )
+                self.assertEqual(
+                    [request[0] for request in comps_client.fail_requests],
+                    [tool_response.run.id],
+                )
 
     def test_finalization_error_fails_the_calculated_run(self) -> None:
         tool_response = _successful_tool_response(

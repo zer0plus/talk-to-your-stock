@@ -19,6 +19,8 @@ from talk_to_your_stock_shared import (
     AgentMessageResponse,
     AnalysisPeriod,
     ComparisonTakeaway,
+    ErrorCode,
+    ErrorDetail,
     ErrorResponse,
     FailCalculatedRunRequest,
     FinalizeComparisonTakeawayRequest,
@@ -154,6 +156,23 @@ class FundamentalAnalysisAgent:
                 request=request,
                 session_context=session_context,
             )
+        except AgentRoutingUnavailable as exc:
+            if invocation_gate.calculated_run_id is None:
+                raise
+            raise AgentToolError(
+                status_code=502,
+                error=ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.UPSTREAM_ERROR,
+                        message=str(exc),
+                        details={
+                            "thread_id": str(request.thread_id),
+                            "trigger_message_id": str(request.user_message_id),
+                        },
+                        run_id=invocation_gate.calculated_run_id,
+                    )
+                ),
+            ) from exc
         finally:
             if (
                 invocation_gate.calculated_run_id is not None
