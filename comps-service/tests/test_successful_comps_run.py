@@ -1040,6 +1040,66 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(run_response.json()["run"], finalized.json()["run"])
         self.assertEqual(table_response.json(), finalized.json()["table"])
 
+    def test_repeated_finalization_returns_the_original_without_rewriting_it(
+        self,
+    ) -> None:
+        request = {
+            "comparison_takeaway": {
+                "headline": "AAPL is comparable to MSFT on EV / Revenue.",
+                "interpretation": (
+                    "AAPL's EV / Revenue is supported by the available peer evidence."
+                ),
+                "confidence": "limited",
+            }
+        }
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            created = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            run_id = created.json()["run"]["id"]
+            first = client.post(
+                f"/v1/internal/runs/{run_id}/finalize",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            repeated = client.post(
+                f"/v1/internal/runs/{run_id}/finalize",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            changed = client.post(
+                f"/v1/internal/runs/{run_id}/finalize",
+                json={
+                    "comparison_takeaway": {
+                        **request["comparison_takeaway"],
+                        "headline": "A different interpretation.",
+                    }
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            table = client.get(f"/v1/runs/{run_id}/table")
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json(), first.json())
+        self.assertEqual(changed.status_code, 404, changed.text)
+        self.assertEqual(table.json(), first.json()["table"])
+
     def test_succeeded_run_trace_is_available_through_public_readback(self) -> None:
         with patch.dict(
             os.environ,
@@ -1385,6 +1445,13 @@ class SuccessfulCompsRunTest(unittest.TestCase):
                 self.assertIn(path, source_contract["paths"])
                 self.assertIn(path, generated_contract["paths"])
                 self.assertTrue(source_contract["paths"][path]["post"]["x-internal"])
+
+        finalize_path = "/v1/internal/runs/{run_id}/finalize"
+        for contract in (source_contract, generated_contract):
+            self.assertIn(
+                "original successful Run unchanged",
+                contract["paths"][finalize_path]["post"]["description"],
+            )
 
     def test_generate_contract_declares_invocation_conflict(self) -> None:
         source_contract = yaml.safe_load(

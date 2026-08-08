@@ -350,6 +350,9 @@ def generate_comps_table(
 @app.post(
     FINALIZE_COMPS_RUN_PATH,
     response_model=GenerateCompsToolResponse,
+    description=(
+        "Repeating the same finalization returns the original successful Run unchanged."
+    ),
     responses={
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},

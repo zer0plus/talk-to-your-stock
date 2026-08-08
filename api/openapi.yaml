@@ -442,6 +442,7 @@ paths:
     post:
       tags: [Internal]
       summary: Finalize a calculated Run with an Agent-authored Takeaway
+      description: Repeating the same finalization returns the original successful Run unchanged.
       x-internal: true
       parameters:
         - $ref: '#/components/parameters/RunIdParam'

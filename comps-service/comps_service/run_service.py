@@ -273,8 +273,22 @@ class CompsRunService:
         comparison_takeaway: ComparisonTakeaway,
     ) -> GenerateCompsToolResponse:
         run = self._repository.get_run(run_id)
-        table = self._repository.get_draft_table(run_id)
         trace = self._repository.get_trace(run_id)
+        if run is not None and run.status == RunStatus.SUCCEEDED:
+            succeeded_table = self._repository.get_table(run_id)
+            if (
+                succeeded_table is not None
+                and trace is not None
+                and succeeded_table.comparison_takeaway == comparison_takeaway
+            ):
+                return GenerateCompsToolResponse(
+                    run=run,
+                    table=succeeded_table,
+                    trace=trace,
+                    warnings=run.warnings,
+                )
+
+        table = self._repository.get_draft_table(run_id)
         if (
             run is None
             or table is None

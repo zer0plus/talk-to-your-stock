@@ -242,13 +242,20 @@ class FundamentalAnalysisAgent:
                 raise AgentRoutingUnavailable(
                     "Agent returned no Comparison Takeaway for the calculated table."
                 )
+            finalize_request = FinalizeComparisonTakeawayRequest(
+                comparison_takeaway=agent_output.comparison_takeaway
+            )
             try:
-                finalized = await self._comps_client.finalize_comps_run(
-                    calculated_tool_response.run.id,
-                    FinalizeComparisonTakeawayRequest(
-                        comparison_takeaway=agent_output.comparison_takeaway
-                    ),
-                )
+                try:
+                    finalized = await self._comps_client.finalize_comps_run(
+                        calculated_tool_response.run.id,
+                        finalize_request,
+                    )
+                except CompsToolUnavailable:
+                    finalized = await self._comps_client.finalize_comps_run(
+                        calculated_tool_response.run.id,
+                        finalize_request,
+                    )
             except CompsToolError as exc:
                 run = calculated_tool_response.run
                 error = exc.error.error

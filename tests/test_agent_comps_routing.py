@@ -100,7 +100,9 @@ class RecordingCompsClient:
     ) -> GenerateCompsToolResponse:
         self.finalize_requests.append((run_id, request))
         if self.finalize_error is not None:
-            raise self.finalize_error
+            error = self.finalize_error
+            self.finalize_error = None
+            raise error
         assert self.pending_final is not None
         final = self.pending_final.model_copy(
             update={
@@ -447,6 +449,40 @@ class AgentCompsRoutingTest(unittest.TestCase):
         )
         self.assertEqual(len(comps_client.fail_requests), 1)
         self.assertEqual(comps_client.fail_requests[0][0], tool_response.run.id)
+
+    def test_lost_finalization_response_recovers_the_succeeded_run(self) -> None:
+        tool_response = _successful_tool_response(
+            thread_id=uuid4(),
+            trigger_message_id=uuid4(),
+        )
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                _agent_output("AAPL is compared with MSFT."),
+            ],
+        )
+        comps_client = RecordingCompsClient(
+            tool_response,
+            finalize_error=CompsToolUnavailable("Comps Service unavailable."),
+        )
+        agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(tool_response.run.thread_id),
+                "user_message_id": str(tool_response.run.trigger_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
+        self.assertEqual(len(comps_client.finalize_requests), 2)
+        self.assertEqual(comps_client.fail_requests, [])
 
     def test_parallel_sibling_does_not_consume_validation_retry(self) -> None:
         user_id = uuid4()
