@@ -609,7 +609,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
             [tool_response.run.id],
         )
 
-    def test_agent_deadline_does_not_wait_for_run_reservation(self) -> None:
+    def test_agent_deadline_completes_run_reservation_before_cleanup(self) -> None:
         tool_response = _successful_tool_response(
             thread_id=uuid4(),
             trigger_message_id=uuid4(),
@@ -644,7 +644,14 @@ class AgentCompsRoutingTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 502, response.text)
-        self.assertIsNone(response.json()["error"]["run_id"])
+        self.assertEqual(
+            response.json()["error"]["run_id"],
+            str(tool_response.run.id),
+        )
+        self.assertEqual(
+            [request[0] for request in comps_client.fail_requests],
+            [tool_response.run.id],
+        )
 
     def test_two_lost_reservation_responses_fail_the_known_invocation_run(
         self,

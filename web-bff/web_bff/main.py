@@ -448,13 +448,17 @@ def create_message(
                         code=ErrorCode.UPSTREAM_ERROR,
                         message="Agent Service returned invalid failed Run linkage.",
                     )
-                repository.create_message(
-                    thread_id=thread.id,
-                    role=MessageRole.ASSISTANT,
-                    content=exc.error.error.message,
-                    status=MessageStatus.FAILED,
-                    run_id=run_id,
-                )
+                if not (
+                    exc.status_code == status.HTTP_409_CONFLICT
+                    and exc.error.error.code == ErrorCode.CONFLICT
+                ):
+                    repository.create_message(
+                        thread_id=thread.id,
+                        role=MessageRole.ASSISTANT,
+                        content=exc.error.error.message,
+                        status=MessageStatus.FAILED,
+                        run_id=run_id,
+                    )
             return JSONResponse(
                 status_code=exc.status_code,
                 content=exc.error.model_dump(mode="json"),

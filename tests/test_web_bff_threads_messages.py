@@ -832,6 +832,45 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
             [MessageRole.USER],
         )
 
+    def test_in_progress_run_conflict_does_not_create_failed_message(self) -> None:
+        repository = RecordingRepository()
+        run_id = uuid4()
+        agent = ControlledAgent(
+            repository=repository,
+            error_factory=lambda thread, message: AgentServiceResponseError(
+                status_code=409,
+                error=ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.CONFLICT,
+                        message="Tool invocation calculation is already running.",
+                        run_id=run_id,
+                        details={
+                            "thread_id": str(thread.id),
+                            "trigger_message_id": str(message.id),
+                        },
+                    )
+                ),
+            ),
+        )
+        client = self._client(repository=repository, agent=agent)
+        thread_id = client.post(
+            "/v1/threads",
+            json={"title": "Comps"},
+        ).json()["thread"]["id"]
+
+        with self.assertLogs("web_bff.main", level="ERROR"):
+            response = client.post(
+                f"/v1/threads/{thread_id}/messages",
+                json={"content": "Compare AAPL with MSFT"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["run_id"], str(run_id))
+        self.assertEqual(
+            [message.role for message in repository.messages],
+            [MessageRole.USER],
+        )
+
     def test_agent_unavailable_returns_clear_error_after_user_message_is_saved(
         self,
     ) -> None:
