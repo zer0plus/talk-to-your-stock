@@ -330,10 +330,29 @@ class CompsRunService:
             **table.model_dump(),
             comparison_takeaway=comparison_takeaway,
         )
-        self._repository.finalize_succeeded_run(
-            run=succeeded_run,
-            table=succeeded_table,
-        )
+        try:
+            self._repository.finalize_succeeded_run(
+                run=succeeded_run,
+                table=succeeded_table,
+            )
+        except CalculatedRunNotFound:
+            run = self._repository.get_run(run_id)
+            trace = self._repository.get_trace(run_id)
+            succeeded_table = self._repository.get_table(run_id)
+            if (
+                run is not None
+                and run.status == RunStatus.SUCCEEDED
+                and succeeded_table is not None
+                and trace is not None
+                and succeeded_table.comparison_takeaway == comparison_takeaway
+            ):
+                return GenerateCompsToolResponse(
+                    run=run,
+                    table=succeeded_table,
+                    trace=trace,
+                    warnings=run.warnings,
+                )
+            raise
         return GenerateCompsToolResponse(
             run=succeeded_run,
             table=succeeded_table,
