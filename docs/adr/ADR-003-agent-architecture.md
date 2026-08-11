@@ -45,6 +45,8 @@ Notes:
 * Google ADK owns orchestration behavior.
 * Google ADK-native observability is the primary surface for agent internals, including tool-call history and model/tool traces.
 * This ADR describes agent behavior and tool boundaries.
+* The Fundamental Analysis Agent is one product-level Agent implemented as two ordered internal ADK model stages under one invocation: a routing stage and a table-backed response stage. These are implementation stages, not separately routable product Agents or future agent families.
+* The routing stage can answer conversationally or call `generate_comps_table`, but it has no structured response schema. The table-backed response stage has the structured response schema but no Tools, and orchestration starts it only after a valid calculated table draft exists.
 * The Fundamental Analysis Agent is instructed to use the Tool rather than invent or recalculate final comps metrics. After receiving the calculated table, it authors the freeform Comparison Takeaway. The Comps Service validates only its required contract shape and persists the exact prose before the Run succeeds; it does not inspect or judge the prose.
 
 ### Agent Observability
@@ -55,7 +57,7 @@ Agent-internal observability should build around ADK-native capabilities such as
 
 ### MVP Agent Scope
 
-* Active agent: **Fundamental Analysis Agent**
+* Active product-level agent: **Fundamental Analysis Agent**, composed internally of ordered routing and table-backed response stages
 * Core responsibility: handle comps-backed prompts and trigger deterministic comps analysis when appropriate.
 * Production tool: `generate_comps_table`
 * Future agents, out of MVP design:
@@ -68,7 +70,7 @@ For the initial MVP, intent handling is expressed through the agent system instr
 
 The agent decides whether a message is:
 * **Conversational or no Tool selected**: answer directly, no run created.
-* **Fundamental/comps analysis with Tool selected**: call `generate_comps_table`, create a running calculation, author a structured freeform Comparison Takeaway from the returned table, and finalize the Run through the Comps Service.
+* **Fundamental/comps analysis with Tool selected**: the routing stage calls `generate_comps_table` and creates a running calculation; only after the calculated draft returns does the table-backed response stage author a structured freeform Comparison Takeaway, which is then finalized through the Comps Service.
 * **Ambiguous**: ask a short clarifying question before tool execution.
 
 If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. A succeeded Run may be claimed or linked only after the Comps Service accepts the Comparison Takeaway's required shape and persists the exact Agent-authored value with the deterministic Comps Table. If any Agent or finalization failure happens after calculation but before success, the Agent Service asks the Comps Service to transition the Run to `failed` and links that failed Run to the triggering Message. If that transition is temporarily unreachable, retrying the same invocation returns the existing calculated draft so finalization can resume rather than being blocked by the invocation uniqueness constraint.
@@ -102,7 +104,7 @@ Initial conceptual output:
 * `trace`
 * `warnings`
 
-After Tool execution, the Agent produces a structured response containing its user-facing content and a freeform Comparison Takeaway (`headline`, `interpretation`, and `confidence`). The Agent Service sends that Takeaway to an internal Comps Service finalization boundary. The Comps Service validates only that exact shape: both strings are non-empty, confidence is `limited`, `moderate`, or `strong`, and no extra fields are present. It does not parse, verify, generate, or rewrite the prose. Finalization persists the exact Agent output with the table and transitions the Run from `running` to `succeeded` atomically. An internal failure transition moves an unfinished calculated Run from `running` to `failed` when the Agent cannot complete finalization; same-invocation draft recovery covers a temporarily unavailable failure transition.
+After Tool execution, a separate table-backed response stage produces the structured response containing its user-facing content and a freeform Comparison Takeaway (`headline`, `interpretation`, and `confidence`). The routing stage cannot produce that structured response, and the response stage cannot call the Tool. The Agent Service sends the Takeaway to an internal Comps Service finalization boundary. The Comps Service validates only that exact shape: both strings are non-empty, confidence is `limited`, `moderate`, or `strong`, and no extra fields are present. It does not parse, verify, generate, or rewrite the prose. Finalization persists the exact Agent output with the table and transitions the Run from `running` to `succeeded` atomically. An internal failure transition moves an unfinished calculated Run from `running` to `failed` when the Agent cannot complete finalization; same-invocation draft recovery covers a temporarily unavailable failure transition.
 
 When auto peer selection is supported, it remains a Comps Service responsibility: if the User provides only one company, the Comps Service selects comparable peers deterministically and exposes traceable selection reasoning.
 

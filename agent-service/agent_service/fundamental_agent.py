@@ -153,7 +153,7 @@ class FundamentalAnalysisAgent:
             model=model,
             instruction=FUNDAMENTAL_ROUTING_INSTRUCTION,
             tools=[self.generate_comps_table],
-            after_model_callback=_keep_first_comps_tool_call,
+            after_model_callback=_keep_only_first_comps_tool_call,
         )
         takeaway_writer = Agent(
             name=COMPARISON_TAKEAWAY_WRITER_NAME,
@@ -415,26 +415,28 @@ class FundamentalAnalysisAgent:
             )
 
 
-def _keep_first_comps_tool_call(callback_context: Any, llm_response: Any) -> Any:
+def _keep_only_first_comps_tool_call(
+    callback_context: Any,
+    llm_response: Any,
+) -> Any:
     del callback_context
     content = llm_response.content
     if content is None or not content.parts:
         return llm_response
 
-    found_tool_call = False
-    parts = []
-    for part in content.parts:
-        function_call = part.function_call
-        if function_call is None or function_call.name != "generate_comps_table":
-            parts.append(part)
-        elif not found_tool_call:
-            found_tool_call = True
-            parts.append(part)
-
-    if len(parts) == len(content.parts):
+    first_comps_call = next(
+        (
+            part
+            for part in content.parts
+            if part.function_call is not None
+            and part.function_call.name == "generate_comps_table"
+        ),
+        None,
+    )
+    if first_comps_call is None:
         return llm_response
     return llm_response.model_copy(
-        update={"content": content.model_copy(update={"parts": parts})}
+        update={"content": content.model_copy(update={"parts": [first_comps_call]})}
     )
 
 

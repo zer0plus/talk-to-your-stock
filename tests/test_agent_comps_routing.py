@@ -298,6 +298,46 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
         self.assertEqual(len(comps_client.requests), 1)
 
+    def test_router_discards_prose_when_starting_calculation(self) -> None:
+        tool_response = _successful_tool_response(
+            thread_id=uuid4(),
+            trigger_message_id=uuid4(),
+        )
+        model = ScriptedLlm(
+            model="scripted",
+            responses=[
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(text="Premature analysis without table evidence."),
+                        _tool_call_part("AAPL", ["MSFT"]),
+                    ],
+                ),
+                _native_agent_output("AAPL trades below MSFT on EV / EBITDA."),
+            ],
+        )
+        agent = FundamentalAnalysisAgent(
+            model=model,
+            comps_client=RecordingCompsClient(tool_response),
+        )
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(tool_response.run.thread_id),
+                "user_message_id": str(tool_response.run.trigger_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn(
+            "Premature analysis without table evidence.",
+            repr(model.requests[1].contents),
+        )
+
     def test_router_is_not_called_again_after_a_calculated_draft(self) -> None:
         user_id = uuid4()
         thread_id = uuid4()
