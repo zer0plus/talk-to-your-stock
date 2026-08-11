@@ -160,6 +160,7 @@ class CompsMigrationsTest(unittest.TestCase):
         self.assertIn("create table comps_runs", sql)
         self.assertIn("create table comps_tables", sql)
         self.assertIn("comparison_takeaway jsonb", sql)
+        self.assertIn("generation_failure jsonb", sql)
         self.assertNotIn("comparison_takeaway jsonb not null", sql)
         self.assertIn("create table comps_traces", sql)
         self.assertIn("create table comps_source_snapshots", sql)

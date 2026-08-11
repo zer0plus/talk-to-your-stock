@@ -21,7 +21,7 @@ from talk_to_your_stock_shared import (
 from talk_to_your_stock_shared.readiness import DATABASE_URL_VAR
 from talk_to_your_stock_shared.time import utc_now
 
-from .artifacts import SourceSnapshot
+from .artifacts import FailedRunInvocation, RunFailure, SourceSnapshot
 from .run_service import CalculatedRunNotFound, DuplicateToolInvocation
 
 
@@ -161,6 +161,7 @@ class PostgresCompsRunRepository:
         *,
         invocation_id: UUID,
         run: Run,
+        failure: RunFailure,
         source_snapshot: SourceSnapshot,
     ) -> None:
         from psycopg.types.json import Jsonb
@@ -173,10 +174,12 @@ class PostgresCompsRunRepository:
                         insert into comps_runs (
                             id, invocation_id, thread_id, trigger_message_id, status,
                             target_ticker, peer_tickers, currency, as_of, warnings,
-                            error_message, created_at, started_at, completed_at
+                            error_message, generation_failure, created_at,
+                            started_at, completed_at
                         )
                         values (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s
                         )
                         """,
                         (
@@ -191,6 +194,7 @@ class PostgresCompsRunRepository:
                             run.as_of,
                             Jsonb(run.warnings),
                             run.error_message,
+                            Jsonb(failure.model_dump(mode="json")),
                             run.created_at,
                             run.started_at,
                             run.completed_at,
@@ -241,7 +245,7 @@ class PostgresCompsRunRepository:
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | Run | None:
+    ) -> GenerateCompsDraftResponse | FailedRunInvocation | Run | None:
         try:
             with self._connect() as connection:
                 with connection.cursor(row_factory=self._dict_row()) as cursor:
@@ -263,6 +267,7 @@ class PostgresCompsRunRepository:
                                 'started_at', runs.started_at,
                                 'completed_at', runs.completed_at
                             ) as run,
+                            runs.generation_failure,
                             jsonb_build_object(
                                 'run_id', tables.run_id,
                                 'target_ticker', tables.target_ticker,
@@ -289,6 +294,11 @@ class PostgresCompsRunRepository:
             return None
         run = Run.model_validate(row["run"])
         if run.status != RunStatus.RUNNING:
+            if row["generation_failure"] is not None:
+                return FailedRunInvocation(
+                    run=run,
+                    failure=RunFailure.model_validate(row["generation_failure"]),
+                )
             return run
         table = RunTableDraftResponse.model_validate(row["table"])
         trace = TraceResponse.model_validate(row["trace"])

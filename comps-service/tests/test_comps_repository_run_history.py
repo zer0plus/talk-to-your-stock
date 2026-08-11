@@ -6,7 +6,7 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 from comps_service.repository import InvalidRunCursor, PostgresCompsRunRepository
-from talk_to_your_stock_shared import Run, RunStatus
+from talk_to_your_stock_shared import ErrorCode, Run, RunStatus
 
 
 class RecordingCursor:
@@ -72,6 +72,14 @@ class CompsRepositoryRunHistoryTest(unittest.TestCase):
             single_rows=[
                 {
                     "run": failed_run.model_dump(),
+                    "generation_failure": {
+                        "status_code": 503,
+                        "error": {
+                            "code": ErrorCode.INTERNAL_ERROR,
+                            "message": "Provider evidence was unavailable.",
+                            "run_id": failed_run.id,
+                        },
+                    },
                     "table": None,
                     "trace": None,
                 }
@@ -89,7 +97,8 @@ class CompsRepositoryRunHistoryTest(unittest.TestCase):
         ):
             recovered = repository.get_calculated_run_by_invocation(invocation_id)
 
-        self.assertEqual(recovered, failed_run)
+        self.assertEqual(recovered.run, failed_run)
+        self.assertEqual(recovered.failure.status_code, 503)
 
     def test_recovery_does_not_return_a_run_that_became_terminal(self) -> None:
         run_id = uuid4()

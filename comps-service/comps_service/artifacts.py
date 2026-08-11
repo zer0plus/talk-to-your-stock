@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
+from talk_to_your_stock_shared import ErrorDetail, Run
 
 
 class InternalArtifactModel(BaseModel):
@@ -32,3 +33,13 @@ class SourceSnapshot(InternalArtifactModel):
     raw_provider_evidence: dict[str, object]
     normalized_inputs: list[NormalizedCompanyInput]
     created_at: datetime
+
+
+class RunFailure(InternalArtifactModel):
+    status_code: int
+    error: ErrorDetail
+
+
+class FailedRunInvocation(InternalArtifactModel):
+    run: Run
+    failure: RunFailure

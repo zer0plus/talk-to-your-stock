@@ -25,7 +25,7 @@ from agent_service.main import (
     get_session_context,
 )
 from agent_service.session_context import AdkSessionContext
-from comps_service.artifacts import SourceSnapshot
+from comps_service.artifacts import FailedRunInvocation, RunFailure, SourceSnapshot
 from comps_service.calculator import CompanyCompsInput
 from comps_service.main import (
     app as comps_app,
@@ -168,6 +168,7 @@ class InMemoryCompsRepository:
         self.tables: dict[UUID, RunTableResponse] = {}
         self.traces: dict[UUID, TraceResponse] = {}
         self.source_snapshots: dict[UUID, SourceSnapshot] = {}
+        self.failures: dict[UUID, RunFailure] = {}
         self.invocations: dict[UUID, UUID] = {}
 
     def save_calculated_run(
@@ -190,10 +191,12 @@ class InMemoryCompsRepository:
         *,
         invocation_id: UUID,
         run: Run,
+        failure: RunFailure,
         source_snapshot: SourceSnapshot,
     ) -> None:
         self.invocations[invocation_id] = run.id
         self.runs[run.id] = run
+        self.failures[run.id] = failure
         self.source_snapshots[run.id] = source_snapshot
 
     def get_run(self, run_id: UUID) -> Run | None:
@@ -202,12 +205,14 @@ class InMemoryCompsRepository:
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | Run | None:
+    ) -> GenerateCompsDraftResponse | FailedRunInvocation | Run | None:
         run_id = self.invocations.get(invocation_id)
         if run_id is None:
             return None
         run = self.runs[run_id]
         if run.status != RunStatus.RUNNING:
+            if run.id in self.failures:
+                return FailedRunInvocation(run=run, failure=self.failures[run.id])
             return run
         return GenerateCompsDraftResponse(
             run=run,
@@ -597,6 +602,16 @@ class CanonicalBackendPathTest(unittest.TestCase):
                     self.assertEqual(
                         error["message"],
                         "Alpha Vantage request limit was reached while loading AAPL.",
+                    )
+                    self.assertEqual(
+                        error["details"],
+                        {
+                            "provider": "alpha_vantage",
+                            "operation": "GLOBAL_QUOTE",
+                            "subject": "AAPL",
+                            "thread_id": thread["id"],
+                            "trigger_message_id": str(web_repository.messages[0].id),
+                        },
                     )
 
                     messages = client.get(

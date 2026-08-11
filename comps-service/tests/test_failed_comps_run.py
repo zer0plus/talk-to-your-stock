@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 import httpx
 
-from comps_service.artifacts import SourceSnapshot
+from comps_service.artifacts import FailedRunInvocation, RunFailure, SourceSnapshot
 from comps_service.calculator import CompanyCompsInput
 from comps_service.main import (
     app,
@@ -24,6 +24,7 @@ from comps_service.main import (
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.run_service import (
     CompanyDataLoadFailure,
+    CompanyDataUnavailable,
     CompsRunExecutionError,
     DuplicateToolInvocation,
     LoadedCompanyData,
@@ -54,6 +55,7 @@ class InMemoryCompsRunRepository:
         self.tables: dict[UUID, RunTableResponse] = {}
         self.traces: dict[UUID, TraceResponse] = {}
         self.source_snapshots: dict[UUID, SourceSnapshot] = {}
+        self.failures: dict[UUID, RunFailure] = {}
         self.invocations: dict[UUID, UUID] = {}
 
     def save_calculated_run(
@@ -75,9 +77,11 @@ class InMemoryCompsRunRepository:
         *,
         invocation_id: UUID,
         run: Run,
+        failure: RunFailure,
         source_snapshot: SourceSnapshot,
     ) -> None:
         self._save_invocation(invocation_id, run)
+        self.failures[run.id] = failure
         self.source_snapshots[run.id] = source_snapshot
 
     def _save_invocation(self, invocation_id: UUID, run: Run) -> None:
@@ -94,12 +98,14 @@ class InMemoryCompsRunRepository:
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | Run | None:
+    ) -> GenerateCompsDraftResponse | FailedRunInvocation | Run | None:
         run_id = self.invocations.get(invocation_id)
         if run_id is None:
             return None
         run = self.runs[run_id]
         if run.status != RunStatus.RUNNING:
+            if run.id in self.failures:
+                return FailedRunInvocation(run=run, failure=self.failures[run.id])
             return run
         return GenerateCompsDraftResponse(
             run=run,
@@ -199,6 +205,12 @@ class MissingPeerDataSource:
                 "AAPL": {"global_quote": {"05. price": "10.0"}}
             },
         )
+
+
+class UnavailableCompanyDataSource:
+    def load(self, *, tickers: list[str], currency: str) -> LoadedCompanyData:
+        del tickers, currency
+        raise CompanyDataUnavailable("Company data provider is unavailable.")
 
 
 class ZeroLtmMetricsDataSource:
@@ -356,6 +368,40 @@ class FailedCompsRunTest(unittest.TestCase):
         self.assertEqual(repeated.status_code, 409, repeated.text)
         self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
         self.assertEqual(len(self.repository.runs), 1)
+
+    def test_repeated_dependency_failure_returns_the_original_error(self) -> None:
+        app.dependency_overrides[get_company_data_source] = (
+            UnavailableCompanyDataSource
+        )
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            failed = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            repeated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(failed.status_code, 503, failed.text)
+        self.assertEqual(repeated.status_code, 503, repeated.text)
+        self.assertEqual(repeated.json(), failed.json())
 
     def test_provider_failure_preserves_payloads_gathered_before_failure(self) -> None:
         provider_key = "FAKE_PROVIDER_KEY_123"

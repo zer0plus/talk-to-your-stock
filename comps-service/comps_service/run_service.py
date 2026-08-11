@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 
 from talk_to_your_stock_shared import (
     ComparisonTakeaway,
+    ErrorCode,
+    ErrorDetail,
     GenerateCompsDraftResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
@@ -19,7 +21,7 @@ from talk_to_your_stock_shared import (
 )
 from talk_to_your_stock_shared.time import utc_now
 
-from .artifacts import SourceSnapshot
+from .artifacts import FailedRunInvocation, RunFailure, SourceSnapshot
 from .calculator import CompanyCompsInput, CompsCalculationError, CompsCalculator
 
 
@@ -47,9 +49,9 @@ class CalculatedRunNotFound(RuntimeError):
 
 
 class RecoveredFailedCompsRun(RuntimeError):
-    def __init__(self, run: Run) -> None:
-        super().__init__(run.error_message or "Comps Run failed.")
-        self.run = run
+    def __init__(self, result: FailedRunInvocation) -> None:
+        super().__init__(result.failure.error.message)
+        self.result = result
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,7 @@ class FailedCompsRun(RuntimeError):
         self,
         *,
         run_id: UUID,
+        failure: RunFailure,
         cause: (
             CompanyDataUnavailable
             | CompsRunExecutionError
@@ -83,6 +86,7 @@ class FailedCompsRun(RuntimeError):
     ) -> None:
         super().__init__(str(cause))
         self.run_id = run_id
+        self.failure = failure
         self.cause = cause
 
 
@@ -111,6 +115,7 @@ class CompsRunRepository(Protocol):
         *,
         invocation_id: UUID,
         run: Run,
+        failure: RunFailure,
         source_snapshot: SourceSnapshot,
     ) -> None: ...
 
@@ -145,7 +150,7 @@ class CompsRunRepository(Protocol):
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | Run | None: ...
+    ) -> GenerateCompsDraftResponse | FailedRunInvocation | Run | None: ...
 
 
 class CompsRunService:
@@ -259,11 +264,7 @@ class CompsRunService:
         )
         if existing is None:
             return None
-        existing_run = (
-            existing.run
-            if isinstance(existing, GenerateCompsDraftResponse)
-            else existing
-        )
+        existing_run = existing.run if not isinstance(existing, Run) else existing
         if (
             existing_run.thread_id != request.thread_id
             or existing_run.trigger_message_id != request.trigger_message_id
@@ -275,9 +276,13 @@ class CompsRunService:
             raise DuplicateToolInvocation(
                 "Tool invocation has already produced a different Run."
             )
+        if isinstance(existing, FailedRunInvocation):
+            raise RecoveredFailedCompsRun(existing)
         if isinstance(existing, Run):
             if existing.status == RunStatus.FAILED:
-                raise RecoveredFailedCompsRun(existing)
+                raise DuplicateToolInvocation(
+                    "Tool invocation has already produced a failed Run."
+                )
             raise DuplicateToolInvocation(
                 "Tool invocation has already produced a terminal Run."
             )
@@ -389,12 +394,35 @@ class CompsRunService:
             normalized_inputs=loaded.companies,
             created_at=completed_at,
         )
+        dependency_unavailable = isinstance(cause, CompanyDataUnavailable)
+        failure = RunFailure(
+            status_code=503 if dependency_unavailable else 502,
+            error=ErrorDetail(
+                code=(
+                    ErrorCode.INTERNAL_ERROR
+                    if dependency_unavailable
+                    else ErrorCode.UPSTREAM_ERROR
+                ),
+                message=str(cause),
+                details={
+                    **(getattr(cause, "details", None) or {}),
+                    "thread_id": str(request.thread_id),
+                    "trigger_message_id": str(request.trigger_message_id),
+                },
+                run_id=run_id,
+            ),
+        )
         self._repository.save_failed_run(
             invocation_id=request.invocation_id,
             run=run,
+            failure=failure,
             source_snapshot=source_snapshot,
         )
-        raise FailedCompsRun(run_id=run_id, cause=cause) from cause
+        raise FailedCompsRun(
+            run_id=run_id,
+            failure=failure,
+            cause=cause,
+        ) from cause
 
     def _order_requested_companies(
         self,

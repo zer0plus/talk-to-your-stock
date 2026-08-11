@@ -49,7 +49,6 @@ from .repository import (
 from .run_service import (
     CalculatedRunNotFound,
     CompanyDataSource,
-    CompanyDataUnavailable,
     CompsRunRepository,
     CompsRunService,
     DuplicateToolInvocation,
@@ -278,15 +277,13 @@ def generate_comps_table(
     try:
         existing = run_service.resume(request)
     except RecoveredFailedCompsRun as exc:
+        failure = exc.result.failure
         return _error_response(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            code=ErrorCode.UPSTREAM_ERROR,
-            message=str(exc),
-            details={
-                "thread_id": str(exc.run.thread_id),
-                "trigger_message_id": str(exc.run.trigger_message_id),
-            },
-            run_id=exc.run.id,
+            status_code=failure.status_code,
+            code=failure.error.code,
+            message=failure.error.message,
+            details=failure.error.details,
+            run_id=failure.error.run_id,
         )
     if existing is not None:
         return existing
@@ -327,12 +324,6 @@ def generate_comps_table(
     try:
         return run_service.generate(request)
     except FailedCompsRun as exc:
-        dependency_unavailable = isinstance(exc.cause, CompanyDataUnavailable)
-        failure_details = {
-            **(getattr(exc.cause, "details", None) or {}),
-            "thread_id": str(request.thread_id),
-            "trigger_message_id": str(request.trigger_message_id),
-        }
         logger.error(
             (
                 "Comps Run failed: run_id=%s thread_id=%s "
@@ -343,20 +334,13 @@ def generate_comps_table(
             request.trigger_message_id,
             str(exc),
         )
+        failure = exc.failure
         return _error_response(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-                if dependency_unavailable
-                else status.HTTP_502_BAD_GATEWAY
-            ),
-            code=(
-                ErrorCode.INTERNAL_ERROR
-                if dependency_unavailable
-                else ErrorCode.UPSTREAM_ERROR
-            ),
-            message=str(exc),
-            details=failure_details,
-            run_id=exc.run_id,
+            status_code=failure.status_code,
+            code=failure.error.code,
+            message=failure.error.message,
+            details=failure.error.details,
+            run_id=failure.error.run_id,
         )
 
 
