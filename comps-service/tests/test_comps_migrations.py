@@ -306,16 +306,24 @@ class CompsMigrationsTest(unittest.TestCase):
                 app.dependency_overrides[get_company_data_source] = (
                     PartialFailureCompanyDataSource
                 )
+                failed_request = _generate_request(
+                    thread_id=thread_id,
+                    trigger_message_id=trigger_message_id,
+                )
                 failed = client.post(
                     "/v1/internal/tools/generate-comps-table",
-                    json=_generate_request(
-                        thread_id=thread_id,
-                        trigger_message_id=trigger_message_id,
-                    ),
+                    json=failed_request,
                     headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
                 )
                 self.assertEqual(failed.status_code, 502, failed.text)
                 failed_run_id = failed.json()["error"]["run_id"]
+                recovered_failure = client.post(
+                    "/v1/internal/tools/generate-comps-table",
+                    json=failed_request,
+                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                )
+                self.assertEqual(recovered_failure.status_code, 502)
+                self.assertEqual(recovered_failure.json(), failed.json())
 
                 app.dependency_overrides.clear()
                 app.dependency_overrides[get_company_data_source] = (
