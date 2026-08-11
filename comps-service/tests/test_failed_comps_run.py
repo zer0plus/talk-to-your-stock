@@ -167,6 +167,10 @@ class FailedWinnerCompsRunRepository(InMemoryCompsRunRepository):
             error=ErrorDetail(
                 code=ErrorCode.INTERNAL_ERROR,
                 message=failed_run.error_message,
+                details={
+                    "thread_id": str(run.thread_id),
+                    "trigger_message_id": str(run.trigger_message_id),
+                },
                 run_id=failed_run.id,
             ),
         )
@@ -409,10 +413,20 @@ class FailedCompsRunTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 503, response.text)
-        self.assertEqual(response.json()["error"]["code"], "INTERNAL_ERROR")
         self.assertEqual(
-            response.json()["error"]["run_id"],
-            str(next(iter(repository.runs))),
+            response.json(),
+            {
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Company data provider is unavailable.",
+                    "details": {
+                        "thread_id": request["thread_id"],
+                        "trigger_message_id": request["trigger_message_id"],
+                    },
+                    "run_id": str(next(iter(repository.runs))),
+                    "request_id": None,
+                }
+            },
         )
         self.assertEqual(len(repository.runs), 1)
 
