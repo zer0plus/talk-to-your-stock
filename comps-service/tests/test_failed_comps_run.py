@@ -94,13 +94,13 @@ class InMemoryCompsRunRepository:
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | None:
+    ) -> GenerateCompsDraftResponse | Run | None:
         run_id = self.invocations.get(invocation_id)
         if run_id is None:
             return None
         run = self.runs[run_id]
         if run.status != RunStatus.RUNNING:
-            return None
+            return run
         return GenerateCompsDraftResponse(
             run=run,
             table=self.draft_tables[run_id],
@@ -288,6 +288,74 @@ class FailedCompsRunTest(unittest.TestCase):
             [company.ticker for company in snapshot.normalized_inputs],
             ["AAPL"],
         )
+
+    def test_repeated_failed_invocation_returns_the_original_linked_error(
+        self,
+    ) -> None:
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            failed = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            repeated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(failed.status_code, 502, failed.text)
+        self.assertEqual(repeated.status_code, 502, repeated.text)
+        self.assertEqual(repeated.json(), failed.json())
+        self.assertEqual(len(self.repository.runs), 1)
+
+    def test_repeated_failed_invocation_with_different_input_returns_conflict(
+        self,
+    ) -> None:
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            failed = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            repeated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json={**request, "peer_tickers": ["GOOG"]},
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(failed.status_code, 502, failed.text)
+        self.assertEqual(repeated.status_code, 409, repeated.text)
+        self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
+        self.assertEqual(len(self.repository.runs), 1)
 
     def test_provider_failure_preserves_payloads_gathered_before_failure(self) -> None:
         provider_key = "FAKE_PROVIDER_KEY_123"

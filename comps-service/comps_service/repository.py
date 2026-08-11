@@ -241,7 +241,7 @@ class PostgresCompsRunRepository:
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | None:
+    ) -> GenerateCompsDraftResponse | Run | None:
         try:
             with self._connect() as connection:
                 with connection.cursor(row_factory=self._dict_row()) as cursor:
@@ -276,11 +276,11 @@ class PostgresCompsRunRepository:
                                 'formulas', traces.formulas
                             ) as trace
                         from comps_runs as runs
-                        join comps_tables as tables on tables.run_id = runs.id
-                        join comps_traces as traces on traces.run_id = runs.id
-                        where runs.invocation_id = %s and runs.status = %s
+                        left join comps_tables as tables on tables.run_id = runs.id
+                        left join comps_traces as traces on traces.run_id = runs.id
+                        where runs.invocation_id = %s
                         """,
-                        (invocation_id, "running"),
+                        (invocation_id,),
                     )
                     row = cursor.fetchone()
         except Exception as exc:
@@ -288,6 +288,8 @@ class PostgresCompsRunRepository:
         if row is None:
             return None
         run = Run.model_validate(row["run"])
+        if run.status != RunStatus.RUNNING:
+            return run
         table = RunTableDraftResponse.model_validate(row["table"])
         trace = TraceResponse.model_validate(row["trace"])
         return GenerateCompsDraftResponse(

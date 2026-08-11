@@ -54,6 +54,7 @@ from .run_service import (
     CompsRunService,
     DuplicateToolInvocation,
     FailedCompsRun,
+    RecoveredFailedCompsRun,
 )
 from .tool_validation import (
     AlphaVantageTickerValidator,
@@ -274,7 +275,19 @@ def generate_comps_table(
         repository=repository,
         company_data_source=company_data_source,
     )
-    existing = run_service.resume(request)
+    try:
+        existing = run_service.resume(request)
+    except RecoveredFailedCompsRun as exc:
+        return _error_response(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code=ErrorCode.UPSTREAM_ERROR,
+            message=str(exc),
+            details={
+                "thread_id": str(exc.run.thread_id),
+                "trigger_message_id": str(exc.run.trigger_message_id),
+            },
+            run_id=exc.run.id,
+        )
     if existing is not None:
         return existing
 

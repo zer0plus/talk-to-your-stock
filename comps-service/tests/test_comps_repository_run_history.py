@@ -53,6 +53,44 @@ class RecordingConnection:
 
 
 class CompsRepositoryRunHistoryTest(unittest.TestCase):
+    def test_invocation_recovery_returns_a_failed_run_without_draft_artifacts(
+        self,
+    ) -> None:
+        invocation_id = uuid4()
+        failed_run = _run(
+            run_id=uuid4(),
+            thread_id=uuid4(),
+            created_at=datetime(2026, 8, 3, tzinfo=UTC),
+        ).model_copy(
+            update={
+                "status": RunStatus.FAILED,
+                "error_message": "Provider evidence was unavailable.",
+            }
+        )
+        cursor = RecordingCursor(
+            rows=[],
+            single_rows=[
+                {
+                    "run": failed_run.model_dump(),
+                    "table": None,
+                    "trace": None,
+                }
+            ],
+        )
+        repository = PostgresCompsRunRepository(database_url="postgresql://test")
+
+        with (
+            patch.object(
+                repository,
+                "_connect",
+                return_value=RecordingConnection(cursor),
+            ),
+            patch.object(repository, "_dict_row", return_value=None),
+        ):
+            recovered = repository.get_calculated_run_by_invocation(invocation_id)
+
+        self.assertEqual(recovered, failed_run)
+
     def test_recovery_does_not_return_a_run_that_became_terminal(self) -> None:
         run_id = uuid4()
         invocation_id = uuid4()

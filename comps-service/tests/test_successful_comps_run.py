@@ -190,13 +190,13 @@ class InMemoryCompsRunRepository:
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | None:
+    ) -> GenerateCompsDraftResponse | Run | None:
         run_id = self.invocations.get(invocation_id)
         if run_id is None:
             return None
         run = self.runs[run_id]
         if run.status != RunStatus.RUNNING:
-            return None
+            return run
         return GenerateCompsDraftResponse(
             run=run,
             table=self.draft_tables[run_id],

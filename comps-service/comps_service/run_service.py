@@ -46,6 +46,12 @@ class CalculatedRunNotFound(RuntimeError):
     pass
 
 
+class RecoveredFailedCompsRun(RuntimeError):
+    def __init__(self, run: Run) -> None:
+        super().__init__(run.error_message or "Comps Run failed.")
+        self.run = run
+
+
 @dataclass(frozen=True)
 class LoadedCompanyData:
     companies: list[CompanyCompsInput]
@@ -139,7 +145,7 @@ class CompsRunRepository(Protocol):
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | None: ...
+    ) -> GenerateCompsDraftResponse | Run | None: ...
 
 
 class CompsRunService:
@@ -253,16 +259,27 @@ class CompsRunService:
         )
         if existing is None:
             return None
+        existing_run = (
+            existing.run
+            if isinstance(existing, GenerateCompsDraftResponse)
+            else existing
+        )
         if (
-            existing.run.thread_id != request.thread_id
-            or existing.run.trigger_message_id != request.trigger_message_id
-            or existing.run.target_ticker != request.target_ticker.upper()
-            or existing.run.peer_tickers
+            existing_run.thread_id != request.thread_id
+            or existing_run.trigger_message_id != request.trigger_message_id
+            or existing_run.target_ticker != request.target_ticker.upper()
+            or existing_run.peer_tickers
             != [ticker.upper() for ticker in request.peer_tickers]
-            or existing.run.currency != request.currency.upper()
+            or existing_run.currency != request.currency.upper()
         ):
             raise DuplicateToolInvocation(
                 "Tool invocation has already produced a different Run."
+            )
+        if isinstance(existing, Run):
+            if existing.status == RunStatus.FAILED:
+                raise RecoveredFailedCompsRun(existing)
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a terminal Run."
             )
         return existing
 

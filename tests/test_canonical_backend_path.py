@@ -202,13 +202,13 @@ class InMemoryCompsRepository:
     def get_calculated_run_by_invocation(
         self,
         invocation_id: UUID,
-    ) -> GenerateCompsDraftResponse | None:
+    ) -> GenerateCompsDraftResponse | Run | None:
         run_id = self.invocations.get(invocation_id)
         if run_id is None:
             return None
         run = self.runs[run_id]
         if run.status != RunStatus.RUNNING:
-            return None
+            return run
         return GenerateCompsDraftResponse(
             run=run,
             table=self.draft_tables[run_id],
@@ -482,7 +482,7 @@ class CanonicalBackendPathTest(unittest.TestCase):
         self.assertEqual(linked_thread["latest_run_id"], run_id)
         self.assertEqual(run["status"], "failed")
 
-    def test_failed_run_error_is_visible_and_linked_to_the_thread(self) -> None:
+    def test_retried_failed_run_error_is_visible_and_linked_to_the_thread(self) -> None:
         provider_key = "FAKE_BOUNDARY_KEY_123"
         comps_repository = InMemoryCompsRepository()
 
@@ -536,7 +536,11 @@ class CanonicalBackendPathTest(unittest.TestCase):
             lambda: web_repository
         )
 
-        with running_service(comps_app) as comps_service_url:
+        lost_generate_app = LoseFirstCommittedResponse(
+            comps_app,
+            path_suffix="/generate-comps-table",
+        )
+        with running_service(lost_generate_app) as comps_service_url:
             agent_app.dependency_overrides[get_fundamental_agent] = lambda: (
                 FundamentalAnalysisAgent(
                     model=CanonicalCompsLlm(model="canonical-comps"),
@@ -611,6 +615,7 @@ class CanonicalBackendPathTest(unittest.TestCase):
         self.assertEqual(linked_thread["latest_run_id"], run_id)
         self.assertEqual(run["status"], "failed")
         self.assertEqual(run["error_message"], error["message"])
+        self.assertEqual(lost_generate_app.attempts, 2)
         self.assertNotIn(provider_key, failed.text)
         self.assertNotIn(INTERNAL_TOKEN, failed.text)
         for log_output in (
