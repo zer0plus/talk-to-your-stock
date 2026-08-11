@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
+from contextlib import aclosing
 from typing import Any
 from uuid import UUID
 
-from google.adk.agents import Agent, RunConfig
+from google.adk.agents import Agent, BaseAgent, RunConfig
+from google.adk.agents.invocation_context import InvocationContext
+from google.adk.events import Event
 from google.adk.models.base_llm import BaseLlm
 from google.adk.runners import Runner
 from google.adk.tools import ToolContext
@@ -41,6 +44,8 @@ from .session_context import AdkSessionContext, FUNDAMENTAL_ANALYSIS_AGENT_NAME
 GEMINI_MODEL_VAR = "GEMINI_MODEL"
 GOOGLE_API_KEY_VAR = "GOOGLE_API_KEY"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+FUNDAMENTAL_ROUTER_NAME = "fundamental_analysis_router"
+COMPARISON_TAKEAWAY_WRITER_NAME = "comparison_takeaway_writer"
 VALIDATION_CLARIFICATION = (
     "I couldn't validate those Tickers after one correction. "
     "Please confirm the Target Ticker and Peer Tickers."
@@ -57,7 +62,7 @@ class _ToolInvocationGate:
         self.run_is_terminal = False
 
 
-FUNDAMENTAL_ANALYSIS_INSTRUCTION = """
+FUNDAMENTAL_ROUTING_INSTRUCTION = """
 You are the Fundamental Analysis Agent for TalkToYourStock.
 
 For conversational finance or fundamentals questions, answer directly without
@@ -71,20 +76,25 @@ For a request that compares one company with explicit peer companies:
 - If the Tool returns a pre-Run validation error with retry_allowed=true, make at
   most one corrected Tool call. If retry_allowed=false, ask the User to confirm
   the Target Ticker and Peer Tickers; do not call the Tool again.
-- Treat the successful Tool result as the authoritative calculated Comps Table.
-  Never invent, recalculate, or override final Metrics.
-- After a successful Tool result, author one display-ready Comparison Takeaway
-  using only evidence in that Comps Table. Its headline and interpretation are
-  freeform prose, must identify the Target Ticker and a supported available
-  Metric when comparable evidence exists, and must not repeat Metric values.
-- Set Comparison Confidence to limited, moderate, or strong based on the quality
-  and completeness of the table evidence. Explain uncertainty in the
-  interpretation without adding a separate confidence reason field.
-- Never produce a buy, sell, or hold verdict.
 - Do not create a table or claim a Run exists without a successful Tool result.
 
 If a comparison request does not identify both the Target and explicit Peers,
 ask one concise clarification question before calling the Tool.
+""".strip()
+
+COMPARISON_TAKEAWAY_INSTRUCTION = """
+Write the final response for the calculated Comps Table returned by the Tool.
+
+- Treat the Tool result as the authoritative calculated Comps Table. Never
+  invent, recalculate, or override final Metrics.
+- Author one display-ready Comparison Takeaway using only evidence in that
+  Comps Table. Its headline and interpretation are freeform prose, must identify
+  the Target Ticker and a supported available Metric when comparable evidence
+  exists, and must not repeat Metric values.
+- Set Comparison Confidence to limited, moderate, or strong based on the quality
+  and completeness of the table evidence. Explain uncertainty in the
+  interpretation without adding a separate confidence reason field.
+- Never produce a buy, sell, or hold verdict.
 """.strip()
 
 
@@ -93,6 +103,28 @@ class FundamentalAgentOutput(BaseModel):
 
     content: str = Field(min_length=1)
     comparison_takeaway: ComparisonTakeaway | None = None
+
+
+class _StagedFundamentalAgent(BaseAgent):
+    async def _run_async_impl(
+        self,
+        ctx: InvocationContext,
+    ) -> AsyncGenerator[Event, None]:
+        router, takeaway_writer = self.sub_agents
+        calculated_draft = False
+        async with aclosing(router.run_async(ctx)) as events:
+            async for event in events:
+                yield event
+                if _tool_response_from_event(event) is not None:
+                    calculated_draft = True
+                    break
+
+        if not calculated_draft:
+            return
+
+        async with aclosing(takeaway_writer.run_async(ctx)) as events:
+            async for event in events:
+                yield event
 
 
 class AgentRoutingUnavailable(RuntimeError):
@@ -115,14 +147,24 @@ class FundamentalAnalysisAgent:
     ) -> None:
         self._comps_client = comps_client
         self._tool_invocation_gates: dict[str, _ToolInvocationGate] = {}
-        self._agent = Agent(
-            name=FUNDAMENTAL_ANALYSIS_AGENT_NAME,
+        router = Agent(
+            name=FUNDAMENTAL_ROUTER_NAME,
             description="Routes fundamental analysis Messages to deterministic Tools.",
             model=model,
-            instruction=FUNDAMENTAL_ANALYSIS_INSTRUCTION,
+            instruction=FUNDAMENTAL_ROUTING_INSTRUCTION,
             tools=[self.generate_comps_table],
-            output_schema=FundamentalAgentOutput,
             after_model_callback=_keep_first_comps_tool_call,
+        )
+        takeaway_writer = Agent(
+            name=COMPARISON_TAKEAWAY_WRITER_NAME,
+            description="Authors a response from a calculated Comps Table.",
+            model=model,
+            instruction=COMPARISON_TAKEAWAY_INSTRUCTION,
+            output_schema=FundamentalAgentOutput,
+        )
+        self._agent = _StagedFundamentalAgent(
+            name=FUNDAMENTAL_ANALYSIS_AGENT_NAME,
+            sub_agents=[router, takeaway_writer],
         )
 
     @classmethod
@@ -247,6 +289,11 @@ class FundamentalAnalysisAgent:
             )
             return AgentMessageResponse(content=VALIDATION_CLARIFICATION, run=None)
 
+        if calculated_tool_response is None:
+            if not final_text:
+                raise AgentRoutingUnavailable("Agent returned no response.")
+            return AgentMessageResponse(content=final_text, run=None)
+
         if not final_text:
             raise AgentRoutingUnavailable("Agent returned no response.")
         try:
@@ -256,63 +303,55 @@ class FundamentalAnalysisAgent:
                 "Agent returned an invalid structured response."
             ) from exc
 
-        if calculated_tool_response is not None:
-            if agent_output.comparison_takeaway is None:
-                raise AgentRoutingUnavailable(
-                    "Agent returned no Comparison Takeaway for the calculated table."
-                )
-            finalize_request = FinalizeComparisonTakeawayRequest(
-                comparison_takeaway=agent_output.comparison_takeaway
-            )
-            try:
-                try:
-                    finalized = await self._comps_client.finalize_comps_run(
-                        calculated_tool_response.run.id,
-                        finalize_request,
-                    )
-                except CompsToolUnavailable:
-                    finalized = await self._comps_client.finalize_comps_run(
-                        calculated_tool_response.run.id,
-                        finalize_request,
-                    )
-            except CompsToolError as exc:
-                run = calculated_tool_response.run
-                error = exc.error.error
-                raise AgentToolError(
-                    status_code=exc.status_code,
-                    error=exc.error.model_copy(
-                        update={
-                            "error": error.model_copy(
-                                update={
-                                    "details": {
-                                        **(error.details or {}),
-                                        "thread_id": str(run.thread_id),
-                                        "trigger_message_id": str(
-                                            run.trigger_message_id
-                                        ),
-                                    },
-                                    "run_id": run.id,
-                                }
-                            )
-                        }
-                    ),
-                ) from None
-            except CompsToolUnavailable as exc:
-                raise AgentRoutingUnavailable(str(exc)) from exc
-            self._tool_invocation_gates[
-                str(request.user_message_id)
-            ].run_is_terminal = True
-            content = agent_output.content
-            return AgentMessageResponse(
-                content=content,
-                run=finalized.run,
-            )
-
-        if agent_output.comparison_takeaway is not None:
+        if agent_output.comparison_takeaway is None:
             raise AgentRoutingUnavailable(
-                "Agent returned a Comparison Takeaway without a calculated table."
+                "Agent returned no Comparison Takeaway for the calculated table."
             )
-        return AgentMessageResponse(content=agent_output.content, run=None)
+        finalize_request = FinalizeComparisonTakeawayRequest(
+            comparison_takeaway=agent_output.comparison_takeaway
+        )
+        try:
+            try:
+                finalized = await self._comps_client.finalize_comps_run(
+                    calculated_tool_response.run.id,
+                    finalize_request,
+                )
+            except CompsToolUnavailable:
+                finalized = await self._comps_client.finalize_comps_run(
+                    calculated_tool_response.run.id,
+                    finalize_request,
+                )
+        except CompsToolError as exc:
+            run = calculated_tool_response.run
+            error = exc.error.error
+            raise AgentToolError(
+                status_code=exc.status_code,
+                error=exc.error.model_copy(
+                    update={
+                        "error": error.model_copy(
+                            update={
+                                "details": {
+                                    **(error.details or {}),
+                                    "thread_id": str(run.thread_id),
+                                    "trigger_message_id": str(
+                                        run.trigger_message_id
+                                    ),
+                                },
+                                "run_id": run.id,
+                            }
+                        )
+                    }
+                ),
+            ) from None
+        except CompsToolUnavailable as exc:
+            raise AgentRoutingUnavailable(str(exc)) from exc
+        self._tool_invocation_gates[
+            str(request.user_message_id)
+        ].run_is_terminal = True
+        return AgentMessageResponse(
+            content=agent_output.content,
+            run=finalized.run,
+        )
 
     async def generate_comps_table(
         self,
@@ -418,7 +457,10 @@ def _tool_response_from_event(event: Any) -> GenerateCompsDraftResponse | None:
 
 
 def _text_from_event(event: Any) -> str | None:
-    if getattr(event, "author", None) != FUNDAMENTAL_ANALYSIS_AGENT_NAME:
+    if getattr(event, "author", None) not in {
+        FUNDAMENTAL_ROUTER_NAME,
+        COMPARISON_TAKEAWAY_WRITER_NAME,
+    }:
         return None
     content = getattr(event, "content", None)
     text_parts = [

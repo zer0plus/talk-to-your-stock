@@ -169,7 +169,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
                         )
                     ],
                 ),
-                _agent_output(
+                _native_agent_output(
                     "AAPL trades below its peers on EV / EBITDA.",
                 ),
             ],
@@ -206,11 +206,18 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(request.analysis_period.value, "latest")
         self.assertEqual(len(model.responses), 0)
         self.assertEqual(len(model.requests), 2)
-        for model_request in model.requests:
-            self.assertEqual(
-                set(model_request.tools_dict),
-                {"generate_comps_table", "set_model_response"},
-            )
+        routing_request, analysis_request = model.requests
+        self.assertEqual(
+            set(routing_request.tools_dict),
+            {"generate_comps_table"},
+        )
+        self.assertIsNone(routing_request.config.response_schema)
+        self.assertEqual(analysis_request.tools_dict, {})
+        self.assertIsNotNone(analysis_request.config.response_schema)
+        self.assertIn(
+            str(tool_response.run.id),
+            repr(analysis_request.contents),
+        )
         self.assertEqual(len(comps_client.finalize_requests), 1)
         finalized_takeaway = comps_client.finalize_requests[0][
             1
@@ -228,25 +235,17 @@ class AgentCompsRoutingTest(unittest.TestCase):
             [event.author for event in session.events],
             [
                 "user",
-                "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
+                "fundamental_analysis_router",
+                "fundamental_analysis_router",
+                "comparison_takeaway_writer",
             ],
         )
         tool_call = session.events[1].content.parts[0].function_call
         tool_result = session.events[2].content.parts[0].function_response
-        structured_response_call = session.events[3].content.parts[0].function_call
-        structured_response_result = (
-            session.events[4].content.parts[0].function_response
-        )
         self.assertEqual(tool_call.name, "generate_comps_table")
         self.assertEqual(tool_call.args["target_ticker"], "AAPL")
         self.assertEqual(tool_result.name, "generate_comps_table")
         self.assertEqual(tool_result.response["run"]["id"], str(tool_response.run.id))
-        self.assertEqual(structured_response_call.name, "set_model_response")
-        self.assertEqual(structured_response_result.name, "set_model_response")
         self.assertEqual(
             json.loads(session.events[-1].content.parts[0].text)["content"],
             "AAPL trades below its peers on EV / EBITDA.",
@@ -276,7 +275,9 @@ class AgentCompsRoutingTest(unittest.TestCase):
                         ),
                     ],
                 ),
-                _agent_output("AAPL trades below its peers on EV / EBITDA."),
+                _native_agent_output(
+                    "AAPL trades below its peers on EV / EBITDA."
+                ),
             ],
         )
         comps_client = RecordingCompsClient(tool_response, tool_response)
@@ -297,7 +298,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(response.json()["run"]["id"], str(tool_response.run.id))
         self.assertEqual(len(comps_client.requests), 1)
 
-    def test_later_duplicate_tool_call_preserves_the_calculated_run(self) -> None:
+    def test_router_is_not_called_again_after_a_calculated_draft(self) -> None:
         user_id = uuid4()
         thread_id = uuid4()
         user_message_id = uuid4()
@@ -309,8 +310,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
             model="scripted",
             responses=[
                 _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
-                _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
-                _agent_output("AAPL trades below MSFT on EV / EBITDA."),
+                _native_agent_output("AAPL trades below MSFT on EV / EBITDA."),
             ],
         )
         comps_client = RecordingCompsClient(tool_response)
@@ -333,27 +333,12 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(len(comps_client.finalize_requests), 1)
         self.assertEqual(comps_client.fail_requests, [])
 
-        session = asyncio.run(
-            self.session_context.get_session(user_id=user_id, thread_id=thread_id)
-        )
-        assert session is not None
-        tool_results = [
-            part.function_response.response
-            for event in session.events
-            for part in event.content.parts
-            if (
-                part.function_response is not None
-                and part.function_response.name == "generate_comps_table"
-            )
-        ]
-        self.assertEqual(tool_results[1]["error"]["code"], "CONFLICT")
+        self.assertEqual(len(model.requests), 2)
         self.assertEqual(
-            tool_results[1]["error"]["message"],
-            (
-                "A Comps Table was already calculated for this Message. "
-                "Use the existing Tool result to write the Comparison Takeaway."
-            ),
+            set(model.requests[0].tools_dict),
+            {"generate_comps_table"},
         )
+        self.assertEqual(model.requests[1].tools_dict, {})
 
     def test_agent_output_errors_link_the_failed_calculated_run(self) -> None:
         cases = (
@@ -445,7 +430,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
             model="scripted",
             responses=[
                 _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
-                _agent_output("AAPL is compared with MSFT."),
+                _native_agent_output("AAPL is compared with MSFT."),
             ],
         )
         finalization_error = CompsToolError(
@@ -514,7 +499,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
                     ],
                 ),
                 _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
-                _agent_output("AAPL trades below MSFT on EV / EBITDA."),
+                _native_agent_output("AAPL trades below MSFT on EV / EBITDA."),
             ],
         )
         validation_error = CompsToolValidationError(
@@ -571,7 +556,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
             responses=[
                 types.Content(
                     role="model",
-                    parts=[types.Part(text=_conversation_output("AAPL looks cheaper than MSFT."))],
+                    parts=[types.Part(text="AAPL looks cheaper than MSFT.")],
                 )
             ],
         )
@@ -616,7 +601,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
                     responses=[
                         types.Content(
                             role="model",
-                            parts=[types.Part(text=_conversation_output(model_response))],
+                            parts=[types.Part(text=model_response)],
                         )
                     ],
                 )
@@ -657,7 +642,9 @@ class AgentCompsRoutingTest(unittest.TestCase):
             responses=[
                 _tool_call(target_ticker="AAPLL", peer_tickers=["MSFT", "NVDA"]),
                 _tool_call(target_ticker="AAPL", peer_tickers=["MSFT", "NVDA"]),
-                _agent_output("AAPL trades below its peers on EV / EBITDA."),
+                _native_agent_output(
+                    "AAPL trades below its peers on EV / EBITDA."
+                ),
             ],
         )
         validation_error = CompsToolValidationError(
@@ -767,10 +754,10 @@ class AgentCompsRoutingTest(unittest.TestCase):
             [event.author for event in session.events],
             [
                 "user",
-                "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
-                "fundamental_analysis_agent",
+                "fundamental_analysis_router",
+                "fundamental_analysis_router",
+                "fundamental_analysis_router",
+                "fundamental_analysis_router",
                 "fundamental_analysis_agent",
             ],
         )
@@ -939,27 +926,28 @@ def _successful_tool_response(
     )
 
 
-def _agent_output(content: str) -> types.Content:
+def _native_agent_output(content: str) -> types.Content:
     return types.Content(
         role="model",
         parts=[
-            types.Part.from_function_call(
-                name="set_model_response",
-                args={
-                    "content": content,
-                    "comparison_takeaway": {
-                        "headline": (
-                            "AAPL trades at a discount to its peers on "
-                            "EV / EBITDA."
-                        ),
-                        "interpretation": (
-                            "AAPL's EV / EBITDA is below the peer median, "
-                            "while the available table evidence supports a "
-                            "moderate-confidence comparison."
-                        ),
-                        "confidence": "moderate",
-                    },
-                },
+            types.Part(
+                text=json.dumps(
+                    {
+                        "content": content,
+                        "comparison_takeaway": {
+                            "headline": (
+                                "AAPL trades at a discount to its peers on "
+                                "EV / EBITDA."
+                            ),
+                            "interpretation": (
+                                "AAPL's EV / EBITDA is below the peer median, "
+                                "while the available table evidence supports a "
+                                "moderate-confidence comparison."
+                            ),
+                            "confidence": "moderate",
+                        },
+                    }
+                )
             )
         ],
     )

@@ -36,14 +36,7 @@ class ConversationLlm(BaseLlm):
         yield LlmResponse(
             content=types.Content(
                 role="model",
-                parts=[
-                    types.Part(
-                        text=(
-                            '{"content":"Conversation Response",'
-                            '"comparison_takeaway":null}'
-                        )
-                    )
-                ],
+                parts=[types.Part(text="Conversation Response")],
             ),
             partial=False,
         )
@@ -123,15 +116,15 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         assert session is not None
         self.assertEqual(
             [event.author for event in session.events],
-            ["user", "fundamental_analysis_agent", "user", "fundamental_analysis_agent"],
+            ["user", "fundamental_analysis_router"] * 2,
         )
         self.assertEqual(
             [event.content.parts[0].text for event in session.events],
             [
                 "What is EBITDA?",
-                '{"content":"Conversation Response","comparison_takeaway":null}',
+                "Conversation Response",
                 "How is it used in valuation?",
-                '{"content":"Conversation Response","comparison_takeaway":null}',
+                "Conversation Response",
             ],
         )
 
@@ -187,7 +180,7 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         self.assertEqual(status_codes, [200, 200])
         self.assertEqual(
             event_authors,
-            ["user", "fundamental_analysis_agent"] * 2,
+            ["user", "fundamental_analysis_router"] * 2,
         )
 
     def test_agent_service_accepts_bff_message_request(self) -> None:
