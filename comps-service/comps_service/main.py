@@ -54,6 +54,7 @@ from .run_service import (
     DuplicateToolInvocation,
     FailedCompsRun,
     RecoveredFailedCompsRun,
+    RunCalculationInProgress,
 )
 from .tool_validation import (
     AlphaVantageTickerValidator,
@@ -132,6 +133,18 @@ def calculated_run_not_found_exception_handler(
 def duplicate_tool_invocation_exception_handler(
     _request: object,
     exc: DuplicateToolInvocation,
+) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.CONFLICT,
+        message=str(exc),
+    )
+
+
+@app.exception_handler(RunCalculationInProgress)
+def run_calculation_in_progress_exception_handler(
+    _request: object,
+    exc: RunCalculationInProgress,
 ) -> JSONResponse:
     return _error_response(
         status_code=status.HTTP_409_CONFLICT,
@@ -244,10 +257,8 @@ def get_ticker_validator(
     )
 
 
-def _validate_comps_request(
+def _validate_comps_request_locally(
     request: GenerateCompsToolRequest,
-    *,
-    ticker_validator: AlphaVantageTickerValidator,
 ) -> JSONResponse | None:
     if request.peer_selection_mode == PeerSelectionMode.AUTO:
         return _error_response(
@@ -257,6 +268,22 @@ def _validate_comps_request(
         )
     try:
         validate_generate_comps_request_locally(request)
+    except ToolValidationError as exc:
+        return _error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=ErrorCode.VALIDATION_ERROR,
+            message=exc.message,
+            details=exc.details,
+        )
+    return None
+
+
+def _validate_comps_tickers(
+    request: GenerateCompsToolRequest,
+    *,
+    ticker_validator: AlphaVantageTickerValidator,
+) -> JSONResponse | None:
+    try:
         validate_generate_comps_request(request, ticker_validator=ticker_validator)
     except ToolValidationError as exc:
         return _error_response(
@@ -320,10 +347,13 @@ def reserve_comps_run(
         repository=repository,
         company_data_source=company_data_source,
     )
+    validation_error = _validate_comps_request_locally(request)
+    if validation_error is not None:
+        return validation_error
     existing = run_service.find_reservation(request)
     if existing is not None:
         return existing
-    validation_error = _validate_comps_request(
+    validation_error = _validate_comps_tickers(
         request,
         ticker_validator=ticker_validator,
     )
@@ -361,11 +391,14 @@ def generate_comps_table(
         repository=repository,
         company_data_source=company_data_source,
     )
+    validation_error = _validate_comps_request_locally(request)
+    if validation_error is not None:
+        return validation_error
     existing = run_service.resume(request)
     if existing is not None:
         return existing
     if run_service.find_reservation(request) is None:
-        validation_error = _validate_comps_request(
+        validation_error = _validate_comps_tickers(
             request,
             ticker_validator=ticker_validator,
         )

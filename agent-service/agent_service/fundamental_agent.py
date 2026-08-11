@@ -59,7 +59,7 @@ class _ToolInvocationGate:
         self.lock = asyncio.Lock()
         self.validation_failures = 0
         self.completed = False
-        self.calculated_run_id: UUID | None = None
+        self.reserved_run_id: UUID | None = None
         self.run_is_terminal = False
 
 
@@ -204,7 +204,7 @@ class FundamentalAnalysisAgent:
             except TimeoutError as exc:
                 raise AgentRoutingUnavailable("Agent response timed out.") from exc
         except AgentRoutingUnavailable as exc:
-            if invocation_gate.calculated_run_id is None:
+            if invocation_gate.reserved_run_id is None:
                 raise
             raise AgentToolError(
                 status_code=502,
@@ -216,16 +216,16 @@ class FundamentalAnalysisAgent:
                             "thread_id": str(request.thread_id),
                             "trigger_message_id": str(request.user_message_id),
                         },
-                        run_id=invocation_gate.calculated_run_id,
+                        run_id=invocation_gate.reserved_run_id,
                     )
                 ),
             ) from exc
         finally:
             if (
-                invocation_gate.calculated_run_id is not None
+                invocation_gate.reserved_run_id is not None
                 and not invocation_gate.run_is_terminal
             ):
-                await self._fail_calculated_run(invocation_gate.calculated_run_id)
+                await self._fail_reserved_run(invocation_gate.reserved_run_id)
             if self._tool_invocation_gates.get(invocation_key) is invocation_gate:
                 self._tool_invocation_gates.pop(invocation_key)
 
@@ -424,12 +424,35 @@ class FundamentalAnalysisAgent:
         try:
             reserved = await asyncio.shield(reservation_task)
         except asyncio.CancelledError:
-            reserved = await reservation_task
-            invocation_gate.calculated_run_id = reserved.run.id
+            try:
+                reserved = await reservation_task
+            except CompsToolUnavailable:
+                await self._recover_ambiguous_reservation(
+                    run_id=request.invocation_id,
+                    invocation_gate=invocation_gate,
+                )
+                raise
+            invocation_gate.reserved_run_id = reserved.run.id
             raise
-        invocation_gate.calculated_run_id = reserved.run.id
+        except CompsToolUnavailable:
+            await self._recover_ambiguous_reservation(
+                run_id=request.invocation_id,
+                invocation_gate=invocation_gate,
+            )
+            raise
+        invocation_gate.reserved_run_id = reserved.run.id
 
-    async def _fail_calculated_run(self, run_id: UUID) -> None:
+    async def _recover_ambiguous_reservation(
+        self,
+        *,
+        run_id: UUID,
+        invocation_gate: _ToolInvocationGate,
+    ) -> None:
+        invocation_gate.reserved_run_id = run_id
+        if await self._fail_reserved_run(run_id):
+            invocation_gate.run_is_terminal = True
+
+    async def _fail_reserved_run(self, run_id: UUID) -> bool:
         try:
             await self._comps_client.fail_comps_run(
                 run_id,
@@ -445,6 +468,8 @@ class FundamentalAnalysisAgent:
                 run_id,
                 str(exc),
             )
+            return False
+        return True
 
 
 def _keep_only_first_comps_tool_call(

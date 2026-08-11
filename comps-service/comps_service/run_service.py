@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import NoReturn, Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from talk_to_your_stock_shared import (
     ComparisonTakeaway,
@@ -46,6 +46,10 @@ class DuplicateToolInvocation(RuntimeError):
 
 
 class CalculatedRunNotFound(RuntimeError):
+    pass
+
+
+class RunCalculationInProgress(RuntimeError):
     pass
 
 
@@ -102,6 +106,13 @@ class CompanyDataSource(Protocol):
 
 class CompsRunRepository(Protocol):
     def reserve_run(self, *, invocation_id: UUID, run: Run) -> None: ...
+
+    def claim_run_for_calculation(
+        self,
+        *,
+        run_id: UUID,
+        started_at: datetime,
+    ) -> bool: ...
 
     def save_calculated_run(
         self,
@@ -175,16 +186,16 @@ class CompsRunService:
 
         started_at = utc_now()
         run = Run(
-            id=uuid4(),
+            id=request.invocation_id,
             thread_id=request.thread_id,
             trigger_message_id=request.trigger_message_id,
-            status=RunStatus.RUNNING,
+            status=RunStatus.QUEUED,
             target_ticker=request.target_ticker.upper(),
             peer_tickers=[ticker.upper() for ticker in request.peer_tickers],
             currency=request.currency.upper(),
             as_of=None,
             created_at=started_at,
-            started_at=started_at,
+            started_at=None,
         )
         try:
             self._repository.reserve_run(
@@ -218,7 +229,17 @@ class CompsRunService:
         requested_tickers = [target_ticker, *peer_tickers]
         reservation = self.reserve(request).run
         run_id = reservation.id
-        started_at = reservation.started_at or reservation.created_at
+        started_at = utc_now()
+        if not self._repository.claim_run_for_calculation(
+            run_id=run_id,
+            started_at=started_at,
+        ):
+            existing = self.resume(request)
+            if existing is not None:
+                return existing
+            raise RunCalculationInProgress(
+                "Tool invocation calculation is already running."
+            )
         loaded = LoadedCompanyData(companies=[], raw_provider_evidence={})
         try:
             loaded = self._company_data_source.load(
@@ -313,7 +334,7 @@ class CompsRunService:
         if isinstance(existing, FailedRunInvocation):
             raise RecoveredFailedCompsRun(existing)
         if isinstance(existing, Run):
-            if existing.status == RunStatus.RUNNING:
+            if existing.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 return None
             if existing.status == RunStatus.FAILED:
                 raise DuplicateToolInvocation(
@@ -418,7 +439,7 @@ class CompsRunService:
         run = self._repository.get_run(run_id)
         if run is None:
             raise CalculatedRunNotFound("Calculated Comps Run not found.")
-        if run.status != RunStatus.RUNNING:
+        if run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
             return run
 
         failed_run = run.model_copy(

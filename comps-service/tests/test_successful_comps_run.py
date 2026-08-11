@@ -168,6 +168,20 @@ class InMemoryCompsRunRepository:
         self.invocations[invocation_id] = run.id
         self.runs[run.id] = run
 
+    def claim_run_for_calculation(
+        self,
+        *,
+        run_id: UUID,
+        started_at: datetime,
+    ) -> bool:
+        run = self.runs[run_id]
+        if run.status != RunStatus.QUEUED:
+            return False
+        self.runs[run_id] = run.model_copy(
+            update={"status": RunStatus.RUNNING, "started_at": started_at}
+        )
+        return True
+
     def save_calculated_run(
         self,
         *,
@@ -288,6 +302,19 @@ class InvalidLinkageCompsRunRepository(InMemoryCompsRunRepository):
         raise InvalidRunLinkage("Run must reference its persisted trigger Message.")
 
 
+class AlreadyClaimedCompsRunRepository(InMemoryCompsRunRepository):
+    def claim_run_for_calculation(
+        self,
+        *,
+        run_id: UUID,
+        started_at: datetime,
+    ) -> bool:
+        self.runs[run_id] = self.runs[run_id].model_copy(
+            update={"status": RunStatus.RUNNING, "started_at": started_at}
+        )
+        return False
+
+
 class SuccessfulCompsRunTest(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = InMemoryCompsRunRepository()
@@ -328,8 +355,9 @@ class SuccessfulCompsRunTest(unittest.TestCase):
 
         self.assertEqual(created.status_code, 200, created.text)
         self.assertEqual(repeated.json(), created.json())
-        self.assertEqual(created.json()["run"]["status"], "running")
+        self.assertEqual(created.json()["run"]["status"], "queued")
         self.assertIsNone(created.json()["run"]["as_of"])
+        self.assertEqual(created.json()["run"]["id"], request["invocation_id"])
 
     def test_reserved_run_is_then_calculated_without_creating_another_run(
         self,
@@ -404,6 +432,33 @@ class SuccessfulCompsRunTest(unittest.TestCase):
 
         self.assertEqual(calculated.status_code, 200, calculated.text)
         self.assertEqual(ticker_validator.tickers, ["AAPL", "MSFT"])
+
+    def test_concurrent_retry_does_not_repeat_provider_calculation(self) -> None:
+        repository = AlreadyClaimedCompsRunRepository()
+        app.dependency_overrides[get_repository] = lambda: repository
+        app.dependency_overrides[get_company_data_source] = UnexpectedCompanyDataSource
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json={
+                    "invocation_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "trigger_message_id": str(uuid4()),
+                    "target_ticker": "AAPL",
+                    "peer_tickers": ["MSFT"],
+                    "peer_selection_mode": "user_supplied",
+                    "analysis_period": "latest",
+                },
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["code"], "CONFLICT")
 
     def test_agent_takeaway_finalizes_calculated_run_with_every_company(
         self,
@@ -1417,6 +1472,39 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(created.status_code, 200, created.text)
         self.assertEqual(repeated.status_code, 409, repeated.text)
         self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
+
+    def test_repeated_invocation_cannot_bypass_unsupported_mode_validation(
+        self,
+    ) -> None:
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            created = client.post(
+                "/v1/internal/tools/reserve-comps-run",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+            repeated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json={**request, "peer_selection_mode": "auto"},
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(repeated.status_code, 501, repeated.text)
 
     def test_runtime_path_fails_clearly_without_provider_configuration(
         self,

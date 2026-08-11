@@ -114,7 +114,7 @@ The service boundary that hosts Google ADK orchestration and the Fundamental Ana
 _Avoid_: Orchestrator service unless discussing implementation mechanics
 
 **Comps Service**:
-The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports. After validating an invocation, it durably reserves the invocation's Run before calculation starts, so the Agent knows the Run identity before any long-running work. It validates only the required shape of an Agent-authored Comparison Takeaway, persists the exact prose with the calculated Comps Table when finalizing a successful Run, and owns terminal Run lifecycle transitions. An unfinished calculated Run can be resumed by repeating its invocation if the Agent cannot reach the failure transition.
+The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports. The invocation ID is also the Run ID, so the Agent knows the identity before any network call; after validation, the service durably reserves that queued Run and atomically claims it before calculation. It validates only the required shape of an Agent-authored Comparison Takeaway, persists the exact prose with the calculated Comps Table when finalizing a successful Run, and owns terminal Run lifecycle transitions. An unfinished calculated Run can be resumed by repeating its invocation if the Agent cannot reach the failure transition.
 _Avoid_: Calculation service, data service
 
 **Conversation Response**:

@@ -93,6 +93,32 @@ class PostgresCompsRunRepository:
         except Exception as exc:
             self._raise_unavailable(exc)
 
+    def claim_run_for_calculation(
+        self,
+        *,
+        run_id: UUID,
+        started_at: datetime,
+    ) -> bool:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        update comps_runs
+                        set status = %s, started_at = %s
+                        where id = %s and status = %s
+                        """,
+                        (
+                            RunStatus.RUNNING.value,
+                            started_at,
+                            run_id,
+                            RunStatus.QUEUED.value,
+                        ),
+                    )
+                    return cursor.rowcount == 1
+        except Exception as exc:
+            self._raise_unavailable(exc)
+
     def save_calculated_run(
         self,
         *,
@@ -452,7 +478,7 @@ class PostgresCompsRunRepository:
                             run.status.value,
                             run.completed_at,
                             run.id,
-                            "running",
+                            RunStatus.RUNNING.value,
                         ),
                     )
                     if cursor.rowcount != 1:
@@ -470,14 +496,15 @@ class PostgresCompsRunRepository:
                         """
                         update comps_runs
                         set status = %s, error_message = %s, completed_at = %s
-                        where id = %s and status = %s
+                        where id = %s and status in (%s, %s)
                         """,
                         (
                             run.status.value,
                             run.error_message,
                             run.completed_at,
                             run.id,
-                            "running",
+                            RunStatus.QUEUED.value,
+                            RunStatus.RUNNING.value,
                         ),
                     )
                     if cursor.rowcount != 1:

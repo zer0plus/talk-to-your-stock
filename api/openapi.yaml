@@ -418,7 +418,7 @@ paths:
               $ref: '#/components/schemas/GenerateCompsToolRequest'
       responses:
         '200':
-          description: Durable running Run reservation
+          description: Durable queued Run reservation
           content:
             application/json:
               schema:

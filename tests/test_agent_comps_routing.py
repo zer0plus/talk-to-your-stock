@@ -63,10 +63,12 @@ class RecordingCompsClient:
     def __init__(
         self,
         *responses: GenerateCompsToolResponse | Exception,
+        fail_error: Exception | None = None,
         finalize_error: Exception | None = None,
         finalize_delay_seconds: float = 0,
         generation_delay_seconds: float = 0,
         reservation_delay_seconds: float = 0,
+        lost_reservation_responses: int = 0,
     ) -> None:
         self.responses = list(responses)
         self.requests: list[GenerateCompsToolRequest] = []
@@ -75,10 +77,12 @@ class RecordingCompsClient:
         ] = []
         self.fail_requests: list[tuple[UUID, FailCalculatedRunRequest]] = []
         self.pending_final: GenerateCompsToolResponse | None = None
+        self.fail_error = fail_error
         self.finalize_error = finalize_error
         self.finalize_delay_seconds = finalize_delay_seconds
         self.generation_delay_seconds = generation_delay_seconds
         self.reservation_delay_seconds = reservation_delay_seconds
+        self.lost_reservation_responses = lost_reservation_responses
 
     async def reserve_comps_run(
         self,
@@ -91,9 +95,16 @@ class RecordingCompsClient:
             self.responses.pop(0)
             raise response
         self.pending_final = response
+        if self.lost_reservation_responses:
+            self.lost_reservation_responses -= 1
+            raise CompsToolUnavailable("Comps Service unavailable.")
         return RunResponse(
             run=response.run.model_copy(
-                update={"status": RunStatus.RUNNING, "completed_at": None}
+                update={
+                    "status": RunStatus.QUEUED,
+                    "started_at": None,
+                    "completed_at": None,
+                }
             )
         )
 
@@ -145,10 +156,13 @@ class RecordingCompsClient:
         request: FailCalculatedRunRequest,
     ) -> RunResponse:
         self.fail_requests.append((run_id, request))
+        if self.fail_error is not None:
+            raise self.fail_error
         assert self.pending_final is not None
         return RunResponse(
             run=self.pending_final.run.model_copy(
                 update={
+                    "id": run_id,
                     "status": RunStatus.FAILED,
                     "error_message": request.error_message,
                 }
@@ -635,6 +649,84 @@ class AgentCompsRoutingTest(unittest.TestCase):
             [tool_response.run.id],
         )
 
+    def test_two_lost_reservation_responses_fail_the_known_invocation_run(
+        self,
+    ) -> None:
+        user_message_id = uuid4()
+        tool_response = _successful_tool_response(
+            thread_id=uuid4(),
+            trigger_message_id=user_message_id,
+        )
+        comps_client = RecordingCompsClient(
+            tool_response,
+            lost_reservation_responses=2,
+        )
+        agent = FundamentalAnalysisAgent(
+            model=ScriptedLlm(
+                model="scripted",
+                responses=[
+                    _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                ],
+            ),
+            comps_client=comps_client,
+        )
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(tool_response.run.thread_id),
+                "user_message_id": str(user_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(response.json()["error"]["run_id"], str(user_message_id))
+        self.assertEqual(
+            [request[0] for request in comps_client.fail_requests],
+            [user_message_id],
+        )
+
+    def test_ambiguous_reservation_keeps_known_id_when_cleanup_is_unavailable(
+        self,
+    ) -> None:
+        user_message_id = uuid4()
+        tool_response = _successful_tool_response(
+            thread_id=uuid4(),
+            trigger_message_id=user_message_id,
+        )
+        comps_client = RecordingCompsClient(
+            tool_response,
+            fail_error=CompsToolUnavailable("Comps Service unavailable."),
+            lost_reservation_responses=2,
+        )
+        agent = FundamentalAnalysisAgent(
+            model=ScriptedLlm(
+                model="scripted",
+                responses=[
+                    _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
+                ],
+            ),
+            comps_client=comps_client,
+        )
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        response = TestClient(app).post(
+            "/v1/internal/agent/respond",
+            json={
+                "user_id": str(uuid4()),
+                "thread_id": str(tool_response.run.thread_id),
+                "user_message_id": str(user_message_id),
+                "content": "Compare Apple with Microsoft",
+            },
+        )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(response.json()["error"]["run_id"], str(user_message_id))
+        self.assertEqual(len(comps_client.fail_requests), 2)
+
     def test_parallel_sibling_does_not_consume_validation_retry(self) -> None:
         user_id = uuid4()
         thread_id = uuid4()
@@ -992,6 +1084,7 @@ class AgentCompsRoutingTest(unittest.TestCase):
         comps_client = RecordingCompsClient(
             CompsToolUnavailable("Comps Service unavailable."),
             CompsToolUnavailable("Comps Service unavailable."),
+            fail_error=CompsToolUnavailable("Comps Service unavailable."),
         )
         agent = FundamentalAnalysisAgent(model=model, comps_client=comps_client)
         app.dependency_overrides[get_fundamental_agent] = lambda: agent

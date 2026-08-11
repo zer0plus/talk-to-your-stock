@@ -240,6 +240,23 @@ class CompsMigrationsTest(unittest.TestCase):
                     thread_id=thread_id,
                     trigger_message_id=trigger_message_id,
                 )
+                reserved = client.post(
+                    "/v1/internal/tools/reserve-comps-run",
+                    json=generate_request,
+                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                )
+                repeated_reservation = client.post(
+                    "/v1/internal/tools/reserve-comps-run",
+                    json=generate_request,
+                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                )
+                self.assertEqual(reserved.status_code, 200, reserved.text)
+                self.assertEqual(repeated_reservation.json(), reserved.json())
+                self.assertEqual(
+                    reserved.json()["run"]["id"],
+                    generate_request["invocation_id"],
+                )
+                self.assertEqual(reserved.json()["run"]["status"], "queued")
                 created = client.post(
                     "/v1/internal/tools/generate-comps-table",
                     json=generate_request,
@@ -247,6 +264,7 @@ class CompsMigrationsTest(unittest.TestCase):
                 )
                 self.assertEqual(created.status_code, 200, created.text)
                 run_id = created.json()["run"]["id"]
+                self.assertEqual(run_id, reserved.json()["run"]["id"])
                 recovered = client.post(
                     "/v1/internal/tools/generate-comps-table",
                     json=generate_request,

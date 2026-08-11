@@ -63,6 +63,20 @@ class InMemoryCompsRunRepository:
     def reserve_run(self, *, invocation_id: UUID, run: Run) -> None:
         self._save_invocation(invocation_id, run)
 
+    def claim_run_for_calculation(
+        self,
+        *,
+        run_id: UUID,
+        started_at: datetime,
+    ) -> bool:
+        run = self.runs[run_id]
+        if run.status != RunStatus.QUEUED:
+            return False
+        self.runs[run_id] = run.model_copy(
+            update={"status": RunStatus.RUNNING, "started_at": started_at}
+        )
+        return True
+
     def save_calculated_run(
         self,
         *,
