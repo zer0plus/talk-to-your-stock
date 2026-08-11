@@ -150,6 +150,7 @@ def run_calculation_in_progress_exception_handler(
         status_code=status.HTTP_409_CONFLICT,
         code=ErrorCode.CONFLICT,
         message=str(exc),
+        run_id=exc.run_id,
     )
 
 

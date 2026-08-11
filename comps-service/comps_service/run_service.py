@@ -50,7 +50,9 @@ class CalculatedRunNotFound(RuntimeError):
 
 
 class RunCalculationInProgress(RuntimeError):
-    pass
+    def __init__(self, run_id: UUID) -> None:
+        super().__init__("Tool invocation calculation is already running.")
+        self.run_id = run_id
 
 
 class RecoveredFailedCompsRun(RuntimeError):
@@ -237,9 +239,7 @@ class CompsRunService:
             existing = self.resume(request)
             if existing is not None:
                 return existing
-            raise RunCalculationInProgress(
-                "Tool invocation calculation is already running."
-            )
+            raise RunCalculationInProgress(run_id)
         loaded = LoadedCompanyData(companies=[], raw_provider_evidence={})
         try:
             loaded = self._company_data_source.load(
@@ -262,6 +262,7 @@ class CompsRunService:
                 run_id=run_id,
                 target_ticker=target_ticker,
                 peer_tickers=peer_tickers,
+                created_at=reservation.created_at,
                 started_at=started_at,
                 loaded=exc.partial_data,
                 cause=exc.cause,
@@ -276,6 +277,7 @@ class CompsRunService:
                 run_id=run_id,
                 target_ticker=target_ticker,
                 peer_tickers=peer_tickers,
+                created_at=reservation.created_at,
                 started_at=started_at,
                 loaded=loaded,
                 cause=exc,
@@ -291,7 +293,7 @@ class CompsRunService:
             currency=request.currency.upper(),
             as_of=table.as_of,
             warnings=warnings,
-            created_at=started_at,
+            created_at=reservation.created_at,
             started_at=started_at,
         )
         source_snapshot = SourceSnapshot(
@@ -459,6 +461,7 @@ class CompsRunService:
         run_id: UUID,
         target_ticker: str,
         peer_tickers: list[str],
+        created_at: datetime,
         started_at: datetime,
         loaded: LoadedCompanyData,
         cause: (
@@ -478,7 +481,7 @@ class CompsRunService:
             currency=request.currency.upper(),
             as_of=None,
             error_message=str(cause),
-            created_at=started_at,
+            created_at=created_at,
             started_at=started_at,
             completed_at=completed_at,
         )

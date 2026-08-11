@@ -396,6 +396,10 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             calculated.json()["run"]["id"],
             reserved.json()["run"]["id"],
         )
+        self.assertEqual(
+            calculated.json()["run"]["created_at"],
+            reserved.json()["run"]["created_at"],
+        )
         self.assertEqual(len(self.repository.runs), 1)
         self.assertIsNotNone(calculated.json()["run"]["as_of"])
 

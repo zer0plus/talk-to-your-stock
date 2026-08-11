@@ -148,6 +148,7 @@ class FundamentalAnalysisAgent:
     ) -> None:
         self._comps_client = comps_client
         self._tool_invocation_gates: dict[str, _ToolInvocationGate] = {}
+        self._reservation_cleanup_tasks: set[asyncio.Task[None]] = set()
         router = Agent(
             name=FUNDAMENTAL_ROUTER_NAME,
             description="Routes fundamental analysis Messages to deterministic Tools.",
@@ -396,7 +397,18 @@ class FundamentalAnalysisAgent:
                 try:
                     response = await self._comps_client.generate_comps_table(request)
                 except CompsToolUnavailable:
-                    response = await self._comps_client.generate_comps_table(request)
+                    try:
+                        response = await self._comps_client.generate_comps_table(
+                            request
+                        )
+                    except CompsToolError as exc:
+                        if exc.status_code == 409:
+                            invocation_gate.run_is_terminal = True
+                        raise
+                except CompsToolError as exc:
+                    if exc.status_code == 409:
+                        invocation_gate.run_is_terminal = True
+                    raise
             except CompsToolValidationError as exc:
                 invocation_gate.validation_failures += 1
                 retry_allowed = invocation_gate.validation_failures == 1
@@ -424,15 +436,14 @@ class FundamentalAnalysisAgent:
         try:
             reserved = await asyncio.shield(reservation_task)
         except asyncio.CancelledError:
-            try:
-                reserved = await reservation_task
-            except CompsToolUnavailable:
-                await self._recover_ambiguous_reservation(
+            cleanup_task = asyncio.create_task(
+                self._settle_cancelled_reservation(
+                    reservation_task=reservation_task,
                     run_id=request.invocation_id,
-                    invocation_gate=invocation_gate,
                 )
-                raise
-            invocation_gate.reserved_run_id = reserved.run.id
+            )
+            self._reservation_cleanup_tasks.add(cleanup_task)
+            cleanup_task.add_done_callback(self._reservation_cleanup_tasks.discard)
             raise
         except CompsToolUnavailable:
             await self._recover_ambiguous_reservation(
@@ -442,14 +453,27 @@ class FundamentalAnalysisAgent:
             raise
         invocation_gate.reserved_run_id = reserved.run.id
 
+    async def _settle_cancelled_reservation(
+        self,
+        *,
+        reservation_task: asyncio.Task[RunResponse],
+        run_id: UUID,
+    ) -> None:
+        try:
+            reserved = await reservation_task
+        except CompsToolUnavailable:
+            await self._fail_reserved_run(run_id)
+            return
+        await self._fail_reserved_run(reserved.run.id)
+
     async def _recover_ambiguous_reservation(
         self,
         *,
         run_id: UUID,
         invocation_gate: _ToolInvocationGate,
     ) -> None:
-        invocation_gate.reserved_run_id = run_id
         if await self._fail_reserved_run(run_id):
+            invocation_gate.reserved_run_id = run_id
             invocation_gate.run_is_terminal = True
 
     async def _fail_reserved_run(self, run_id: UUID) -> bool:

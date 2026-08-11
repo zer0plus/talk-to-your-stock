@@ -183,6 +183,37 @@ class HttpCompsToolClientTest(unittest.TestCase):
             {"unsupported_tickers": ["AAPLL"]},
         )
 
+    def test_preserves_in_progress_conflict_and_run_linkage(self) -> None:
+        comps_app = FastAPI()
+        request = _tool_request(thread_id=uuid4(), trigger_message_id=uuid4())
+
+        @comps_app.post("/v1/internal/tools/generate-comps-table")
+        def generate_comps_table() -> JSONResponse:
+            return JSONResponse(
+                status_code=409,
+                content=ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.CONFLICT,
+                        message="Tool invocation calculation is already running.",
+                        run_id=request.invocation_id,
+                    )
+                ).model_dump(mode="json"),
+            )
+
+        with running_service(comps_app) as base_url:
+            client = HttpCompsToolClient(
+                base_url=base_url,
+                internal_token="internal-token",
+            )
+            with self.assertRaises(CompsToolError) as context:
+                asyncio.run(client.generate_comps_table(request))
+
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertEqual(
+            context.exception.error.error.run_id,
+            request.invocation_id,
+        )
+
     def test_malformed_error_response_uses_a_safe_generic_error(self) -> None:
         leaked_value = "FAKE_UPSTREAM_SECRET_123"
         comps_app = FastAPI()

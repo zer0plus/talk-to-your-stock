@@ -118,7 +118,7 @@ class HttpCompsToolClient:
             if response.status_code == 400:
                 raise CompsToolValidationError(error)
             status_code = response.status_code
-            if status_code not in (502, 503):
+            if status_code not in (409, 502, 503):
                 status_code = 502
             raise CompsToolError(status_code=status_code, error=error)
 
