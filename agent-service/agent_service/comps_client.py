@@ -27,6 +27,11 @@ COMPS_TERMINAL_TIMEOUT_SECONDS = 5
 
 
 class CompsToolClient(Protocol):
+    async def reserve_comps_run(
+        self,
+        request: GenerateCompsToolRequest,
+    ) -> RunResponse: ...
+
     async def generate_comps_table(
         self,
         request: GenerateCompsToolRequest,
@@ -122,6 +127,46 @@ class HttpCompsToolClient:
         except (JSONDecodeError, ValidationError, ValueError):
             raise CompsToolUnavailable(
                 "Comps Service returned an invalid Tool response."
+            ) from None
+
+    async def reserve_comps_run(
+        self,
+        request: GenerateCompsToolRequest,
+    ) -> RunResponse:
+        try:
+            async with asyncio.timeout(COMPS_GENERATION_TIMEOUT_SECONDS):
+                async with httpx.AsyncClient(
+                    timeout=COMPS_GENERATION_TIMEOUT_SECONDS
+                ) as client:
+                    response = await client.post(
+                        f"{self._base_url}/v1/internal/tools/reserve-comps-run",
+                        headers={
+                            "Authorization": f"Bearer {self._internal_token}"
+                        },
+                        json=request.model_dump(mode="json"),
+                    )
+        except (httpx.HTTPError, TimeoutError) as exc:
+            raise CompsToolUnavailable("Comps Service unavailable.") from exc
+
+        if response.is_error:
+            try:
+                error = ErrorResponse.model_validate(response.json())
+            except (JSONDecodeError, ValidationError, ValueError):
+                raise CompsToolUnavailable(
+                    "Comps Service returned an invalid error response."
+                ) from None
+            if response.status_code == 400:
+                raise CompsToolValidationError(error)
+            status_code = response.status_code
+            if status_code not in (502, 503):
+                status_code = 502
+            raise CompsToolError(status_code=status_code, error=error)
+
+        try:
+            return RunResponse.model_validate(response.json())
+        except (JSONDecodeError, ValidationError, ValueError):
+            raise CompsToolUnavailable(
+                "Comps Service returned an invalid reservation response."
             ) from None
 
     async def finalize_comps_run(

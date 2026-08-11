@@ -28,6 +28,8 @@ from .run_service import CalculatedRunNotFound, DuplicateToolInvocation
 logger = logging.getLogger(__name__)
 RUN_TRIGGER_MESSAGE_LINKAGE_CONSTRAINT = "comps_runs_trigger_message_linkage_fk"
 RUN_INVOCATION_ID_UNIQUE_CONSTRAINT = "comps_runs_invocation_id_unique"
+COMPS_TABLE_PRIMARY_KEY_CONSTRAINT = "comps_tables_pkey"
+SOURCE_SNAPSHOT_PRIMARY_KEY_CONSTRAINT = "comps_source_snapshots_pkey"
 
 
 class CompsPersistenceUnavailable(RuntimeError):
@@ -54,15 +56,7 @@ class PostgresCompsRunRepository:
         env = os.environ if environ is None else environ
         return cls(database_url=env.get(DATABASE_URL_VAR, ""))
 
-    def save_calculated_run(
-        self,
-        *,
-        invocation_id: UUID,
-        run: Run,
-        table: RunTableDraftResponse,
-        trace: TraceResponse,
-        source_snapshot: SourceSnapshot,
-    ) -> None:
+    def reserve_run(self, *, invocation_id: UUID, run: Run) -> None:
         from psycopg.types.json import Jsonb
 
         try:
@@ -96,6 +90,41 @@ class PostgresCompsRunRepository:
                             run.completed_at,
                         ),
                     )
+        except Exception as exc:
+            self._raise_unavailable(exc)
+
+    def save_calculated_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
+        table: RunTableDraftResponse,
+        trace: TraceResponse,
+        source_snapshot: SourceSnapshot,
+    ) -> None:
+        from psycopg.types.json import Jsonb
+
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        update comps_runs
+                        set as_of = %s, warnings = %s
+                        where id = %s and invocation_id = %s and status = %s
+                        """,
+                        (
+                            run.as_of,
+                            Jsonb(run.warnings),
+                            run.id,
+                            invocation_id,
+                            RunStatus.RUNNING.value,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DuplicateToolInvocation(
+                            "Tool invocation has already produced a Run."
+                        )
                     cursor.execute(
                         """
                         insert into comps_tables (
@@ -171,35 +200,25 @@ class PostgresCompsRunRepository:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
-                        insert into comps_runs (
-                            id, invocation_id, thread_id, trigger_message_id, status,
-                            target_ticker, peer_tickers, currency, as_of, warnings,
-                            error_message, generation_failure, created_at,
-                            started_at, completed_at
-                        )
-                        values (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s
-                        )
+                        update comps_runs
+                        set status = %s, error_message = %s,
+                            generation_failure = %s, completed_at = %s
+                        where id = %s and invocation_id = %s and status = %s
                         """,
                         (
-                            run.id,
-                            invocation_id,
-                            run.thread_id,
-                            run.trigger_message_id,
                             run.status.value,
-                            run.target_ticker,
-                            run.peer_tickers,
-                            run.currency,
-                            run.as_of,
-                            Jsonb(run.warnings),
                             run.error_message,
                             Jsonb(failure.model_dump(mode="json")),
-                            run.created_at,
-                            run.started_at,
                             run.completed_at,
+                            run.id,
+                            invocation_id,
+                            RunStatus.RUNNING.value,
                         ),
                     )
+                    if cursor.rowcount != 1:
+                        raise DuplicateToolInvocation(
+                            "Tool invocation has already produced a Run."
+                        )
                     cursor.execute(
                         """
                         insert into comps_source_snapshots (
@@ -299,6 +318,8 @@ class PostgresCompsRunRepository:
                     run=run,
                     failure=RunFailure.model_validate(row["generation_failure"]),
                 )
+            return run
+        if row["table"] is None or row["trace"] is None:
             return run
         table = RunTableDraftResponse.model_validate(row["table"])
         trace = TraceResponse.model_validate(row["trace"])
@@ -530,6 +551,13 @@ class PostgresCompsRunRepository:
         diagnostics = getattr(exc, "diag", None)
         constraint_name = getattr(diagnostics, "constraint_name", None)
         if constraint_name == RUN_INVOCATION_ID_UNIQUE_CONSTRAINT:
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a Run."
+            ) from exc
+        if constraint_name in {
+            COMPS_TABLE_PRIMARY_KEY_CONSTRAINT,
+            SOURCE_SNAPSHOT_PRIMARY_KEY_CONSTRAINT,
+        }:
             raise DuplicateToolInvocation(
                 "Tool invocation has already produced a Run."
             ) from exc

@@ -67,6 +67,7 @@ from .tool_validation import (
 
 COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
 GENERATE_COMPS_TOOL_PATH = "/v1/internal/tools/generate-comps-table"
+RESERVE_COMPS_RUN_PATH = "/v1/internal/tools/reserve-comps-run"
 FINALIZE_COMPS_RUN_PATH = "/v1/internal/runs/{run_id}/finalize"
 FAIL_COMPS_RUN_PATH = "/v1/internal/runs/{run_id}/fail"
 logger = logging.getLogger(__name__)
@@ -243,57 +244,19 @@ def get_ticker_validator(
     )
 
 
-@app.post(
-    GENERATE_COMPS_TOOL_PATH,
-    response_model=GenerateCompsDraftResponse,
-    responses={
-        400: {"model": ErrorResponse},
-        401: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
-        502: {"model": ErrorResponse},
-        503: {"model": ErrorResponse},
-        501: {"model": ErrorResponse},
-    },
-    tags=["Internal"],
-)
-def generate_comps_table(
+def _validate_comps_request(
     request: GenerateCompsToolRequest,
-    repository: Annotated[CompsRunRepository, Depends(get_repository)],
-    company_data_source: Annotated[
-        CompanyDataSource,
-        Depends(get_company_data_source),
-    ],
-    ticker_validator: Annotated[
-        AlphaVantageTickerValidator,
-        Depends(get_ticker_validator),
-    ],
-) -> GenerateCompsDraftResponse | JSONResponse:
+    *,
+    ticker_validator: AlphaVantageTickerValidator,
+) -> JSONResponse | None:
     if request.peer_selection_mode == PeerSelectionMode.AUTO:
         return _error_response(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             code=ErrorCode.INTERNAL_ERROR,
             message="Auto peer selection is not implemented yet.",
         )
-
     try:
         validate_generate_comps_request_locally(request)
-    except ToolValidationError as exc:
-        return _error_response(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            code=ErrorCode.VALIDATION_ERROR,
-            message=exc.message,
-            details=exc.details,
-        )
-
-    run_service = CompsRunService(
-        repository=repository,
-        company_data_source=company_data_source,
-    )
-    existing = run_service.resume(request)
-    if existing is not None:
-        return existing
-
-    try:
         validate_generate_comps_request(request, ticker_validator=ticker_validator)
     except ToolValidationError as exc:
         return _error_response(
@@ -325,6 +288,89 @@ def generate_comps_table(
             message=exc.message,
             details=exc.details,
         )
+    return None
+
+
+@app.post(
+    RESERVE_COMPS_RUN_PATH,
+    response_model=RunResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+        501: {"model": ErrorResponse},
+    },
+    tags=["Internal"],
+)
+def reserve_comps_run(
+    request: GenerateCompsToolRequest,
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+    company_data_source: Annotated[
+        CompanyDataSource,
+        Depends(get_company_data_source),
+    ],
+    ticker_validator: Annotated[
+        AlphaVantageTickerValidator,
+        Depends(get_ticker_validator),
+    ],
+) -> RunResponse | JSONResponse:
+    run_service = CompsRunService(
+        repository=repository,
+        company_data_source=company_data_source,
+    )
+    existing = run_service.find_reservation(request)
+    if existing is not None:
+        return existing
+    validation_error = _validate_comps_request(
+        request,
+        ticker_validator=ticker_validator,
+    )
+    if validation_error is not None:
+        return validation_error
+    return run_service.reserve(request)
+
+
+@app.post(
+    GENERATE_COMPS_TOOL_PATH,
+    response_model=GenerateCompsDraftResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+        501: {"model": ErrorResponse},
+    },
+    tags=["Internal"],
+)
+def generate_comps_table(
+    request: GenerateCompsToolRequest,
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+    company_data_source: Annotated[
+        CompanyDataSource,
+        Depends(get_company_data_source),
+    ],
+    ticker_validator: Annotated[
+        AlphaVantageTickerValidator,
+        Depends(get_ticker_validator),
+    ],
+) -> GenerateCompsDraftResponse | JSONResponse:
+    run_service = CompsRunService(
+        repository=repository,
+        company_data_source=company_data_source,
+    )
+    existing = run_service.resume(request)
+    if existing is not None:
+        return existing
+    if run_service.find_reservation(request) is None:
+        validation_error = _validate_comps_request(
+            request,
+            ticker_validator=ticker_validator,
+        )
+        if validation_error is not None:
+            return validation_error
 
     try:
         return run_service.generate(request)

@@ -60,6 +60,9 @@ class InMemoryCompsRunRepository:
         self.failures: dict[UUID, RunFailure] = {}
         self.invocations: dict[UUID, UUID] = {}
 
+    def reserve_run(self, *, invocation_id: UUID, run: Run) -> None:
+        self._save_invocation(invocation_id, run)
+
     def save_calculated_run(
         self,
         *,
@@ -87,7 +90,8 @@ class InMemoryCompsRunRepository:
         self.source_snapshots[run.id] = source_snapshot
 
     def _save_invocation(self, invocation_id: UUID, run: Run) -> None:
-        if invocation_id in self.invocations:
+        existing_run_id = self.invocations.get(invocation_id)
+        if existing_run_id is not None and existing_run_id != run.id:
             raise DuplicateToolInvocation(
                 "Tool invocation has already produced a Run."
             )
@@ -108,6 +112,8 @@ class InMemoryCompsRunRepository:
         if run.status != RunStatus.RUNNING:
             if run.id in self.failures:
                 return FailedRunInvocation(run=run, failure=self.failures[run.id])
+            return run
+        if run_id not in self.draft_tables:
             return run
         return GenerateCompsDraftResponse(
             run=run,

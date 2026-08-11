@@ -32,7 +32,8 @@ flowchart LR
   BFF -->|"Invoke agent with chat context"| FUND
   PROMPT --> FUND
   FUND -->|"If comps/fundamental analysis needed"| TOOL
-  TOOL -->|"Validated tool input"| COMPS
+  TOOL -->|"Validate and reserve Run"| COMPS
+  TOOL -->|"Calculate reserved Run"| COMPS
   COMPS -->|"Calculated table draft"| FUND
   FUND -->|"Agent-authored freeform takeaway"| COMPS
   COMPS -->|"Finalized Run"| FUND
@@ -47,6 +48,7 @@ Notes:
 * This ADR describes agent behavior and tool boundaries.
 * The Fundamental Analysis Agent is one product-level Agent implemented as two ordered internal ADK model stages under one invocation: a routing stage and a table-backed response stage. These are implementation stages, not separately routable product Agents or future agent families.
 * The routing stage can answer conversationally or call `generate_comps_table`, but it has no structured response schema. The table-backed response stage has the structured response schema but no Tools, and orchestration starts it only after a valid calculated table draft exists.
+* For a Tool call, the Comps Service validates the invocation and durably reserves its Run before calculation begins. The Agent records that Run identity before requesting calculation, so cancellation affects how long the caller waits but cannot create an unknown persisted Run.
 * The Fundamental Analysis Agent is instructed to use the Tool rather than invent or recalculate final comps metrics. After receiving the calculated table, it authors the freeform Comparison Takeaway. The Comps Service validates only its required contract shape and persists the exact prose before the Run succeeds; it does not inspect or judge the prose.
 
 ### Agent Observability
@@ -70,10 +72,10 @@ For the initial MVP, intent handling is expressed through the agent system instr
 
 The agent decides whether a message is:
 * **Conversational or no Tool selected**: answer directly, no run created.
-* **Fundamental/comps analysis with Tool selected**: the routing stage calls `generate_comps_table` and creates a running calculation; only after the calculated draft returns does the table-backed response stage author a structured freeform Comparison Takeaway, which is then finalized through the Comps Service.
+* **Fundamental/comps analysis with Tool selected**: the routing stage validates and reserves one Run for the invocation, then calculates that reserved Run through `generate_comps_table`; only after the calculated draft returns does the table-backed response stage author a structured freeform Comparison Takeaway, which is then finalized through the Comps Service.
 * **Ambiguous**: ask a short clarifying question before tool execution.
 
-If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. A succeeded Run may be claimed or linked only after the Comps Service accepts the Comparison Takeaway's required shape and persists the exact Agent-authored value with the deterministic Comps Table. If any Agent or finalization failure happens after calculation but before success, the Agent Service asks the Comps Service to transition the Run to `failed` and links that failed Run to the triggering Message. If that transition is temporarily unreachable, retrying the same invocation returns the existing calculated draft so finalization can resume rather than being blocked by the invocation uniqueness constraint.
+If the model returns text without selecting the Tool, the Agent Service returns that text with no Run. A succeeded Run may be claimed or linked only after the Comps Service accepts the Comparison Takeaway's required shape and persists the exact Agent-authored value with the deterministic Comps Table. Once reservation succeeds, any Agent, calculation, or finalization failure asks the Comps Service to transition that known Run to `failed` and links it to the triggering Message. Reservation and calculation are idempotent by invocation, so a lost response can recover the same Run rather than create another one.
 
 If the Comps Service rejects a tool call before creating a Run because the structured input is invalid, the Agent may perform one internal correction retry. If the corrected tool call is still invalid, the Agent surfaces a concise clarification or error to the User instead of looping.
 
@@ -103,6 +105,8 @@ Initial conceptual output:
 * calculated `table` draft
 * `trace`
 * `warnings`
+
+Before calculation, an internal reservation operation returns the invocation's durable running `Run`. Repeating reservation returns the same Run, and calculation writes its draft artifacts into that reserved Run rather than creating another record.
 
 After Tool execution, a separate table-backed response stage produces the structured response containing its user-facing content and a freeform Comparison Takeaway (`headline`, `interpretation`, and `confidence`). The routing stage cannot produce that structured response, and the response stage cannot call the Tool. The Agent Service sends the Takeaway to an internal Comps Service finalization boundary. The Comps Service validates only that exact shape: both strings are non-empty, confidence is `limited`, `moderate`, or `strong`, and no extra fields are present. It does not parse, verify, generate, or rewrite the prose. Finalization persists the exact Agent output with the table and transitions the Run from `running` to `succeeded` atomically. An internal failure transition moves an unfinished calculated Run from `running` to `failed` when the Agent cannot complete finalization; same-invocation draft recovery covers a temporarily unavailable failure transition.
 

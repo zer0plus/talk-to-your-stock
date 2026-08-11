@@ -171,6 +171,17 @@ class InMemoryCompsRepository:
         self.failures: dict[UUID, RunFailure] = {}
         self.invocations: dict[UUID, UUID] = {}
 
+    def reserve_run(self, *, invocation_id: UUID, run: Run) -> None:
+        existing_run_id = self.invocations.get(invocation_id)
+        if existing_run_id is not None:
+            from comps_service.run_service import DuplicateToolInvocation
+
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a Run."
+            )
+        self.invocations[invocation_id] = run.id
+        self.runs[run.id] = run
+
     def save_calculated_run(
         self,
         *,
@@ -213,6 +224,8 @@ class InMemoryCompsRepository:
         if run.status != RunStatus.RUNNING:
             if run.id in self.failures:
                 return FailedRunInvocation(run=run, failure=self.failures[run.id])
+            return run
+        if run_id not in self.draft_tables:
             return run
         return GenerateCompsDraftResponse(
             run=run,
@@ -306,7 +319,11 @@ class CanonicalBackendPathTest(unittest.TestCase):
             lost_finalize_app,
             path_suffix="/generate-comps-table",
         )
-        with running_service(lost_generate_app) as comps_service_url:
+        lost_reservation_app = LoseFirstCommittedResponse(
+            lost_generate_app,
+            path_suffix="/reserve-comps-run",
+        )
+        with running_service(lost_reservation_app) as comps_service_url:
             fundamental_agent = FundamentalAnalysisAgent(
                 model=CanonicalCompsLlm(model="canonical-comps"),
                 comps_client=HttpCompsToolClient(
@@ -395,6 +412,7 @@ class CanonicalBackendPathTest(unittest.TestCase):
         )
         self.assertEqual(len(web_repository.messages), 2)
         self.assertEqual(list(comps_repository.runs), [UUID(run_id)])
+        self.assertEqual(lost_reservation_app.attempts, 2)
         self.assertEqual(lost_generate_app.attempts, 2)
         self.assertEqual(lost_finalize_app.attempts, 2)
 

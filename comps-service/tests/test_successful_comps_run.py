@@ -46,6 +46,15 @@ class SupportedTickerValidator:
         return True
 
 
+class CountingTickerValidator(SupportedTickerValidator):
+    def __init__(self) -> None:
+        self.tickers: list[str] = []
+
+    def is_supported(self, ticker: str) -> bool:
+        self.tickers.append(ticker)
+        return True
+
+
 class UnexpectedTickerValidator:
     def is_supported(self, _ticker: str) -> bool:
         raise AssertionError("Ticker validation must not run during draft recovery.")
@@ -151,6 +160,14 @@ class InMemoryCompsRunRepository:
         self.failures: dict[UUID, RunFailure] = {}
         self.invocations: dict[UUID, UUID] = {}
 
+    def reserve_run(self, *, invocation_id: UUID, run: Run) -> None:
+        if invocation_id in self.invocations:
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a Run."
+            )
+        self.invocations[invocation_id] = run.id
+        self.runs[run.id] = run
+
     def save_calculated_run(
         self,
         *,
@@ -160,7 +177,8 @@ class InMemoryCompsRunRepository:
         trace: TraceResponse,
         source_snapshot: SourceSnapshot,
     ) -> None:
-        if invocation_id in self.invocations:
+        existing_run_id = self.invocations.get(invocation_id)
+        if existing_run_id is not None and existing_run_id != run.id:
             raise DuplicateToolInvocation(
                 "Tool invocation has already produced a Run."
             )
@@ -178,7 +196,8 @@ class InMemoryCompsRunRepository:
         failure: RunFailure,
         source_snapshot: SourceSnapshot,
     ) -> None:
-        if invocation_id in self.invocations:
+        existing_run_id = self.invocations.get(invocation_id)
+        if existing_run_id is not None and existing_run_id != run.id:
             raise DuplicateToolInvocation(
                 "Tool invocation has already produced a Run."
             )
@@ -201,6 +220,8 @@ class InMemoryCompsRunRepository:
         if run.status != RunStatus.RUNNING:
             if run.id in self.failures:
                 return FailedRunInvocation(run=run, failure=self.failures[run.id])
+            return run
+        if run_id not in self.draft_tables:
             return run
         return GenerateCompsDraftResponse(
             run=run,
@@ -250,6 +271,10 @@ class InMemoryCompsRunRepository:
 
 
 class InvalidLinkageCompsRunRepository(InMemoryCompsRunRepository):
+    def reserve_run(self, *, invocation_id: UUID, run: Run) -> None:
+        del invocation_id, run
+        raise InvalidRunLinkage("Run must reference its persisted trigger Message.")
+
     def save_calculated_run(
         self,
         *,
@@ -270,6 +295,115 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         app.dependency_overrides[get_company_data_source] = ControlledCompanyDataSource
         app.dependency_overrides[get_ticker_validator] = SupportedTickerValidator
         self.addCleanup(app.dependency_overrides.clear)
+
+    def test_same_invocation_reserves_one_run_before_calculation(self) -> None:
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "aapl",
+            "peer_tickers": ["msft"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+            "currency": "USD",
+        }
+        headers = {"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"}
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            created = client.post(
+                "/v1/internal/tools/reserve-comps-run",
+                json=request,
+                headers=headers,
+            )
+            repeated = client.post(
+                "/v1/internal/tools/reserve-comps-run",
+                json=request,
+                headers=headers,
+            )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(repeated.json(), created.json())
+        self.assertEqual(created.json()["run"]["status"], "running")
+        self.assertIsNone(created.json()["run"]["as_of"])
+
+    def test_reserved_run_is_then_calculated_without_creating_another_run(
+        self,
+    ) -> None:
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+            "currency": "USD",
+        }
+        headers = {"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"}
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            reserved = client.post(
+                "/v1/internal/tools/reserve-comps-run",
+                json=request,
+                headers=headers,
+            )
+            calculated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers=headers,
+            )
+
+        self.assertEqual(calculated.status_code, 200, calculated.text)
+        self.assertEqual(
+            calculated.json()["run"]["id"],
+            reserved.json()["run"]["id"],
+        )
+        self.assertEqual(len(self.repository.runs), 1)
+        self.assertIsNotNone(calculated.json()["run"]["as_of"])
+
+    def test_calculation_reuses_the_reservation_validation(self) -> None:
+        ticker_validator = CountingTickerValidator()
+        app.dependency_overrides[get_ticker_validator] = lambda: ticker_validator
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+        headers = {"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"}
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            client = TestClient(app)
+            client.post(
+                "/v1/internal/tools/reserve-comps-run",
+                json=request,
+                headers=headers,
+            )
+            calculated = client.post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers=headers,
+            )
+
+        self.assertEqual(calculated.status_code, 200, calculated.text)
+        self.assertEqual(ticker_validator.tickers, ["AAPL", "MSFT"])
 
     def test_agent_takeaway_finalizes_calculated_run_with_every_company(
         self,
@@ -1427,13 +1561,21 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertNotIn("SourceSnapshot", source_contract["components"]["schemas"])
         self.assertNotIn("SourceSnapshot", generated_contract["components"]["schemas"])
 
-    def test_source_contract_describes_the_calculate_finalize_fail_handshake(
+    def test_source_contract_describes_the_reserve_calculate_finalize_fail_handshake(
         self,
     ) -> None:
         source_contract = yaml.safe_load(
             (REPO_ROOT / "api" / "openapi.yaml").read_text()
         )
         generated_contract = TestClient(app).get("/openapi.json").json()
+
+        reserve_path = "/v1/internal/tools/reserve-comps-run"
+        self.assertEqual(
+            source_contract["paths"][reserve_path]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"],
+            {"$ref": "#/components/schemas/RunResponse"},
+        )
+        self.assertIn(reserve_path, generated_contract["paths"])
 
         generate_path = "/v1/internal/tools/generate-comps-table"
         self.assertEqual(

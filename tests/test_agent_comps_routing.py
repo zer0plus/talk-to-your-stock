@@ -65,6 +65,8 @@ class RecordingCompsClient:
         *responses: GenerateCompsToolResponse | Exception,
         finalize_error: Exception | None = None,
         finalize_delay_seconds: float = 0,
+        generation_delay_seconds: float = 0,
+        reservation_delay_seconds: float = 0,
     ) -> None:
         self.responses = list(responses)
         self.requests: list[GenerateCompsToolRequest] = []
@@ -75,12 +77,31 @@ class RecordingCompsClient:
         self.pending_final: GenerateCompsToolResponse | None = None
         self.finalize_error = finalize_error
         self.finalize_delay_seconds = finalize_delay_seconds
+        self.generation_delay_seconds = generation_delay_seconds
+        self.reservation_delay_seconds = reservation_delay_seconds
+
+    async def reserve_comps_run(
+        self,
+        request: GenerateCompsToolRequest,
+    ) -> RunResponse:
+        self.requests.append(request)
+        await asyncio.sleep(self.reservation_delay_seconds)
+        response = self.responses[0]
+        if isinstance(response, Exception):
+            self.responses.pop(0)
+            raise response
+        self.pending_final = response
+        return RunResponse(
+            run=response.run.model_copy(
+                update={"status": RunStatus.RUNNING, "completed_at": None}
+            )
+        )
 
     async def generate_comps_table(
         self,
         request: GenerateCompsToolRequest,
     ) -> GenerateCompsDraftResponse:
-        self.requests.append(request)
+        await asyncio.sleep(self.generation_delay_seconds)
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -524,21 +545,66 @@ class AgentCompsRoutingTest(unittest.TestCase):
         self.assertEqual(len(comps_client.fail_requests), 1)
         self.assertEqual(comps_client.fail_requests[0][0], tool_response.run.id)
 
-    def test_agent_deadline_returns_the_linked_failed_run(self) -> None:
+    def test_agent_deadline_during_calculation_returns_the_reserved_failed_run(
+        self,
+    ) -> None:
         tool_response = _successful_tool_response(
             thread_id=uuid4(),
             trigger_message_id=uuid4(),
         )
         comps_client = RecordingCompsClient(
             tool_response,
-            finalize_delay_seconds=0.1,
+            generation_delay_seconds=0.1,
         )
         agent = FundamentalAnalysisAgent(
             model=ScriptedLlm(
                 model="scripted",
                 responses=[
                     _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
-                    _native_agent_output("AAPL is compared with MSFT."),
+                ],
+            ),
+            comps_client=comps_client,
+        )
+        app.dependency_overrides[get_fundamental_agent] = lambda: agent
+
+        with patch(
+            "agent_service.fundamental_agent.AGENT_OPERATION_TIMEOUT_SECONDS",
+            0.05,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/agent/respond",
+                json={
+                    "user_id": str(uuid4()),
+                    "thread_id": str(tool_response.run.thread_id),
+                    "user_message_id": str(tool_response.run.trigger_message_id),
+                    "content": "Compare Apple with Microsoft",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(
+            response.json()["error"]["run_id"],
+            str(tool_response.run.id),
+        )
+        self.assertEqual(
+            [request[0] for request in comps_client.fail_requests],
+            [tool_response.run.id],
+        )
+
+    def test_agent_deadline_waits_for_run_reservation_before_cleanup(self) -> None:
+        tool_response = _successful_tool_response(
+            thread_id=uuid4(),
+            trigger_message_id=uuid4(),
+        )
+        comps_client = RecordingCompsClient(
+            tool_response,
+            reservation_delay_seconds=0.1,
+        )
+        agent = FundamentalAnalysisAgent(
+            model=ScriptedLlm(
+                model="scripted",
+                responses=[
+                    _tool_call(target_ticker="AAPL", peer_tickers=["MSFT"]),
                 ],
             ),
             comps_client=comps_client,

@@ -49,7 +49,7 @@ The Agent-authored evidence-strength label stored with a Comparison Takeaway. It
 _Avoid_: Confidence score, investment conviction
 
 **Run**:
-A persisted execution record for a valid table-generation comps attempt, including attempts that fail during execution. Invalid tool calls and conversational responses do not create a Run.
+A persisted execution record reserved for a valid table-generation comps attempt before calculation begins, including attempts that fail during execution. Invalid tool calls and conversational responses do not create a Run.
 _Avoid_: Job, task
 
 **Source Snapshot**:
@@ -114,7 +114,7 @@ The service boundary that hosts Google ADK orchestration and the Fundamental Ana
 _Avoid_: Orchestrator service unless discussing implementation mechanics
 
 **Comps Service**:
-The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports. It validates only the required shape of an Agent-authored Comparison Takeaway, persists the exact prose with the calculated Comps Table when finalizing a successful Run, and owns terminal Run lifecycle transitions. An unfinished calculated Run can be resumed by repeating its invocation if the Agent cannot reach the failure transition.
+The service boundary that owns deterministic comps calculations, provider fetch behavior, source snapshots, traces, async workers, and MVP exports. After validating an invocation, it durably reserves the invocation's Run before calculation starts, so the Agent knows the Run identity before any long-running work. It validates only the required shape of an Agent-authored Comparison Takeaway, persists the exact prose with the calculated Comps Table when finalizing a successful Run, and owns terminal Run lifecycle transitions. An unfinished calculated Run can be resumed by repeating its invocation if the Agent cannot reach the failure transition.
 _Avoid_: Calculation service, data service
 
 **Conversation Response**:

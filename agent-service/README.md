@@ -18,7 +18,9 @@ The Web BFF and Google ADK persist different views of a Thread:
 The Agent route runs the Fundamental Analysis Agent through Google ADK. For a
 canonical explicit-peer Message, the Agent converts company language to
 structured Tickers and calls the configured Comps Service through
-`generate_comps_table`. The Runner uses the same User and Thread session
+an idempotent Run reservation followed by `generate_comps_table`. The Agent
+records the reserved Run before calculation begins, so cancellation can fail and
+link that Run without relying on calculation-response timing. The Runner uses the same User and Thread session
 identity, so the User Message, model Tool call, Tool result, and Assistant
 Message remain visible in ADK-native event history.
 

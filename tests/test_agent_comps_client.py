@@ -52,6 +52,15 @@ class HttpCompsToolClientTest(unittest.TestCase):
         )
         comps_app = FastAPI()
 
+        @comps_app.post("/v1/internal/tools/reserve-comps-run")
+        def reserve_comps_run(
+            request: GenerateCompsToolRequest,
+            authorization: str = Header(),
+        ) -> RunResponse:
+            observed["reserve_request"] = request
+            observed["reserve_authorization"] = authorization
+            return RunResponse(run=draft_response.run)
+
         @comps_app.post("/v1/internal/tools/generate-comps-table")
         def generate_comps_table(
             request: GenerateCompsToolRequest,
@@ -107,6 +116,7 @@ class HttpCompsToolClientTest(unittest.TestCase):
                 base_url=base_url,
                 internal_token="internal-token",
             )
+            reserved = asyncio.run(client.reserve_comps_run(request))
             response = asyncio.run(client.generate_comps_table(request))
             finalized = asyncio.run(
                 client.finalize_comps_run(
@@ -123,10 +133,16 @@ class HttpCompsToolClientTest(unittest.TestCase):
                 )
             )
 
+        self.assertEqual(reserved.run, draft_response.run)
         self.assertEqual(response, draft_response)
         self.assertEqual(finalized, tool_response)
         self.assertEqual(observed["request"], request)
         self.assertEqual(observed["authorization"], "Bearer internal-token")
+        self.assertEqual(observed["reserve_request"], request)
+        self.assertEqual(
+            observed["reserve_authorization"],
+            "Bearer internal-token",
+        )
         self.assertEqual(observed["finalize_run_id"], tool_response.run.id)
         self.assertEqual(
             observed["finalize_authorization"],

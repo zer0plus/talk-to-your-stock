@@ -404,6 +404,38 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/internal/tools/reserve-comps-run:
+    post:
+      tags: [Internal]
+      summary: Reserve a Run for one validated comps invocation
+      description: Repeating the same invocation returns the same Run before calculation begins.
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateCompsToolRequest'
+      responses:
+        '200':
+          description: Durable running Run reservation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /v1/internal/tools/generate-comps-table:
     post:
       tags: [Internal]

@@ -389,6 +389,10 @@ class FundamentalAnalysisAgent:
                     "retry_allowed": False,
                 }
             try:
+                await self._reserve_comps_run(
+                    request=request,
+                    invocation_gate=invocation_gate,
+                )
                 try:
                     response = await self._comps_client.generate_comps_table(request)
                 except CompsToolUnavailable:
@@ -402,8 +406,28 @@ class FundamentalAnalysisAgent:
                     "retry_allowed": retry_allowed,
                 }
             invocation_gate.completed = True
-            invocation_gate.calculated_run_id = response.run.id
             return response.model_dump(mode="json")
+
+    async def _reserve_comps_run(
+        self,
+        *,
+        request: GenerateCompsToolRequest,
+        invocation_gate: _ToolInvocationGate,
+    ) -> None:
+        async def reserve():
+            try:
+                return await self._comps_client.reserve_comps_run(request)
+            except CompsToolUnavailable:
+                return await self._comps_client.reserve_comps_run(request)
+
+        reservation_task = asyncio.create_task(reserve())
+        try:
+            reserved = await asyncio.shield(reservation_task)
+        except asyncio.CancelledError:
+            reserved = await reservation_task
+            invocation_gate.calculated_run_id = reserved.run.id
+            raise
+        invocation_gate.calculated_run_id = reserved.run.id
 
     async def _fail_calculated_run(self, run_id: UUID) -> None:
         try:

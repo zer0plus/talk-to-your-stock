@@ -14,6 +14,7 @@ from talk_to_your_stock_shared import (
     GenerateCompsToolResponse,
     PaginationMeta,
     Run,
+    RunResponse,
     RunStatus,
     RunTableDraftResponse,
     RunTableResponse,
@@ -100,6 +101,8 @@ class CompanyDataSource(Protocol):
 
 
 class CompsRunRepository(Protocol):
+    def reserve_run(self, *, invocation_id: UUID, run: Run) -> None: ...
+
     def save_calculated_run(
         self,
         *,
@@ -165,6 +168,46 @@ class CompsRunService:
         self._company_data_source = company_data_source
         self._calculator = calculator or CompsCalculator()
 
+    def reserve(self, request: GenerateCompsToolRequest) -> RunResponse:
+        existing = self.find_reservation(request)
+        if existing is not None:
+            return existing
+
+        started_at = utc_now()
+        run = Run(
+            id=uuid4(),
+            thread_id=request.thread_id,
+            trigger_message_id=request.trigger_message_id,
+            status=RunStatus.RUNNING,
+            target_ticker=request.target_ticker.upper(),
+            peer_tickers=[ticker.upper() for ticker in request.peer_tickers],
+            currency=request.currency.upper(),
+            as_of=None,
+            created_at=started_at,
+            started_at=started_at,
+        )
+        try:
+            self._repository.reserve_run(
+                invocation_id=request.invocation_id,
+                run=run,
+            )
+        except DuplicateToolInvocation:
+            return self.reserve(request)
+        return RunResponse(run=run)
+
+    def find_reservation(
+        self,
+        request: GenerateCompsToolRequest,
+    ) -> RunResponse | None:
+        existing = self._repository.get_calculated_run_by_invocation(
+            request.invocation_id
+        )
+        if existing is None:
+            return None
+        run = existing.run if not isinstance(existing, Run) else existing
+        self._require_matching_invocation(request=request, run=run)
+        return RunResponse(run=run)
+
     def generate(self, request: GenerateCompsToolRequest) -> GenerateCompsDraftResponse:
         existing = self.resume(request)
         if existing is not None:
@@ -173,8 +216,9 @@ class CompsRunService:
         target_ticker = request.target_ticker.upper()
         peer_tickers = [ticker.upper() for ticker in request.peer_tickers]
         requested_tickers = [target_ticker, *peer_tickers]
-        run_id = uuid4()
-        started_at = utc_now()
+        reservation = self.reserve(request).run
+        run_id = reservation.id
+        started_at = reservation.started_at or reservation.created_at
         loaded = LoadedCompanyData(companies=[], raw_provider_evidence={})
         try:
             loaded = self._company_data_source.load(
@@ -265,20 +309,12 @@ class CompsRunService:
         if existing is None:
             return None
         existing_run = existing.run if not isinstance(existing, Run) else existing
-        if (
-            existing_run.thread_id != request.thread_id
-            or existing_run.trigger_message_id != request.trigger_message_id
-            or existing_run.target_ticker != request.target_ticker.upper()
-            or existing_run.peer_tickers
-            != [ticker.upper() for ticker in request.peer_tickers]
-            or existing_run.currency != request.currency.upper()
-        ):
-            raise DuplicateToolInvocation(
-                "Tool invocation has already produced a different Run."
-            )
+        self._require_matching_invocation(request=request, run=existing_run)
         if isinstance(existing, FailedRunInvocation):
             raise RecoveredFailedCompsRun(existing)
         if isinstance(existing, Run):
+            if existing.status == RunStatus.RUNNING:
+                return None
             if existing.status == RunStatus.FAILED:
                 raise DuplicateToolInvocation(
                     "Tool invocation has already produced a failed Run."
@@ -287,6 +323,24 @@ class CompsRunService:
                 "Tool invocation has already produced a terminal Run."
             )
         return existing
+
+    @staticmethod
+    def _require_matching_invocation(
+        *,
+        request: GenerateCompsToolRequest,
+        run: Run,
+    ) -> None:
+        if (
+            run.thread_id != request.thread_id
+            or run.trigger_message_id != request.trigger_message_id
+            or run.target_ticker != request.target_ticker.upper()
+            or run.peer_tickers
+            != [ticker.upper() for ticker in request.peer_tickers]
+            or run.currency != request.currency.upper()
+        ):
+            raise DuplicateToolInvocation(
+                "Tool invocation has already produced a different Run."
+            )
 
     def finalize(
         self,
