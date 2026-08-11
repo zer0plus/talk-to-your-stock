@@ -461,6 +461,8 @@ class FundamentalAnalysisAgent:
     ) -> None:
         try:
             reserved = await reservation_task
+        except CompsToolError:
+            return
         except CompsToolUnavailable:
             await self._fail_reserved_run(run_id)
             return
