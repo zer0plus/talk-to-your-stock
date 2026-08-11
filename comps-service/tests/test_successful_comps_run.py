@@ -23,11 +23,7 @@ from comps_service.main import (
 )
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
-from comps_service.run_service import (
-    CalculatedRunNotFound,
-    DuplicateToolInvocation,
-    LoadedCompanyData,
-)
+from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
 from comps_service.tool_validation import AlphaVantageTickerValidator
 from talk_to_your_stock_shared import (
     GenerateCompsDraftResponse,
@@ -265,20 +261,6 @@ class InvalidLinkageCompsRunRepository(InMemoryCompsRunRepository):
     ) -> None:
         del invocation_id, run, table, trace, source_snapshot
         raise InvalidRunLinkage("Run must reference its persisted trigger Message.")
-
-
-class ConcurrentFinalizationWinnerRepository(InMemoryCompsRunRepository):
-    def finalize_succeeded_run(
-        self,
-        *,
-        run: Run,
-        table: RunTableResponse,
-    ) -> None:
-        winner = run.model_copy(
-            update={"completed_at": datetime(2026, 8, 11, tzinfo=UTC)}
-        )
-        super().finalize_succeeded_run(run=winner, table=table)
-        raise CalculatedRunNotFound("Calculated Comps Run not found.")
 
 
 class SuccessfulCompsRunTest(unittest.TestCase):
@@ -1122,52 +1104,6 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertEqual(repeated.json(), first.json())
         self.assertEqual(changed.status_code, 404, changed.text)
         self.assertEqual(table.json(), first.json()["table"])
-
-    def test_concurrent_identical_finalization_returns_the_committed_winner(
-        self,
-    ) -> None:
-        self.repository = ConcurrentFinalizationWinnerRepository()
-        app.dependency_overrides[get_repository] = lambda: self.repository
-        request = {
-            "comparison_takeaway": {
-                "headline": "AAPL is comparable to MSFT on EV / Revenue.",
-                "interpretation": "AAPL is supported by the available peer evidence.",
-                "confidence": "limited",
-            }
-        }
-        with patch.dict(
-            os.environ,
-            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
-            clear=True,
-        ):
-            client = TestClient(app)
-            created = client.post(
-                "/v1/internal/tools/generate-comps-table",
-                json={
-                    "invocation_id": str(uuid4()),
-                    "thread_id": str(uuid4()),
-                    "trigger_message_id": str(uuid4()),
-                    "target_ticker": "AAPL",
-                    "peer_tickers": ["MSFT"],
-                    "peer_selection_mode": "user_supplied",
-                    "analysis_period": "latest",
-                },
-                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
-            )
-            run_id = created.json()["run"]["id"]
-            concurrent_retry = client.post(
-                f"/v1/internal/runs/{run_id}/finalize",
-                json=request,
-                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
-            )
-            repeated = client.post(
-                f"/v1/internal/runs/{run_id}/finalize",
-                json=request,
-                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
-            )
-
-        self.assertEqual(concurrent_retry.status_code, 200, concurrent_retry.text)
-        self.assertEqual(repeated.json(), concurrent_retry.json())
 
     def test_succeeded_run_trace_is_available_through_public_readback(self) -> None:
         with patch.dict(

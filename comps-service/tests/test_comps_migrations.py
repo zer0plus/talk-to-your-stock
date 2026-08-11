@@ -4,9 +4,11 @@ import os
 import subprocess
 import sys
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -18,6 +20,7 @@ from comps_service.calculator import CompanyCompsInput
 from comps_service.main import (
     app,
     get_company_data_source,
+    get_repository,
     get_ticker_validator,
 )
 from comps_service.repository import PostgresCompsRunRepository
@@ -36,6 +39,16 @@ INTERNAL_TOOL_TOKEN = "postgres-test-internal-token"
 class SupportedTickerValidator:
     def is_supported(self, _ticker: str) -> bool:
         return True
+
+
+class ConcurrentFinalizationRepository(PostgresCompsRunRepository):
+    def __init__(self, *, database_url: str) -> None:
+        super().__init__(database_url=database_url)
+        self._finalization_barrier = Barrier(2)
+
+    def finalize_succeeded_run(self, *, run, table) -> None:
+        self._finalization_barrier.wait(timeout=5)
+        super().finalize_succeeded_run(run=run, table=table)
 
 
 class ControlledCompanyDataSource:
@@ -252,12 +265,28 @@ class CompsMigrationsTest(unittest.TestCase):
                     ),
                     "confidence": "limited",
                 }
-                finalized = client.post(
-                    f"/v1/internal/runs/{run_id}/finalize",
-                    json={"comparison_takeaway": comparison_takeaway},
-                    headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+                repository = ConcurrentFinalizationRepository(
+                    database_url=database_url
                 )
-                self.assertEqual(finalized.status_code, 200, finalized.text)
+                app.dependency_overrides[get_repository] = lambda: repository
+
+                def finalize():
+                    return TestClient(app).post(
+                        f"/v1/internal/runs/{run_id}/finalize",
+                        json={"comparison_takeaway": comparison_takeaway},
+                        headers={
+                            "Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"
+                        },
+                    )
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    finalized, concurrent_retry = executor.map(
+                        lambda _attempt: finalize(),
+                        range(2),
+                    )
+                for response in (finalized, concurrent_retry):
+                    self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(concurrent_retry.json(), finalized.json())
                 self.assertEqual(
                     finalized.json()["table"]["comparison_takeaway"],
                     comparison_takeaway,
