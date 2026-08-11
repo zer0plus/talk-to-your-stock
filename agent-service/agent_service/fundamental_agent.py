@@ -44,6 +44,7 @@ from .session_context import AdkSessionContext, FUNDAMENTAL_ANALYSIS_AGENT_NAME
 GEMINI_MODEL_VAR = "GEMINI_MODEL"
 GOOGLE_API_KEY_VAR = "GOOGLE_API_KEY"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+AGENT_OPERATION_TIMEOUT_SECONDS = 80
 FUNDAMENTAL_ROUTER_NAME = "fundamental_analysis_router"
 COMPARISON_TAKEAWAY_WRITER_NAME = "comparison_takeaway_writer"
 VALIDATION_CLARIFICATION = (
@@ -194,10 +195,14 @@ class FundamentalAnalysisAgent:
         invocation_gate = _ToolInvocationGate()
         self._tool_invocation_gates[invocation_key] = invocation_gate
         try:
-            return await self._run_turn(
-                request=request,
-                session_context=session_context,
-            )
+            try:
+                async with asyncio.timeout(AGENT_OPERATION_TIMEOUT_SECONDS):
+                    return await self._run_turn(
+                        request=request,
+                        session_context=session_context,
+                    )
+            except TimeoutError as exc:
+                raise AgentRoutingUnavailable("Agent response timed out.") from exc
         except AgentRoutingUnavailable as exc:
             if invocation_gate.calculated_run_id is None:
                 raise
@@ -384,7 +389,10 @@ class FundamentalAnalysisAgent:
                     "retry_allowed": False,
                 }
             try:
-                response = await self._comps_client.generate_comps_table(request)
+                try:
+                    response = await self._comps_client.generate_comps_table(request)
+                except CompsToolUnavailable:
+                    response = await self._comps_client.generate_comps_table(request)
             except CompsToolValidationError as exc:
                 invocation_gate.validation_failures += 1
                 retry_allowed = invocation_gate.validation_failures == 1

@@ -17,6 +17,7 @@ from talk_to_your_stock_shared import (
 )
 
 AGENT_SERVICE_URL_VAR = "AGENT_SERVICE_URL"
+AGENT_SERVICE_TIMEOUT_SECONDS = 90
 
 
 class AgentServiceUnavailable(RuntimeError):
@@ -61,7 +62,7 @@ class HttpAgentClient:
             response = httpx.post(
                 f"{self._base_url}/v1/internal/agent/respond",
                 json=request.model_dump(mode="json"),
-                timeout=30,
+                timeout=AGENT_SERVICE_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError as exc:
             raise AgentServiceUnavailable("Agent Service unavailable.") from exc

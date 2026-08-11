@@ -56,11 +56,13 @@ empty for this local smoke. Set `ALPHA_VANTAGE_QUOTE_ENTITLEMENT` only when the
 provider key has the named `realtime` or `delayed` entitlement.
 
 The canonical Message path makes ten serial Alpha Vantage requests: ticker
-validation plus four data requests for each of IBM and MSFT. Both service calls
-have a 30-second deadline, so this smoke requires a low-latency provider plan
-and `ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS` at the default `1.1` seconds
-or lower. Do not raise that interval for this smoke; slower rate-limited plans
-can time out even when the stack is otherwise healthy.
+validation plus four data requests for each of IBM and MSFT. Comps generation
+attempts have a 30-second deadline within the Agent's 80-second budget; the Web
+BFF allows 90 seconds so linked success or failure can still return. This smoke
+therefore requires a low-latency provider plan and
+`ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS` at the default `1.1` seconds or
+lower. Do not raise that interval for this smoke; slower rate-limited plans can
+time out even when the stack is otherwise healthy.
 
 ## 1. Start The Stack
 

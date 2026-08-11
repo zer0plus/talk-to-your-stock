@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from collections.abc import AsyncGenerator
@@ -51,10 +52,18 @@ INTERNAL_TOKEN = "canonical-path-token"
 LOCAL_USER_ID = "00000000-0000-0000-0000-000000000001"
 
 
-class LoseFirstFinalizeResponse:
-    def __init__(self, app: ASGIApp) -> None:
+class LoseFirstCommittedResponse:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        path_suffix: str,
+        delay_seconds: float = 0,
+    ) -> None:
         self.app = app
-        self.finalize_attempts = 0
+        self.path_suffix = path_suffix
+        self.delay_seconds = delay_seconds
+        self.attempts = 0
 
     async def __call__(
         self,
@@ -62,17 +71,17 @@ class LoseFirstFinalizeResponse:
         receive: Receive,
         send: Send,
     ) -> None:
-        is_finalize = (
+        should_lose_response = (
             scope["type"] == "http"
             and scope["method"] == "POST"
-            and scope["path"].endswith("/finalize")
+            and scope["path"].endswith(self.path_suffix)
         )
-        if not is_finalize:
+        if not should_lose_response:
             await self.app(scope, receive, send)
             return
 
-        self.finalize_attempts += 1
-        if self.finalize_attempts > 1:
+        self.attempts += 1
+        if self.attempts > 1:
             await self.app(scope, receive, send)
             return
 
@@ -80,6 +89,7 @@ class LoseFirstFinalizeResponse:
             pass
 
         await self.app(scope, receive, discard_response)
+        await asyncio.sleep(self.delay_seconds)
         await send(
             {
                 "type": "http.response.start",
@@ -282,8 +292,16 @@ class CanonicalBackendPathTest(unittest.TestCase):
             lambda: web_repository
         )
 
-        lost_finalize_app = LoseFirstFinalizeResponse(comps_app)
-        with running_service(lost_finalize_app) as comps_service_url:
+        lost_finalize_app = LoseFirstCommittedResponse(
+            comps_app,
+            path_suffix="/finalize",
+            delay_seconds=0.1,
+        )
+        lost_generate_app = LoseFirstCommittedResponse(
+            lost_finalize_app,
+            path_suffix="/generate-comps-table",
+        )
+        with running_service(lost_generate_app) as comps_service_url:
             fundamental_agent = FundamentalAnalysisAgent(
                 model=CanonicalCompsLlm(model="canonical-comps"),
                 comps_client=HttpCompsToolClient(
@@ -304,7 +322,14 @@ class CanonicalBackendPathTest(unittest.TestCase):
                     "COMPS_SERVICE_URL": comps_service_url,
                     "COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOKEN,
                 }
-                with patch.dict("os.environ", env, clear=True):
+                with (
+                    patch.dict("os.environ", env, clear=True),
+                    patch(
+                        "agent_service.comps_client.COMPS_TERMINAL_TIMEOUT_SECONDS",
+                        0.05,
+                    ),
+                    patch("web_bff.agent_client.AGENT_SERVICE_TIMEOUT_SECONDS", 1),
+                ):
                     client = TestClient(web_bff_app)
                     thread = client.post(
                         "/v1/threads",
@@ -364,8 +389,9 @@ class CanonicalBackendPathTest(unittest.TestCase):
             [run_id],
         )
         self.assertEqual(len(web_repository.messages), 2)
-        self.assertIn(UUID(run_id), comps_repository.runs)
-        self.assertEqual(lost_finalize_app.finalize_attempts, 2)
+        self.assertEqual(list(comps_repository.runs), [UUID(run_id)])
+        self.assertEqual(lost_generate_app.attempts, 2)
+        self.assertEqual(lost_finalize_app.attempts, 2)
 
     def test_agent_output_failure_is_visible_and_linked_to_the_thread(self) -> None:
         comps_repository = InMemoryCompsRepository()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Mapping
 from json import JSONDecodeError
@@ -21,6 +22,8 @@ from talk_to_your_stock_shared import (
 
 COMPS_SERVICE_URL_VAR = "COMPS_SERVICE_URL"
 COMPS_SERVICE_INTERNAL_TOKEN_VAR = "COMPS_SERVICE_INTERNAL_TOKEN"
+COMPS_GENERATION_TIMEOUT_SECONDS = 30
+COMPS_TERMINAL_TIMEOUT_SECONDS = 5
 
 
 class CompsToolClient(Protocol):
@@ -86,13 +89,18 @@ class HttpCompsToolClient:
         request: GenerateCompsToolRequest,
     ) -> GenerateCompsDraftResponse:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    f"{self._base_url}/v1/internal/tools/generate-comps-table",
-                    headers={"Authorization": f"Bearer {self._internal_token}"},
-                    json=request.model_dump(mode="json"),
-                )
-        except httpx.HTTPError as exc:
+            async with asyncio.timeout(COMPS_GENERATION_TIMEOUT_SECONDS):
+                async with httpx.AsyncClient(
+                    timeout=COMPS_GENERATION_TIMEOUT_SECONDS
+                ) as client:
+                    response = await client.post(
+                        f"{self._base_url}/v1/internal/tools/generate-comps-table",
+                        headers={
+                            "Authorization": f"Bearer {self._internal_token}"
+                        },
+                        json=request.model_dump(mode="json"),
+                    )
+        except (httpx.HTTPError, TimeoutError) as exc:
             raise CompsToolUnavailable("Comps Service unavailable.") from exc
 
         if response.is_error:
@@ -122,13 +130,18 @@ class HttpCompsToolClient:
         request: FinalizeComparisonTakeawayRequest,
     ) -> GenerateCompsToolResponse:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    f"{self._base_url}/v1/internal/runs/{run_id}/finalize",
-                    headers={"Authorization": f"Bearer {self._internal_token}"},
-                    json=request.model_dump(mode="json"),
-                )
-        except httpx.HTTPError as exc:
+            async with asyncio.timeout(COMPS_TERMINAL_TIMEOUT_SECONDS):
+                async with httpx.AsyncClient(
+                    timeout=COMPS_TERMINAL_TIMEOUT_SECONDS
+                ) as client:
+                    response = await client.post(
+                        f"{self._base_url}/v1/internal/runs/{run_id}/finalize",
+                        headers={
+                            "Authorization": f"Bearer {self._internal_token}"
+                        },
+                        json=request.model_dump(mode="json"),
+                    )
+        except (httpx.HTTPError, TimeoutError) as exc:
             raise CompsToolUnavailable("Comps Service unavailable.") from exc
 
         if response.is_error:
@@ -156,13 +169,18 @@ class HttpCompsToolClient:
         request: FailCalculatedRunRequest,
     ) -> RunResponse:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    f"{self._base_url}/v1/internal/runs/{run_id}/fail",
-                    headers={"Authorization": f"Bearer {self._internal_token}"},
-                    json=request.model_dump(mode="json"),
-                )
-        except httpx.HTTPError as exc:
+            async with asyncio.timeout(COMPS_TERMINAL_TIMEOUT_SECONDS):
+                async with httpx.AsyncClient(
+                    timeout=COMPS_TERMINAL_TIMEOUT_SECONDS
+                ) as client:
+                    response = await client.post(
+                        f"{self._base_url}/v1/internal/runs/{run_id}/fail",
+                        headers={
+                            "Authorization": f"Bearer {self._internal_token}"
+                        },
+                        json=request.model_dump(mode="json"),
+                    )
+        except (httpx.HTTPError, TimeoutError) as exc:
             raise CompsToolUnavailable("Comps Service unavailable.") from exc
 
         if response.is_error:
