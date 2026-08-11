@@ -139,6 +139,21 @@ def duplicate_tool_invocation_exception_handler(
     )
 
 
+@app.exception_handler(RecoveredFailedCompsRun)
+def recovered_failed_comps_run_exception_handler(
+    _request: object,
+    exc: RecoveredFailedCompsRun,
+) -> JSONResponse:
+    failure = exc.result.failure
+    return _error_response(
+        status_code=failure.status_code,
+        code=failure.error.code,
+        message=failure.error.message,
+        details=failure.error.details,
+        run_id=failure.error.run_id,
+    )
+
+
 @app.middleware("http")
 async def authenticate_internal_tool_routes(
     request: Request,
@@ -274,17 +289,7 @@ def generate_comps_table(
         repository=repository,
         company_data_source=company_data_source,
     )
-    try:
-        existing = run_service.resume(request)
-    except RecoveredFailedCompsRun as exc:
-        failure = exc.result.failure
-        return _error_response(
-            status_code=failure.status_code,
-            code=failure.error.code,
-            message=failure.error.message,
-            details=failure.error.details,
-            run_id=failure.error.run_id,
-        )
+    existing = run_service.resume(request)
     if existing is not None:
         return existing
 

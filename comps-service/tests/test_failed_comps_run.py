@@ -30,6 +30,8 @@ from comps_service.run_service import (
     LoadedCompanyData,
 )
 from talk_to_your_stock_shared import (
+    ErrorCode,
+    ErrorDetail,
     GenerateCompsDraftResponse,
     Run,
     RunStatus,
@@ -139,6 +141,38 @@ class InMemoryCompsRunRepository:
         self.runs[run.id] = run
 
 
+class FailedWinnerCompsRunRepository(InMemoryCompsRunRepository):
+    def save_calculated_run(
+        self,
+        *,
+        invocation_id: UUID,
+        run: Run,
+        table: RunTableDraftResponse,
+        trace: TraceResponse,
+        source_snapshot: SourceSnapshot,
+    ) -> None:
+        del table, trace, source_snapshot
+        failed_run = run.model_copy(
+            update={
+                "status": RunStatus.FAILED,
+                "as_of": None,
+                "error_message": "Company data provider is unavailable.",
+                "completed_at": datetime.now(UTC),
+            }
+        )
+        self.invocations[invocation_id] = failed_run.id
+        self.runs[failed_run.id] = failed_run
+        self.failures[failed_run.id] = RunFailure(
+            status_code=503,
+            error=ErrorDetail(
+                code=ErrorCode.INTERNAL_ERROR,
+                message=failed_run.error_message,
+                run_id=failed_run.id,
+            ),
+        )
+        raise DuplicateToolInvocation("Tool invocation has already produced a Run.")
+
+
 def company_input(ticker: str) -> CompanyCompsInput:
     evidence_date = datetime(2026, 7, 17, tzinfo=UTC)
     fields = (
@@ -204,6 +238,20 @@ class MissingPeerDataSource:
             raw_provider_evidence={
                 "AAPL": {"global_quote": {"05. price": "10.0"}}
             },
+        )
+
+
+class CompleteCompanyDataSource:
+    def load(
+        self,
+        *,
+        tickers: list[str],
+        currency: str,
+    ) -> LoadedCompanyData:
+        del currency
+        return LoadedCompanyData(
+            companies=[company_input(ticker) for ticker in tickers],
+            raw_provider_evidence={},
         )
 
 
@@ -334,6 +382,39 @@ class FailedCompsRunTest(unittest.TestCase):
         self.assertEqual(repeated.status_code, 502, repeated.text)
         self.assertEqual(repeated.json(), failed.json())
         self.assertEqual(len(self.repository.runs), 1)
+
+    def test_concurrent_generation_replays_the_failed_winner(self) -> None:
+        repository = FailedWinnerCompsRunRepository()
+        app.dependency_overrides[get_repository] = lambda: repository
+        app.dependency_overrides[get_company_data_source] = CompleteCompanyDataSource
+        request = {
+            "invocation_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "trigger_message_id": str(uuid4()),
+            "target_ticker": "AAPL",
+            "peer_tickers": ["MSFT"],
+            "peer_selection_mode": "user_supplied",
+            "analysis_period": "latest",
+        }
+
+        with patch.dict(
+            os.environ,
+            {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
+            clear=True,
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/tools/generate-comps-table",
+                json=request,
+                headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "INTERNAL_ERROR")
+        self.assertEqual(
+            response.json()["error"]["run_id"],
+            str(next(iter(repository.runs))),
+        )
+        self.assertEqual(len(repository.runs), 1)
 
     def test_repeated_failed_invocation_with_different_input_returns_conflict(
         self,
