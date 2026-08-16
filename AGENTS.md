@@ -83,3 +83,15 @@ For each contract, one of these must be true:
 * It is not exposed yet.
 
 Do not expose future behavior. If an endpoint does not exist, do not return its URL. If a request field is not honored, do not accept it. If production auth, provider, ADK, database, or service behavior is not implemented, readiness must fail clearly rather than report ready. If the Web BFF calls the Agent Service or Comps Service, the target route must exist and be tested at least once without mocking that service boundary.
+
+## Vertical Acceptance Tests
+
+Every implementation issue and feature must include at least one production-shaped vertical acceptance test. The test starts at the highest public or User-facing boundary in scope and crosses every affected internal service through its real interface, using real service clients, real HTTP routes, real migrations, real repositories, and PostgreSQL.
+
+Unit and component tests may supplement the vertical test, but they never satisfy feature acceptance on their own. A collection of separately mocked boundary tests is not a vertical test.
+
+Vertical acceptance tests must not replace internal services, repositories, persistence, or service clients with mocks, fakes, in-memory implementations, dependency overrides, or fixture data. Ordinary setup helpers and lifecycle fixtures are allowed when they start and configure the real stack rather than substitute for it.
+
+A deterministic substitute may be used only at a genuinely external, nondeterministic, unsafe, or paid boundary such as an LLM, market-data provider, or external identity provider. The implementation issue must explain why the substitute is necessary and record the project owner's explicit approval before implementation begins.
+
+Every implementation issue must name its vertical entry point, internal services crossed, durable store, observable result, and any approved external substitutes. Before a PR is marked ready, its vertical acceptance test must pass against the production-shaped local stack.
