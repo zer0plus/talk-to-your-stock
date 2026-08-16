@@ -24,6 +24,7 @@ def test_run_readback_documents_comps_service_unavailability() -> None:
         "/v1/runs/{run_id}",
         "/v1/runs/{run_id}/table",
         "/v1/runs/{run_id}/trace",
+        "/v1/runs/{run_id}/source-snapshot",
     ):
         responses = contract["paths"][path]["get"]["responses"]
         assert responses["503"] == {
@@ -38,11 +39,28 @@ def test_generated_run_readback_contract_documents_validation_errors() -> None:
         "/v1/runs/{run_id}",
         "/v1/runs/{run_id}/table",
         "/v1/runs/{run_id}/trace",
+        "/v1/runs/{run_id}/source-snapshot",
     ):
         response_schema = contract["paths"][path]["get"]["responses"]["400"][
             "content"
         ]["application/json"]["schema"]
         assert response_schema["$ref"] == "#/components/schemas/ErrorResponse"
+
+
+def test_source_snapshot_contracts_forbid_unknown_response_fields() -> None:
+    source_contract = yaml.safe_load(
+        (REPO_ROOT / "api" / "openapi.yaml").read_text()
+    )
+    source_schema = source_contract["components"]["schemas"][
+        "SourceSnapshotResponse"
+    ]
+    assert source_schema["additionalProperties"] is False
+
+    generated_contract = TestClient(app).get("/openapi.json").json()
+    generated_schema = generated_contract["components"]["schemas"][
+        "SourceSnapshotResponse"
+    ]
+    assert generated_schema["additionalProperties"] is False
 
 
 def test_failed_run_errors_are_declared_in_source_and_generated_contracts() -> None:

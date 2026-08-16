@@ -39,7 +39,7 @@ flowchart LR
 
   BFF -->|"Chat message request"| AGENT
   AGENT -->|"Tool call: generate_comps_table"| COMPS
-  BFF -->|"Run, table, trace readback;<br/>export request"| COMPS
+  BFF -->|"Run, table, trace, source snapshot readback;<br/>export request"| COMPS
 
   BFF -->|"Read/write Users, Threads, Messages,<br/>Message/Run linkage"| PG
   AGENT -->|"Agent interaction metadata"| PG

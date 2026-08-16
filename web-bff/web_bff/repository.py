@@ -209,7 +209,10 @@ class PostgresWebBffRepository:
     def _connect(self):
         import psycopg
 
-        return psycopg.connect(self._database_url)
+        return psycopg.connect(
+            self._database_url,
+            options="-c timezone=UTC",
+        )
 
     @staticmethod
     def _dict_row():
