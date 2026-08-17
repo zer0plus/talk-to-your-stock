@@ -23,6 +23,18 @@ External PRs are not treated as feature requests for this solo MVP workflow. Tri
 
 Create a GitHub issue.
 
+## Implementation issue test contract
+
+Every implementation issue must include acceptance criteria for a production-shaped vertical test. The issue must identify:
+
+- the highest public or User-facing entry point exercised;
+- every internal service crossed through its real interface;
+- the real migrated PostgreSQL persistence boundary;
+- the final observable and persisted result; and
+- each proposed deterministic substitute for an external dependency, including the reason and the project owner's recorded approval.
+
+Internal services, service clients, HTTP routes, repositories, migrations, and PostgreSQL must not be replaced by mocks, fakes, in-memory implementations, dependency overrides, or fixture data in the vertical acceptance test. Setup fixtures may start and configure the real stack. Unit and component tests are supplemental and cannot replace this issue-level acceptance test.
+
 ## When a skill says "fetch the relevant ticket"
 
 Run `gh issue view <number> --comments`.
