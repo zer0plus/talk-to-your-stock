@@ -16,6 +16,8 @@ from talk_to_your_stock_shared import (
     AgentMessageRequest,
     AgentMessageResponse,
     AnalysisPeriod,
+    ErrorCode,
+    ErrorDetail,
     ErrorResponse,
     GenerateCompsToolRequest,
     GenerateCompsToolResponse,
@@ -121,6 +123,48 @@ class FundamentalAnalysisAgent:
         request: AgentMessageRequest,
         session_context: AdkSessionContext,
     ) -> AgentMessageResponse:
+        recovery_run = request.recovery_run
+        if recovery_run is not None:
+            if (
+                recovery_run.id != request.user_message_id
+                or recovery_run.thread_id != request.thread_id
+                or recovery_run.trigger_message_id != request.user_message_id
+            ):
+                raise AgentToolError(
+                    status_code=409,
+                    error=ErrorResponse(
+                        error=ErrorDetail(
+                            code=ErrorCode.CONFLICT,
+                            message="Recovery Run linkage does not match the Message.",
+                            run_id=recovery_run.id,
+                        )
+                    ),
+                )
+            try:
+                recovered = await self._comps_client.generate_comps_table(
+                    GenerateCompsToolRequest(
+                        invocation_id=recovery_run.id,
+                        thread_id=recovery_run.thread_id,
+                        trigger_message_id=recovery_run.trigger_message_id,
+                        target_ticker=recovery_run.target_ticker,
+                        peer_tickers=recovery_run.peer_tickers,
+                        peer_selection_mode=PeerSelectionMode.USER_SUPPLIED,
+                        analysis_period=AnalysisPeriod.LATEST,
+                        currency=recovery_run.currency,
+                    )
+                )
+            except CompsToolError as exc:
+                raise AgentToolError(
+                    status_code=exc.status_code,
+                    error=exc.error,
+                ) from None
+            except CompsToolUnavailable as exc:
+                raise AgentRoutingUnavailable(str(exc)) from exc
+            return await self._complete_tool_response(
+                request=request,
+                session_context=session_context,
+                tool_response=recovered,
+            )
         invocation_key = str(request.user_message_id)
         invocation_gate = _ToolInvocationGate()
         self._tool_invocation_gates[invocation_key] = invocation_gate
@@ -201,26 +245,36 @@ class FundamentalAnalysisAgent:
             return AgentMessageResponse(content=VALIDATION_CLARIFICATION, run=None)
 
         if successful_tool_response is not None:
-            content = _tool_backed_content(successful_tool_response)
-            session = await session_context.get_session(
-                user_id=request.user_id,
-                thread_id=request.thread_id,
-            )
-            if session is None:
-                raise AgentRoutingUnavailable("Agent session unavailable.")
-            await session_context.complete_turn(
-                session=session,
-                user_message_id=request.user_message_id,
-                assistant_content=content,
-            )
-            return AgentMessageResponse(
-                content=content,
-                run=successful_tool_response.run,
+            return await self._complete_tool_response(
+                request=request,
+                session_context=session_context,
+                tool_response=successful_tool_response,
             )
 
         if not final_text:
             raise AgentRoutingUnavailable("Agent returned no response.")
         return AgentMessageResponse(content=final_text, run=None)
+
+    async def _complete_tool_response(
+        self,
+        *,
+        request: AgentMessageRequest,
+        session_context: AdkSessionContext,
+        tool_response: GenerateCompsToolResponse,
+    ) -> AgentMessageResponse:
+        content = _tool_backed_content(tool_response)
+        session = await session_context.get_session(
+            user_id=request.user_id,
+            thread_id=request.thread_id,
+        )
+        if session is None:
+            raise AgentRoutingUnavailable("Agent session unavailable.")
+        await session_context.complete_turn(
+            session=session,
+            user_message_id=request.user_message_id,
+            assistant_content=content,
+        )
+        return AgentMessageResponse(content=content, run=tool_response.run)
 
     async def generate_comps_table(
         self,

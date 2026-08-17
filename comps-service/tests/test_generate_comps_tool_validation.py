@@ -41,6 +41,15 @@ class RecordingUnavailableCompanyDataSource:
 class GenerateCompsToolValidationTest(unittest.TestCase):
     _last_live_validation_at = 0.0
 
+    def setUp(self) -> None:
+        repository = Mock()
+        repository.get_succeeded_result.return_value = None
+        repository.get_failed_result.return_value = None
+        repository.get_run_by_invocation.return_value = None
+        repository.get_active_run_by_invocation.return_value = None
+        app.dependency_overrides[get_repository] = lambda: repository
+        self.addCleanup(app.dependency_overrides.clear)
+
     def _internal_tool_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"}
 
@@ -107,6 +116,34 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
         ticker_validator = Mock()
         ticker_validator.is_supported.return_value = True
         repository = Mock()
+        invocation_id = uuid4()
+        thread_id = uuid4()
+        trigger_message_id = uuid4()
+        from talk_to_your_stock_shared import Run, RunStatus
+        from talk_to_your_stock_shared.time import utc_now
+
+        queued_run = Run(
+            id=invocation_id,
+            thread_id=thread_id,
+            trigger_message_id=trigger_message_id,
+            status=RunStatus.QUEUED,
+            target_ticker="AAPL",
+            peer_tickers=["MSFT"],
+            currency="USD",
+            as_of=None,
+            created_at=utc_now(),
+        )
+        repository.get_succeeded_result.return_value = None
+        repository.get_failed_result.return_value = None
+        repository.get_run_by_invocation.return_value = None
+        repository.get_active_run_by_invocation.return_value = None
+        repository.get_validation_evidence.return_value = None
+        repository.reserve_run.return_value = queued_run
+        repository.claim_run.return_value = queued_run.model_copy(
+            update={"status": RunStatus.RUNNING, "started_at": utc_now()}
+        )
+        repository.renew_run_lease.return_value = True
+        repository.complete_failed_run.return_value = True
         app.dependency_overrides[get_repository] = lambda: repository
         self.addCleanup(app.dependency_overrides.clear)
 
@@ -124,9 +161,9 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             response = TestClient(app).post(
                 "/v1/internal/tools/generate-comps-table",
                 json={
-                    "invocation_id": str(uuid4()),
-                    "thread_id": str(uuid4()),
-                    "trigger_message_id": str(uuid4()),
+                    "invocation_id": str(invocation_id),
+                    "thread_id": str(thread_id),
+                    "trigger_message_id": str(trigger_message_id),
                     "target_ticker": "AAPL",
                     "peer_tickers": ["MSFT"],
                     "peer_selection_mode": "user_supplied",
@@ -140,7 +177,7 @@ class GenerateCompsToolValidationTest(unittest.TestCase):
             "ALPHA_VANTAGE_API_KEY",
             response.json()["error"]["message"],
         )
-        repository.save_failed_run.assert_called_once()
+        repository.complete_failed_run.assert_called_once()
 
     # Shares Alpha Vantage request pacing across validator instances.
     def test_alpha_vantage_rate_limit_is_shared_between_validators(self) -> None:

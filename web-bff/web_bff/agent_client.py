@@ -12,6 +12,7 @@ from talk_to_your_stock_shared import (
     AgentMessageResponse,
     ErrorResponse,
     Message,
+    Run,
     Thread,
     User,
 )
@@ -50,17 +51,22 @@ class HttpAgentClient:
         user: User,
         thread: Thread,
         user_message: Message,
+        recovery_run: Run | None = None,
     ) -> AgentMessageResponse:
         request = AgentMessageRequest(
             user_id=user.id,
             thread_id=thread.id,
             user_message_id=user_message.id,
             content=user_message.content,
+            recovery_run=recovery_run,
         )
+        payload = request.model_dump(mode="json")
+        if recovery_run is None:
+            payload.pop("recovery_run")
         try:
             response = httpx.post(
                 f"{self._base_url}/v1/internal/agent/respond",
-                json=request.model_dump(mode="json"),
+                json=payload,
                 timeout=30,
             )
         except httpx.HTTPError as exc:
@@ -74,7 +80,7 @@ class HttpAgentClient:
                     "Agent Service returned an invalid error response."
                 ) from None
             status_code = response.status_code
-            if status_code not in (502, 503):
+            if status_code not in (409, 502, 503):
                 status_code = 502
             raise AgentServiceResponseError(status_code=status_code, error=error)
 

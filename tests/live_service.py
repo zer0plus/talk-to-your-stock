@@ -96,6 +96,102 @@ def running_service_process(
                 process.wait(timeout=5)
 
 
+class RestartableServiceProcess:
+    def __init__(
+        self,
+        app_import: str,
+        *,
+        environ: Mapping[str, str],
+        health_path: str = "/v1/health",
+    ) -> None:
+        self._app_import = app_import
+        self._environ = dict(environ)
+        self._health_path = health_path
+        self._port = _unused_port()
+        self._output = TemporaryFile(mode="w+")
+        self._process: subprocess.Popen[str] | None = None
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self._port}"
+
+    def start(self) -> None:
+        if self._process is not None:
+            raise RuntimeError("Test service is already running.")
+        self._output.seek(0)
+        self._output.truncate()
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                self._app_import,
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self._port),
+                "--log-level",
+                "warning",
+                "--no-access-log",
+            ],
+            cwd=REPO_ROOT,
+            env=self._environ,
+            stdout=self._output,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self._process = process
+        try:
+            _wait_for_service(
+                process=process,
+                url=f"{self.url}{self._health_path}",
+                output=self._output,
+            )
+        except BaseException:
+            self.stop()
+            raise
+
+    def stop(self) -> None:
+        process = self._process
+        if process is None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        finally:
+            self._process = None
+
+    def restart(self) -> None:
+        self.stop()
+        self.start()
+
+    def close(self) -> None:
+        self.stop()
+        self._output.close()
+
+
+@contextmanager
+def restartable_service_process(
+    app_import: str,
+    *,
+    environ: Mapping[str, str],
+    health_path: str = "/v1/health",
+) -> Iterator[RestartableServiceProcess]:
+    service = RestartableServiceProcess(
+        app_import,
+        environ=environ,
+        health_path=health_path,
+    )
+    service.start()
+    try:
+        yield service
+    finally:
+        service.close()
+
+
 def _unused_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

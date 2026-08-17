@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -23,6 +24,13 @@ PROVIDER_SECRET = "deterministic-provider-secret"
 app = FastAPI()
 _state_lock = Lock()
 _alpha_vantage_mode = "success"
+_alpha_vantage_requests = 0
+_alpha_vantage_requests_by_function: dict[str, int] = {}
+_alpha_vantage_release = Event()
+_alpha_vantage_release.set()
+_gemini_requests = 0
+_gemini_release = Event()
+_gemini_release.set()
 
 
 @app.get("/health")
@@ -32,17 +40,75 @@ def health() -> dict[str, str]:
 
 @app.post("/control/alpha-vantage/{mode}")
 def set_alpha_vantage_mode(mode: str) -> JSONResponse:
-    if mode not in {"success", "failure"}:
+    if mode not in {"success", "failure", "blocked"}:
         return JSONResponse(status_code=400, content={"error": "invalid mode"})
-    global _alpha_vantage_mode
+    global _alpha_vantage_mode, _alpha_vantage_requests
     with _state_lock:
         _alpha_vantage_mode = mode
+        _alpha_vantage_requests = 0
+        _alpha_vantage_requests_by_function.clear()
+        if mode == "blocked":
+            _alpha_vantage_release.clear()
+        else:
+            _alpha_vantage_release.set()
     return JSONResponse(content={"mode": mode})
+
+
+@app.get("/control/alpha-vantage/requests")
+def alpha_vantage_requests() -> JSONResponse:
+    with _state_lock:
+        request_count = _alpha_vantage_requests
+        requests_by_function = dict(_alpha_vantage_requests_by_function)
+    return JSONResponse(
+        content={
+            "requests": request_count,
+            "requests_by_function": requests_by_function,
+        }
+    )
+
+
+@app.post("/control/release-alpha-vantage")
+def release_alpha_vantage() -> JSONResponse:
+    _alpha_vantage_release.set()
+    return JSONResponse(content={"released": True})
+
+
+@app.post("/control/gemini/{mode}")
+def set_gemini_mode(mode: str) -> JSONResponse:
+    if mode not in {"success", "blocked"}:
+        return JSONResponse(status_code=400, content={"error": "invalid mode"})
+    global _gemini_requests
+    with _state_lock:
+        _gemini_requests = 0
+        if mode == "blocked":
+            _gemini_release.clear()
+        else:
+            _gemini_release.set()
+    return JSONResponse(content={"mode": mode})
+
+
+@app.get("/control/gemini/requests")
+def gemini_requests() -> JSONResponse:
+    with _state_lock:
+        request_count = _gemini_requests
+    return JSONResponse(content={"requests": request_count})
+
+
+@app.post("/control/release-gemini")
+def release_gemini() -> JSONResponse:
+    _gemini_release.set()
+    return JSONResponse(content={"released": True})
 
 
 @app.get("/alpha-vantage")
 def alpha_vantage(request: Request) -> JSONResponse:
+    global _alpha_vantage_requests
     function = request.query_params.get("function", "")
+    with _state_lock:
+        _alpha_vantage_requests += 1
+        _alpha_vantage_requests_by_function[function] = (
+            _alpha_vantage_requests_by_function.get(function, 0) + 1
+        )
     ticker = (
         request.query_params.get("symbol")
         or request.query_params.get("keywords")
@@ -65,6 +131,8 @@ def alpha_vantage(request: Request) -> JSONResponse:
 
     with _state_lock:
         mode = _alpha_vantage_mode
+    if mode == "blocked" and function == "GLOBAL_QUOTE":
+        _alpha_vantage_release.wait(timeout=15)
     if mode == "failure" and function == "GLOBAL_QUOTE":
         return JSONResponse(
             status_code=429,
@@ -82,8 +150,12 @@ def alpha_vantage(request: Request) -> JSONResponse:
 
 @app.post("/{path:path}")
 async def gemini(path: str, request: Request) -> JSONResponse:
+    global _gemini_requests
     del path
     body = await request.json()
+    with _state_lock:
+        _gemini_requests += 1
+    await asyncio.to_thread(_gemini_release.wait, 15)
     declarations = body.get("tools", [{}])[0].get("functionDeclarations", [])
     if not any(
         declaration.get("name") == "generate_comps_table"

@@ -43,6 +43,21 @@ def seconds_setting(
     return value
 
 
+def positive_seconds_setting(
+    environ: Mapping[str, str],
+    *,
+    name: str,
+    default: float,
+) -> float:
+    value = seconds_setting(environ, name=name, default=default)
+    if value <= 0:
+        raise InvalidProviderConfiguration(
+            name=name,
+            message=f"{name} must be greater than zero.",
+        )
+    return value
+
+
 def quote_entitlement_setting(environ: Mapping[str, str]) -> str | None:
     value = environ.get(ALPHA_VANTAGE_QUOTE_ENTITLEMENT_VAR, "").strip()
     if not value:

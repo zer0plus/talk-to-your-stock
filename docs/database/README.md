@@ -116,6 +116,8 @@ web-bff/
     versions/
       0001_create_web_bff_schema.py
       0002_create_comps_run_schema.py
+      0003_create_comps_audit_artifacts.py
+      0004_add_comps_run_ownership.py
 alembic.ini
 ```
 

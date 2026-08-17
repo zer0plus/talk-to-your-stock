@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 from base64 import b64decode, urlsafe_b64encode
 from binascii import Error as Base64Error
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -24,6 +25,14 @@ class RepositoryConfigurationError(RuntimeError):
 
 
 class InvalidCursorError(ValueError):
+    pass
+
+
+class MessageConflict(ValueError):
+    pass
+
+
+class MessageInvocationInProgress(RuntimeError):
     pass
 
 
@@ -138,9 +147,11 @@ class PostgresWebBffRepository:
         content: str,
         status: MessageStatus,
         run_id: UUID | None = None,
-    ) -> Message:
+        message_id: UUID | None = None,
+        return_inserted: bool = False,
+    ) -> Message | tuple[Message, bool]:
         now = utc_now()
-        message_id = uuid4()
+        persisted_message_id = message_id or uuid4()
         with self._connect() as connection:
             with connection.cursor(row_factory=self._dict_row()) as cursor:
                 cursor.execute(
@@ -149,10 +160,11 @@ class PostgresWebBffRepository:
                         id, thread_id, role, content, status, run_id, created_at
                     )
                     values (%s, %s, %s, %s, %s, %s, %s)
+                    on conflict (id) do nothing
                     returning id, thread_id, role, content, status, run_id, created_at
                     """,
                     (
-                        message_id,
+                        persisted_message_id,
                         thread_id,
                         role.value,
                         content,
@@ -161,7 +173,29 @@ class PostgresWebBffRepository:
                         now,
                     ),
                 )
-                message = Message.model_validate(cursor.fetchone())
+                row = cursor.fetchone()
+                if row is None:
+                    cursor.execute(
+                        """
+                        select id, thread_id, role, content, status, run_id, created_at
+                        from web_bff_messages
+                        where id = %s
+                        """,
+                        (persisted_message_id,),
+                    )
+                    existing = Message.model_validate(cursor.fetchone())
+                    if (
+                        existing.thread_id != thread_id
+                        or existing.role != role
+                        or existing.content != content
+                        or existing.status != status
+                        or existing.run_id != run_id
+                    ):
+                        raise MessageConflict(
+                            "Message identity is already used by a different Message."
+                        )
+                    return (existing, False) if return_inserted else existing
+                message = Message.model_validate(row)
                 cursor.execute(
                     """
                     update web_bff_threads
@@ -173,7 +207,38 @@ class PostgresWebBffRepository:
                     """,
                     (now, run_id, now, thread_id),
                 )
-        return message
+        return (message, True) if return_inserted else message
+
+    @contextmanager
+    def message_invocation(self, *, message_id: UUID) -> Iterator[None]:
+        lock_key = int.from_bytes(message_id.bytes[:8], byteorder="big", signed=True)
+        with self._connect(autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("select pg_try_advisory_lock(%s)", (lock_key,))
+                acquired = cursor.fetchone()[0]
+            if not acquired:
+                raise MessageInvocationInProgress(
+                    "Message invocation is already being routed."
+                )
+            try:
+                yield
+            finally:
+                with connection.cursor() as cursor:
+                    cursor.execute("select pg_advisory_unlock(%s)", (lock_key,))
+
+    def get_message(self, *, message_id: UUID, thread_id: UUID) -> Message | None:
+        with self._connect() as connection:
+            with connection.cursor(row_factory=self._dict_row()) as cursor:
+                cursor.execute(
+                    """
+                    select id, thread_id, role, content, status, run_id, created_at
+                    from web_bff_messages
+                    where id = %s and thread_id = %s
+                    """,
+                    (message_id, thread_id),
+                )
+                row = cursor.fetchone()
+        return Message.model_validate(row) if row is not None else None
 
     def list_messages(
         self,
@@ -206,12 +271,13 @@ class PostgresWebBffRepository:
         next_cursor = str(offset + limit) if has_more else None
         return messages, PaginationMeta(has_more=has_more, next_cursor=next_cursor)
 
-    def _connect(self):
+    def _connect(self, *, autocommit: bool = False):
         import psycopg
 
         return psycopg.connect(
             self._database_url,
             options="-c timezone=UTC",
+            autocommit=autocommit,
         )
 
     @staticmethod

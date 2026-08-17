@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from comps_service.main import app as comps_app
 from talk_to_your_stock_shared import AgentMessageResponse
 from tests.live_service import running_service
-from web_bff.main import app, get_agent_client
+from web_bff.main import app, get_agent_client, get_comps_client
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,6 +24,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class StubAgentClient:
     def respond_to_user_message(self, **_kwargs: object) -> AgentMessageResponse:
         return AgentMessageResponse(content="Assistant reply.")
+
+
+class StubCompsClient:
+    pass
 
 
 class WebBffMigrationsTest(unittest.TestCase):
@@ -79,6 +83,7 @@ class WebBffMigrationsTest(unittest.TestCase):
             command.upgrade(migration_config, "head")
             try:
                 app.dependency_overrides[get_agent_client] = StubAgentClient
+                app.dependency_overrides[get_comps_client] = StubCompsClient
                 client = TestClient(app)
 
                 created = [
@@ -96,7 +101,10 @@ class WebBffMigrationsTest(unittest.TestCase):
 
                 promoted = client.post(
                     f"/v1/threads/{oldest_thread_id}/messages",
-                    json={"content": "Move this Thread to the top"},
+                    json={
+                        "message_id": str(uuid4()),
+                        "content": "Move this Thread to the top",
+                    },
                 )
                 second_page = client.get(
                     "/v1/threads",
@@ -208,14 +216,19 @@ class WebBffMigrationsTest(unittest.TestCase):
             command.upgrade(migration_config, "head")
             try:
                 app.dependency_overrides[get_agent_client] = StubAgentClient
+                app.dependency_overrides[get_comps_client] = StubCompsClient
                 client = TestClient(app)
                 thread_id = client.post(
                     "/v1/threads", json={"title": "Run history"}
                 ).json()["thread"]["id"]
                 trigger_message_id = client.post(
                     f"/v1/threads/{thread_id}/messages",
-                    json={"content": "Compare AAPL with MSFT"},
+                    json={
+                        "message_id": str(uuid4()),
+                        "content": "Compare AAPL with MSFT",
+                    },
                 ).json()["user_message"]["id"]
+                app.dependency_overrides.pop(get_comps_client)
                 created_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
                 first_successful_run_id = UUID(
                     "00000000-0000-0000-0000-000000000001"
@@ -243,12 +256,13 @@ class WebBffMigrationsTest(unittest.TestCase):
                                     trigger_message_id, status, target_ticker,
                                     peer_tickers, currency, as_of, warnings,
                                     error_message, created_at, started_at,
-                                    completed_at
+                                    completed_at, failure_http_status,
+                                    failure_code
                                 )
                                 values (
                                     %s, %s, %s, %s, %s, 'AAPL',
                                     array['MSFT'], 'USD', %s, '[]'::jsonb,
-                                    null, %s, %s, %s
+                                    %s, %s, %s, %s, %s, %s
                                 )
                                 """,
                                 (
@@ -258,9 +272,20 @@ class WebBffMigrationsTest(unittest.TestCase):
                                     trigger_message_id,
                                     run_status,
                                     run_created_at,
+                                    (
+                                        "Historical Run failed."
+                                        if run_status == "failed"
+                                        else None
+                                    ),
                                     run_created_at,
                                     run_created_at,
                                     run_created_at,
+                                    502 if run_status == "failed" else None,
+                                    (
+                                        "UPSTREAM_ERROR"
+                                        if run_status == "failed"
+                                        else None
+                                    ),
                                 ),
                             )
 

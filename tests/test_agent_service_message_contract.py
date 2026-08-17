@@ -226,6 +226,35 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
         self.assertEqual(body["error"]["message"], "Agent routing unavailable.")
 
+    def test_invocation_ownership_failure_returns_upstream_error(self) -> None:
+        app.dependency_overrides[get_session_context] = lambda: AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=InMemorySessionService(),
+            invocation_database_url="postgresql://ownership.test/database",
+        )
+
+        with patch(
+            "agent_service.session_context._acquire_invocation_lock",
+            side_effect=RuntimeError("database denied"),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/agent/respond",
+                json={
+                    "user_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "user_message_id": str(uuid4()),
+                    "content": "What is enterprise value?",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
+        self.assertEqual(
+            body["error"]["message"],
+            "Agent invocation ownership unavailable.",
+        )
+
     def test_missing_database_configuration_returns_upstream_error(self) -> None:
         app.dependency_overrides.pop(get_session_context)
         get_session_context.cache_clear()

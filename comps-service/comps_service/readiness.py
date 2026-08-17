@@ -10,6 +10,7 @@ from talk_to_your_stock_shared.readiness import check_database
 from .provider_config import (
     InvalidProviderConfiguration,
     quote_entitlement_setting,
+    positive_seconds_setting,
     seconds_setting,
 )
 from .tool_validation import (
@@ -17,6 +18,10 @@ from .tool_validation import (
     ALPHA_VANTAGE_TIMEOUT_SECONDS_VAR,
     DEFAULT_ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS,
     DEFAULT_ALPHA_VANTAGE_TIMEOUT_SECONDS,
+)
+from .run_service import (
+    COMPS_RUN_LEASE_SECONDS_VAR,
+    DEFAULT_COMPS_RUN_LEASE_SECONDS,
 )
 
 
@@ -48,6 +53,11 @@ def check_run_data_source(environ: Mapping[str, str]) -> ReadinessCheck:
             default=DEFAULT_ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS,
         )
         quote_entitlement_setting(environ)
+        positive_seconds_setting(
+            environ,
+            name=COMPS_RUN_LEASE_SECONDS_VAR,
+            default=DEFAULT_COMPS_RUN_LEASE_SECONDS,
+        )
     except InvalidProviderConfiguration as exc:
         return ReadinessCheck(
             status=DependencyStatus.FAIL,

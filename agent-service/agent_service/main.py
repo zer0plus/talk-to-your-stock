@@ -34,7 +34,11 @@ from talk_to_your_stock_shared.readiness import (
 )
 from talk_to_your_stock_shared.time import utc_now
 from agent_service.comps_client import COMPS_SERVICE_URL_VAR
-from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
+from agent_service.session_context import (
+    AdkSessionContext,
+    AgentInvocationInProgress,
+    AgentSessionUnavailable,
+)
 from agent_service.fundamental_agent import (
     AgentRoutingUnavailable,
     AgentToolError,
@@ -186,6 +190,7 @@ def _failed_comps_service_check() -> ReadinessCheck:
     response_model=AgentMessageResponse,
     responses={
         400: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
@@ -200,14 +205,30 @@ async def respond_to_message(
     ],
 ) -> AgentMessageResponse | JSONResponse:
     try:
-        async with session_context.turn(
-            user_id=request.user_id,
-            thread_id=request.thread_id,
-        ):
-            response = await fundamental_agent.respond(
-                request=request,
-                session_context=session_context,
-            )
+        async with session_context.invocation(message_id=request.user_message_id):
+            async with session_context.turn(
+                user_id=request.user_id,
+                thread_id=request.thread_id,
+            ):
+                response = await fundamental_agent.respond(
+                    request=request,
+                    session_context=session_context,
+                )
+    except AgentInvocationInProgress:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.CONFLICT,
+                    message="Message invocation is still being routed.",
+                    details={
+                        "thread_id": str(request.thread_id),
+                        "trigger_message_id": str(request.user_message_id),
+                        "status": "routing",
+                    },
+                )
+            ).model_dump(mode="json"),
+        )
     except AgentToolError as exc:
         logger.error(
             (

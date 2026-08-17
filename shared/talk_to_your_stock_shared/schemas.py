@@ -99,6 +99,7 @@ class ThreadListResponse(ContractModel):
 
 
 class CreateMessageRequest(ContractModel):
+    message_id: UUID
     content: str = Field(min_length=1, max_length=5000)
 
 
@@ -256,6 +257,7 @@ class AgentMessageRequest(ContractModel):
     thread_id: UUID
     user_message_id: UUID
     content: str = Field(min_length=1)
+    recovery_run: Run | None = None
 
 
 class AgentMessageResponse(ContractModel):

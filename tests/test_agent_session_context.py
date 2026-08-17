@@ -3,15 +3,39 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 from google.adk.events import Event
 from google.genai import types
 
-from agent_service.session_context import AdkSessionContext
+from agent_service.session_context import AdkSessionContext, AgentSessionUnavailable
 
 
 class AgentSessionContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_invocation_release_failure_is_session_unavailable(self) -> None:
+        context = AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=None,
+            invocation_database_url="postgresql://ownership.test/database",
+        )
+        with (
+            patch(
+                "agent_service.session_context._acquire_invocation_lock",
+                return_value=object(),
+            ),
+            patch(
+                "agent_service.session_context._release_invocation_lock",
+                side_effect=RuntimeError("database denied"),
+            ),
+            self.assertRaisesRegex(
+                AgentSessionUnavailable,
+                "Agent invocation ownership unavailable",
+            ),
+        ):
+            async with context.invocation(message_id=uuid4()):
+                pass
+
     async def test_readiness_does_not_prepare_database_session_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "agent-session-context.sqlite3"

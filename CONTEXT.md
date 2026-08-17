@@ -14,6 +14,10 @@ _Avoid_: Conversation, chat session
 
 **Message**:
 A single user or assistant entry inside a Thread.
+The public create-Message request supplies the User Message ID. Repeating the
+same ID and content means the same Agent invocation and must replay its current
+or terminal result; reusing the ID for different content or a different Thread
+is a conflict.
 _Avoid_: Chat item, utterance
 
 **Agent**:

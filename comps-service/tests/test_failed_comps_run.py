@@ -25,10 +25,17 @@ from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.run_service import (
     CompanyDataLoadFailure,
     CompsRunExecutionError,
-    DuplicateToolInvocation,
     LoadedCompanyData,
+    RecoveredFailedRun,
 )
-from talk_to_your_stock_shared import Run, RunTableResponse, TraceResponse
+from talk_to_your_stock_shared import (
+    ErrorResponse,
+    GenerateCompsToolResponse,
+    Run,
+    RunStatus,
+    RunTableResponse,
+    TraceResponse,
+)
 
 
 INTERNAL_TOOL_TOKEN = "test-internal-tool-token"
@@ -47,38 +54,88 @@ class InMemoryCompsRunRepository:
         self.traces: dict[UUID, TraceResponse] = {}
         self.source_snapshots: dict[UUID, SourceSnapshot] = {}
         self.invocations: dict[UUID, UUID] = {}
+        self.failures: dict[UUID, tuple[int, ErrorResponse]] = {}
+        self.validation_evidence: dict[UUID, dict[str, dict[str, object]]] = {}
 
-    def save_succeeded_run(
-        self,
-        *,
-        invocation_id: UUID,
-        run: Run,
-        table: RunTableResponse,
-        trace: TraceResponse,
-        source_snapshot: SourceSnapshot,
-    ) -> None:
-        self._save_invocation(invocation_id, run)
+    def get_succeeded_result(
+        self, *, invocation_id: UUID
+    ) -> GenerateCompsToolResponse | None:
+        run_id = self.invocations.get(invocation_id)
+        if run_id is None or run_id not in self.tables:
+            return None
+        run = self.runs[run_id]
+        return GenerateCompsToolResponse(
+            run=run,
+            table=self.tables[run_id],
+            trace=self.traces[run_id],
+            warnings=run.warnings,
+        )
+
+    def get_failed_result(
+        self, *, invocation_id: UUID
+    ) -> RecoveredFailedRun | None:
+        run_id = self.invocations.get(invocation_id)
+        if run_id is None or run_id not in self.failures:
+            return None
+        status_code, error = self.failures[run_id]
+        return RecoveredFailedRun(
+            run=self.runs[run_id],
+            status_code=status_code,
+            error=error,
+        )
+
+    def get_run_by_invocation(self, *, invocation_id: UUID) -> Run | None:
+        run_id = self.invocations.get(invocation_id)
+        return self.runs.get(run_id) if run_id is not None else None
+
+    def get_active_run_by_invocation(self, *, invocation_id: UUID) -> Run | None:
+        run = self.get_run_by_invocation(invocation_id=invocation_id)
+        return run if run is not None and run.status == RunStatus.RUNNING else None
+
+    def get_validation_evidence(self, *, invocation_id: UUID):
+        return self.validation_evidence.get(invocation_id)
+
+    def reserve_run(self, *, invocation_id: UUID, run: Run, validation_evidence) -> Run:
+        run_id = self.invocations.get(invocation_id)
+        if run_id is not None:
+            return self.runs[run_id]
+        self.invocations[invocation_id] = run.id
+        self.validation_evidence[invocation_id] = deepcopy(validation_evidence)
+        self.runs[run.id] = run
+        return run
+
+    def claim_run(self, *, run_id, owner_id, lease_seconds):
+        del owner_id, lease_seconds
+        run = self.runs[run_id]
+        if run.status != RunStatus.QUEUED:
+            return None
+        claimed = run.model_copy(
+            update={"status": RunStatus.RUNNING, "started_at": datetime.now(UTC)}
+        )
+        self.runs[run_id] = claimed
+        return claimed
+
+    def renew_run_lease(self, **_kwargs) -> bool:
+        return True
+
+    def complete_succeeded_run(
+        self, *, owner_id, run, table, trace, source_snapshot
+    ) -> bool:
+        del owner_id
+        self.runs[run.id] = run
         self.tables[run.id] = table
         self.traces[run.id] = trace
         self.source_snapshots[run.id] = source_snapshot
+        return True
 
-    def save_failed_run(
-        self,
-        *,
-        invocation_id: UUID,
-        run: Run,
-        source_snapshot: SourceSnapshot,
-    ) -> None:
-        self._save_invocation(invocation_id, run)
-        self.source_snapshots[run.id] = source_snapshot
-
-    def _save_invocation(self, invocation_id: UUID, run: Run) -> None:
-        if invocation_id in self.invocations:
-            raise DuplicateToolInvocation(
-                "Tool invocation has already produced a Run."
-            )
-        self.invocations[invocation_id] = run.id
+    def complete_failed_run(
+        self, *, owner_id, run, status_code, error, source_snapshot
+    ) -> bool:
+        del owner_id
         self.runs[run.id] = run
+        self.failures[run.id] = (status_code, error)
+        self.source_snapshots[run.id] = source_snapshot
+        return True
 
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)

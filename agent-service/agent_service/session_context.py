@@ -25,18 +25,24 @@ class AgentSessionUnavailable(RuntimeError):
     pass
 
 
+class AgentInvocationInProgress(RuntimeError):
+    pass
+
+
 class AdkSessionContext:
     def __init__(
         self,
         *,
         app_name: str,
         session_service: BaseSessionService | None,
+        invocation_database_url: str | None = None,
         unavailable_message: str | None = None,
     ) -> None:
         if not app_name.strip():
             raise AgentSessionUnavailable(f"{GOOGLE_ADK_APP_NAME_VAR} is required.")
         self._app_name = app_name
         self._session_service = session_service
+        self._invocation_database_url = invocation_database_url
         self._unavailable_message = unavailable_message
         self._prepared = not isinstance(session_service, DatabaseSessionService)
         self._turn_locks: dict[tuple[UUID, UUID], asyncio.Lock] = {}
@@ -72,6 +78,7 @@ class AdkSessionContext:
         return cls.from_database_url(
             app_name=app_name,
             database_url=_adk_database_url(database_url),
+            invocation_database_url=database_url,
         )
 
     @classmethod
@@ -80,6 +87,7 @@ class AdkSessionContext:
         *,
         app_name: str,
         database_url: str,
+        invocation_database_url: str | None = None,
     ) -> AdkSessionContext:
         try:
             session_service = DatabaseSessionService(database_url)
@@ -90,7 +98,41 @@ class AdkSessionContext:
         return cls(
             app_name=app_name,
             session_service=session_service,
+            invocation_database_url=invocation_database_url,
         )
+
+    @asynccontextmanager
+    async def invocation(self, *, message_id: UUID) -> AsyncIterator[None]:
+        if self._invocation_database_url is None:
+            yield
+            return
+        try:
+            connection = await asyncio.to_thread(
+                _acquire_invocation_lock,
+                self._invocation_database_url,
+                message_id,
+            )
+        except Exception as exc:
+            raise AgentSessionUnavailable(
+                "Agent invocation ownership unavailable."
+            ) from exc
+        if connection is None:
+            raise AgentInvocationInProgress(
+                "Message invocation is already being routed."
+            )
+        try:
+            yield
+        finally:
+            try:
+                await asyncio.to_thread(
+                    _release_invocation_lock,
+                    connection,
+                    message_id,
+                )
+            except Exception as exc:
+                raise AgentSessionUnavailable(
+                    "Agent invocation ownership unavailable."
+                ) from exc
 
     async def get_session(
         self,
@@ -280,3 +322,43 @@ def _adk_database_url(database_url: str) -> str:
     if database_url.startswith("postgres://"):
         return database_url.replace("postgres://", "postgresql+asyncpg://", 1)
     return database_url
+
+
+def _invocation_lock_keys(message_id: UUID) -> tuple[int, int]:
+    return (
+        int.from_bytes(message_id.bytes[:4], byteorder="big", signed=True),
+        int.from_bytes(message_id.bytes[4:8], byteorder="big", signed=True),
+    )
+
+
+def _acquire_invocation_lock(database_url: str, message_id: UUID):
+    import psycopg
+
+    connection = None
+    try:
+        connection = psycopg.connect(database_url, autocommit=True)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select pg_try_advisory_lock(%s, %s)",
+                _invocation_lock_keys(message_id),
+            )
+            acquired = cursor.fetchone()[0]
+    except Exception:
+        if connection is not None:
+            connection.close()
+        raise
+    if acquired:
+        return connection
+    connection.close()
+    return None
+
+
+def _release_invocation_lock(connection, message_id: UUID) -> None:
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select pg_advisory_unlock(%s, %s)",
+                _invocation_lock_keys(message_id),
+            )
+    finally:
+        connection.close()
