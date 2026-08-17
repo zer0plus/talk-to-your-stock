@@ -367,6 +367,27 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /v1/runs/{run_id}/source-snapshot:
+    get:
+      tags: [Runs]
+      summary: Get the immutable evidence package for a Comps Run
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RunIdParam'
+      responses:
+        '200':
+          description: Source Snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceSnapshotResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /v1/runs/{run_id}/export.csv:
     get:
       tags: [Exports]
@@ -881,6 +902,26 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TraceFormula'
+
+    SourceSnapshotResponse:
+      type: object
+      additionalProperties: false
+      required: [run_id, raw_provider_evidence, normalized_inputs, created_at]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        raw_provider_evidence:
+          type: object
+          additionalProperties: true
+        normalized_inputs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
 
     EventEnvelope:
       type: object

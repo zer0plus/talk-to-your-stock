@@ -27,6 +27,7 @@ from talk_to_your_stock_shared import (
     RunTableResponse,
     ServiceName,
     ServiceStatus,
+    SourceSnapshotResponse,
     TraceResponse,
 )
 from talk_to_your_stock_shared.readiness import (
@@ -405,6 +406,32 @@ def get_run_trace(
             message="Trace not found.",
         )
     return trace
+
+
+@app.get(
+    "/v1/runs/{run_id}/source-snapshot",
+    response_model=SourceSnapshotResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run_source_snapshot(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[CompsRunRepository, Depends(get_repository)],
+) -> SourceSnapshotResponse | JSONResponse:
+    source_snapshot = repository.get_source_snapshot(run_id)
+    if source_snapshot is None:
+        return _error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=ErrorCode.NOT_FOUND,
+            message="Source Snapshot not found.",
+        )
+    return SourceSnapshotResponse.model_validate(
+        source_snapshot.model_dump(mode="python")
+    )
 
 
 def _error_response(

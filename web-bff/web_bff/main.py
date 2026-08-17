@@ -28,6 +28,7 @@ from talk_to_your_stock_shared import (
     RunTableResponse,
     ServiceName,
     ServiceStatus,
+    SourceSnapshotResponse,
     ThreadListResponse,
     ThreadResponse,
     TraceResponse,
@@ -564,6 +565,31 @@ def get_run_trace(
         current_user=current_user,
     )
     return comps_client.get_trace(run_id)
+
+
+@app.get(
+    "/v1/runs/{run_id}/source-snapshot",
+    response_model=SourceSnapshotResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+    tags=["Runs"],
+)
+def get_run_source_snapshot(
+    run_id: Annotated[UUID, Path()],
+    repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
+    comps_client: Annotated[HttpCompsClient, Depends(get_comps_client)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> SourceSnapshotResponse:
+    _get_owned_run(
+        run_id=run_id,
+        repository=repository,
+        comps_client=comps_client,
+        current_user=current_user,
+    )
+    return comps_client.get_source_snapshot(run_id)
 
 
 def _get_owned_run(

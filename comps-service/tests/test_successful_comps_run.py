@@ -905,7 +905,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             )
         )
 
-    def test_source_snapshot_preserves_evidence_without_public_exposure(self) -> None:
+    def test_source_snapshot_preserves_evidence_for_readback(self) -> None:
         with patch.dict(
             os.environ,
             {"COMPS_SERVICE_INTERNAL_TOKEN": INTERNAL_TOOL_TOKEN},
@@ -927,6 +927,9 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             )
             run_id = UUID(created.json()["run"]["id"])
             trace_readback = client.get(f"/v1/runs/{run_id}/trace")
+            source_readback = client.get(
+                f"/v1/runs/{run_id}/source-snapshot"
+            )
 
         self.assertEqual(created.status_code, 200, created.text)
         source_snapshot = self.repository.get_source_snapshot(run_id)
@@ -944,6 +947,12 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         self.assertNotIn("source_snapshot", created.json())
         self.assertNotIn("raw-provider", created.text)
         self.assertNotIn("raw-provider", trace_readback.text)
+        self.assertEqual(source_readback.status_code, 200, source_readback.text)
+        self.assertEqual(source_readback.json()["run_id"], str(run_id))
+        self.assertEqual(
+            source_readback.json()["raw_provider_evidence"]["AAPL"]["payload"],
+            {"raw_marker": "raw-provider-AAPL"},
+        )
 
     def test_repeated_invocation_returns_conflict_without_duplicate_artifacts(
         self,
@@ -1102,6 +1111,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             "/v1/runs/{run_id}",
             "/v1/runs/{run_id}/table",
             "/v1/runs/{run_id}/trace",
+            "/v1/runs/{run_id}/source-snapshot",
         ):
             with self.subTest(path=path):
                 source_operation = source_contract["paths"][path]["get"]
@@ -1121,12 +1131,19 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             ["responses"]["200"]["content"]["application/json"]["schema"],
             {"$ref": "#/components/schemas/TraceResponse"},
         )
-        self.assertNotIn(
-            "/v1/runs/{run_id}/source-snapshot",
-            source_contract["paths"],
+        self.assertEqual(
+            source_contract["paths"]["/v1/runs/{run_id}/source-snapshot"]
+            ["get"]["responses"]["200"]["content"]["application/json"]["schema"],
+            {"$ref": "#/components/schemas/SourceSnapshotResponse"},
         )
-        self.assertNotIn("SourceSnapshot", source_contract["components"]["schemas"])
-        self.assertNotIn("SourceSnapshot", generated_contract["components"]["schemas"])
+        self.assertIn(
+            "SourceSnapshotResponse",
+            source_contract["components"]["schemas"],
+        )
+        self.assertIn(
+            "SourceSnapshotResponse",
+            generated_contract["components"]["schemas"],
+        )
 
     def test_generate_contract_declares_invocation_conflict(self) -> None:
         source_contract = yaml.safe_load(
@@ -1160,7 +1177,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
     ) -> None:
         client = TestClient(app)
 
-        for suffix in ("", "/table", "/trace"):
+        for suffix in ("", "/table", "/trace", "/source-snapshot"):
             with self.subTest(error="not_found", suffix=suffix):
                 response = client.get(f"/v1/runs/{uuid4()}{suffix}")
                 self.assertEqual(response.status_code, 404, response.text)
@@ -1183,7 +1200,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
         app.dependency_overrides[get_repository] = unavailable_repository
         client = TestClient(app)
 
-        for suffix in ("", "/table", "/trace"):
+        for suffix in ("", "/table", "/trace", "/source-snapshot"):
             with self.subTest(suffix=suffix):
                 response = client.get(f"/v1/runs/{uuid4()}{suffix}")
                 self.assertEqual(response.status_code, 503, response.text)

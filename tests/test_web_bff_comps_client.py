@@ -14,6 +14,7 @@ from talk_to_your_stock_shared import (
     RunResponse,
     RunStatus,
     RunTableResponse,
+    SourceSnapshotResponse,
     TraceResponse,
 )
 from talk_to_your_stock_shared.schemas import RunTableSummary, RunTableSummaryStats
@@ -29,6 +30,12 @@ class WebBffCompsClientTest(unittest.TestCase):
     def test_reads_run_table_and_trace_through_configured_comps_service(self) -> None:
         run_id = uuid4()
         run, table, trace = _artifacts(run_id)
+        source_snapshot = SourceSnapshotResponse(
+            run_id=run_id,
+            raw_provider_evidence={"AAPL": {"provider": "controlled"}},
+            normalized_inputs=[{"ticker": "AAPL"}],
+            created_at=run.completed_at,
+        )
         comps_app = FastAPI()
 
         @comps_app.get("/v1/runs/{requested_run_id}")
@@ -45,6 +52,11 @@ class WebBffCompsClientTest(unittest.TestCase):
         def get_trace(requested_run_id: str) -> TraceResponse:
             self.assertEqual(requested_run_id, str(run_id))
             return trace
+
+        @comps_app.get("/v1/runs/{requested_run_id}/source-snapshot")
+        def get_source_snapshot(requested_run_id: str) -> SourceSnapshotResponse:
+            self.assertEqual(requested_run_id, str(run_id))
+            return source_snapshot
 
         @comps_app.get("/v1/threads/{requested_thread_id}/runs")
         def list_runs(
@@ -68,6 +80,7 @@ class WebBffCompsClientTest(unittest.TestCase):
             self.assertEqual(client.get_run(run_id), run)
             self.assertEqual(client.get_table(run_id), table)
             self.assertEqual(client.get_trace(run_id), trace)
+            self.assertEqual(client.get_source_snapshot(run_id), source_snapshot)
             self.assertEqual(
                 client.list_runs(
                     thread_id=run.thread_id,
@@ -81,6 +94,12 @@ class WebBffCompsClientTest(unittest.TestCase):
     def test_rejects_artifacts_for_a_different_run(self) -> None:
         requested_run_id = uuid4()
         run, table, trace = _artifacts(uuid4())
+        source_snapshot = SourceSnapshotResponse(
+            run_id=run.id,
+            raw_provider_evidence={},
+            normalized_inputs=[],
+            created_at=run.completed_at,
+        )
         comps_app = FastAPI()
 
         @comps_app.get("/v1/runs/{_requested_run_id}")
@@ -95,10 +114,21 @@ class WebBffCompsClientTest(unittest.TestCase):
         def get_trace(_requested_run_id: str) -> TraceResponse:
             return trace
 
+        @comps_app.get("/v1/runs/{_requested_run_id}/source-snapshot")
+        def get_source_snapshot(
+            _requested_run_id: str,
+        ) -> SourceSnapshotResponse:
+            return source_snapshot
+
         with running_service(comps_app) as base_url:
             client = HttpCompsClient(base_url=base_url)
 
-            for read in (client.get_run, client.get_table, client.get_trace):
+            for read in (
+                client.get_run,
+                client.get_table,
+                client.get_trace,
+                client.get_source_snapshot,
+            ):
                 with self.subTest(read=read.__name__):
                     with self.assertRaisesRegex(
                         CompsServiceUnavailable,

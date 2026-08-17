@@ -16,6 +16,7 @@ from talk_to_your_stock_shared import (
     RunResponse,
     RunStatus,
     RunTableResponse,
+    SourceSnapshotResponse,
     TraceResponse,
 )
 
@@ -63,6 +64,14 @@ class HttpCompsClient:
         trace = self._get(f"/v1/runs/{run_id}/trace", TraceResponse)
         self._require_run_id(requested=run_id, returned=trace.run_id)
         return trace
+
+    def get_source_snapshot(self, run_id: UUID) -> SourceSnapshotResponse:
+        source_snapshot = self._get(
+            f"/v1/runs/{run_id}/source-snapshot",
+            SourceSnapshotResponse,
+        )
+        self._require_run_id(requested=run_id, returned=source_snapshot.run_id)
+        return source_snapshot
 
     def list_runs(
         self,

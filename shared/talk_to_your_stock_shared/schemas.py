@@ -211,6 +211,13 @@ class TraceResponse(ContractModel):
     formulas: list[TraceFormula]
 
 
+class SourceSnapshotResponse(ContractModel):
+    run_id: UUID
+    raw_provider_evidence: dict[str, object]
+    normalized_inputs: list[dict[str, object]]
+    created_at: datetime
+
+
 class GenerateCompsToolRequest(ContractModel):
     invocation_id: UUID
     thread_id: UUID
