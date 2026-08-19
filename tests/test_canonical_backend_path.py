@@ -510,6 +510,94 @@ class CanonicalBackendPathTest(unittest.TestCase):
         self.assertEqual(provider_counts["GLOBAL_QUOTE"], 3)
         self._assert_one_run_for_message(message_id)
 
+    def test_retry_replays_terminal_conversation_after_web_restart(self) -> None:
+        httpx.post(
+            f"{self.external_url}/control/gemini/conversation-blocked"
+        ).raise_for_status()
+        message_id = str(uuid4())
+        with httpx.Client(base_url=self.web_url, timeout=30) as client:
+            thread = client.post(
+                "/v1/threads",
+                json={"title": "Interrupted Conversation Response"},
+            ).json()["thread"]
+
+        request_body = {
+            "message_id": message_id,
+            "content": "What is enterprise value?",
+        }
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            interrupted = executor.submit(
+                httpx.post,
+                f"{self.web_url}/v1/threads/{thread['id']}/messages",
+                json=request_body,
+                timeout=30,
+            )
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                request_count = httpx.get(
+                    f"{self.external_url}/control/gemini/requests"
+                ).json()["requests"]
+                if request_count == 1:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("The interrupted request did not reach Gemini routing.")
+
+            self.web_process.stop()
+            self.addCleanup(self.web_process.start)
+            httpx.post(
+                f"{self.external_url}/control/release-gemini"
+            ).raise_for_status()
+            with self.assertRaises(httpx.HTTPError):
+                interrupted.result()
+
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            replayed = httpx.post(
+                f"{self.second_web_url}/v1/threads/{thread['id']}/messages",
+                json=request_body,
+                timeout=30,
+            )
+            if replayed.status_code != 409:
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("The terminal Conversation Response was not replayable.")
+
+        self.assertEqual(replayed.status_code, 201, replayed.text)
+        body = replayed.json()
+        self.assertEqual(
+            body["assistant_message"]["content"],
+            "Enterprise value measures the value of the whole business.",
+        )
+        self.assertIsNone(body["assistant_message"]["run_id"])
+        self.assertIsNone(body["run"])
+        request_count = httpx.get(
+            f"{self.external_url}/control/gemini/requests"
+        ).json()["requests"]
+        self.assertEqual(request_count, 1)
+
+        messages = httpx.get(
+            f"{self.second_web_url}/v1/threads/{thread['id']}/messages",
+            timeout=30,
+        )
+        self.assertEqual(messages.status_code, 200, messages.text)
+        self.assertEqual(
+            [
+                (message["role"], message["content"])
+                for message in messages.json()["messages"]
+            ],
+            [
+                ("user", "What is enterprise value?"),
+                (
+                    "assistant",
+                    "Enterprise value measures the value of the whole business.",
+                ),
+            ],
+        )
+        self._assert_no_run_for_message(message_id)
+
     def _wait_for_run_status(self, *, run_id: str, status: str) -> None:
         import psycopg
 

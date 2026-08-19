@@ -29,6 +29,7 @@ _alpha_vantage_requests_by_function: dict[str, int] = {}
 _alpha_vantage_release = Event()
 _alpha_vantage_release.set()
 _gemini_requests = 0
+_gemini_response_mode = "tool"
 _gemini_release = Event()
 _gemini_release.set()
 
@@ -75,12 +76,20 @@ def release_alpha_vantage() -> JSONResponse:
 
 @app.post("/control/gemini/{mode}")
 def set_gemini_mode(mode: str) -> JSONResponse:
-    if mode not in {"success", "blocked"}:
+    if mode not in {
+        "success",
+        "blocked",
+        "conversation",
+        "conversation-blocked",
+    }:
         return JSONResponse(status_code=400, content={"error": "invalid mode"})
-    global _gemini_requests
+    global _gemini_requests, _gemini_response_mode
     with _state_lock:
         _gemini_requests = 0
-        if mode == "blocked":
+        _gemini_response_mode = (
+            "conversation" if mode.startswith("conversation") else "tool"
+        )
+        if mode in {"blocked", "conversation-blocked"}:
             _gemini_release.clear()
         else:
             _gemini_release.set()
@@ -155,6 +164,7 @@ async def gemini(path: str, request: Request) -> JSONResponse:
     body = await request.json()
     with _state_lock:
         _gemini_requests += 1
+        response_mode = _gemini_response_mode
     await asyncio.to_thread(_gemini_release.wait, 15)
     declarations = body.get("tools", [{}])[0].get("functionDeclarations", [])
     if not any(
@@ -165,23 +175,28 @@ async def gemini(path: str, request: Request) -> JSONResponse:
             status_code=400,
             content={"error": {"message": "Comps Tool was not exposed."}},
         )
+    parts = (
+        [{"text": "Enterprise value measures the value of the whole business."}]
+        if response_mode == "conversation"
+        else [
+            {
+                "functionCall": {
+                    "name": "generate_comps_table",
+                    "args": {
+                        "target_ticker": "AAPL",
+                        "peer_tickers": ["MSFT", "NVDA"],
+                    },
+                }
+            }
+        ]
+    )
     return JSONResponse(
         content={
             "candidates": [
                 {
                     "content": {
                         "role": "model",
-                        "parts": [
-                            {
-                                "functionCall": {
-                                    "name": "generate_comps_table",
-                                    "args": {
-                                        "target_ticker": "AAPL",
-                                        "peer_tickers": ["MSFT", "NVDA"],
-                                    },
-                                }
-                            }
-                        ],
+                        "parts": parts,
                     },
                     "finishReason": "STOP",
                     "index": 0,

@@ -29,6 +29,10 @@ Run. When the model answers without calling the Tool, the route returns that
 answer with no Run. A pre-Run validation error permits one corrected Tool call;
 a second validation error ends the turn with a concise Ticker clarification.
 
+The Agent Service persists each terminal response envelope by User Message ID
+before returning it. A retry replays that exact envelope instead of invoking the
+model or Tool again.
+
 ## Persistence Flow
 
 ```mermaid

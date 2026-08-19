@@ -57,6 +57,7 @@ class WebBffMigrationsTest(unittest.TestCase):
         self.assertIn("create table web_bff_users", sql)
         self.assertIn("create table web_bff_threads", sql)
         self.assertIn("create table web_bff_messages", sql)
+        self.assertIn("create table agent_response_envelopes", sql)
         self.assertIn(
             "create index web_bff_threads_user_updated_idx "
             "on web_bff_threads (user_id, updated_at desc, id desc)",

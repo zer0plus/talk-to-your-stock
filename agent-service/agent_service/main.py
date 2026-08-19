@@ -37,6 +37,7 @@ from agent_service.comps_client import COMPS_SERVICE_URL_VAR
 from agent_service.session_context import (
     AdkSessionContext,
     AgentInvocationInProgress,
+    AgentResponseConflict,
     AgentSessionUnavailable,
 )
 from agent_service.fundamental_agent import (
@@ -210,10 +211,18 @@ async def respond_to_message(
                 user_id=request.user_id,
                 thread_id=request.thread_id,
             ):
-                response = await fundamental_agent.respond(
-                    request=request,
-                    session_context=session_context,
+                response = await session_context.get_terminal_response(
+                    request=request
                 )
+                if response is None:
+                    response = await fundamental_agent.respond(
+                        request=request,
+                        session_context=session_context,
+                    )
+                    response = await session_context.save_terminal_response(
+                        request=request,
+                        response=response,
+                    )
     except AgentInvocationInProgress:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
@@ -226,6 +235,16 @@ async def respond_to_message(
                         "trigger_message_id": str(request.user_message_id),
                         "status": "routing",
                     },
+                )
+            ).model_dump(mode="json"),
+        )
+    except AgentResponseConflict as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.CONFLICT,
+                    message=str(exc),
                 )
             ).model_dump(mode="json"),
         )
