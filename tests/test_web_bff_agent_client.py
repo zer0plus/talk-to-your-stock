@@ -79,6 +79,54 @@ class WebBffAgentClientTest(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 502)
         self.assertEqual(context.exception.error, error)
 
+    def test_in_progress_conflict_status_is_preserved(self) -> None:
+        client = HttpAgentClient(base_url="http://agent-service.test")
+        now = datetime.now(timezone.utc)
+        user = User(
+            id=uuid4(), email="dev@example.com", created_at=now, updated_at=now
+        )
+        thread = Thread(
+            id=uuid4(),
+            user_id=user.id,
+            title="Comps",
+            message_count=1,
+            created_at=now,
+            updated_at=now,
+        )
+        message = Message(
+            id=uuid4(),
+            thread_id=thread.id,
+            role=MessageRole.USER,
+            content="Compare AAPL with MSFT",
+            status=MessageStatus.COMPLETE,
+            created_at=now,
+        )
+        error = ErrorResponse(
+            error=ErrorDetail(
+                code=ErrorCode.CONFLICT,
+                message="Tool invocation calculation is already running.",
+                run_id=message.id,
+            )
+        )
+        response = httpx.Response(
+            409,
+            json=error.model_dump(mode="json"),
+            request=httpx.Request(
+                "POST", "http://agent-service.test/v1/internal/agent/respond"
+            ),
+        )
+
+        with patch("web_bff.agent_client.httpx.post", return_value=response):
+            with self.assertRaises(AgentServiceResponseError) as context:
+                client.respond_to_user_message(
+                    user=user,
+                    thread=thread,
+                    user_message=message,
+                )
+
+        self.assertEqual(context.exception.status_code, 409)
+        self.assertEqual(context.exception.error, error)
+
     def test_malformed_agent_response_is_wrapped_as_upstream_error(self) -> None:
         client = HttpAgentClient(base_url="http://agent-service.test")
         now = datetime.now(timezone.utc)

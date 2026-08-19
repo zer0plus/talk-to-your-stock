@@ -36,8 +36,9 @@ from talk_to_your_stock_shared.readiness import (
 )
 from talk_to_your_stock_shared.time import utc_now
 
-from .readiness import check_comps_database, check_run_data_source
 from .provider import AlphaVantageCompanyDataSource
+from .provider_config import InvalidProviderConfiguration
+from .readiness import check_comps_database, check_run_data_source
 from .repository import (
     CompsPersistenceUnavailable,
     InvalidRunCursor,
@@ -51,6 +52,8 @@ from .run_service import (
     CompsRunService,
     DuplicateToolInvocation,
     FailedCompsRun,
+    RecoveredFailedCompsRun,
+    RunCalculationInProgress,
 )
 from .tool_validation import (
     AlphaVantageTickerValidator,
@@ -234,6 +237,10 @@ def generate_comps_table(
         AlphaVantageTickerValidator,
         Depends(get_ticker_validator),
     ],
+    validated_ticker_matches: Annotated[
+        ValidatedTickerMatches,
+        Depends(get_validated_ticker_matches),
+    ],
 ) -> GenerateCompsToolResponse | JSONResponse:
     if request.peer_selection_mode == PeerSelectionMode.AUTO:
         return _error_response(
@@ -243,7 +250,40 @@ def generate_comps_table(
         )
 
     try:
-        validate_generate_comps_request(request, ticker_validator=ticker_validator)
+        run_service = CompsRunService(
+            repository=repository,
+            company_data_source=company_data_source,
+        )
+    except InvalidProviderConfiguration as exc:
+        return _error_response(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=ErrorCode.INTERNAL_ERROR,
+            message=str(exc),
+            details={"invalid_configuration": [exc.name]},
+        )
+    try:
+        recovered = run_service.recover_terminal(request)
+        if recovered is not None:
+            return recovered
+        requires_external_validation = run_service.requires_external_validation(
+            request
+        )
+    except RecoveredFailedCompsRun as exc:
+        return _recovered_failure_response(exc)
+    except RunCalculationInProgress as exc:
+        return _calculation_in_progress_response(exc)
+    try:
+        if requires_external_validation:
+            validate_generate_comps_request(
+                request,
+                ticker_validator=ticker_validator,
+            )
+        else:
+            persisted_validation = repository.get_validation_evidence(
+                invocation_id=request.invocation_id,
+            )
+            if persisted_validation is not None:
+                validated_ticker_matches.update(persisted_validation)
     except ToolValidationError as exc:
         return _error_response(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -276,17 +316,15 @@ def generate_comps_table(
         )
 
     try:
-        return CompsRunService(
-            repository=repository,
-            company_data_source=company_data_source,
-        ).generate(request)
+        return run_service.generate(
+            request,
+            validation_evidence=validated_ticker_matches,
+        )
+    except RecoveredFailedCompsRun as exc:
+        return _recovered_failure_response(exc)
+    except RunCalculationInProgress as exc:
+        return _calculation_in_progress_response(exc)
     except FailedCompsRun as exc:
-        dependency_unavailable = isinstance(exc.cause, CompanyDataUnavailable)
-        failure_details = {
-            **(getattr(exc.cause, "details", None) or {}),
-            "thread_id": str(request.thread_id),
-            "trigger_message_id": str(request.trigger_message_id),
-        }
         logger.error(
             (
                 "Comps Run failed: run_id=%s thread_id=%s "
@@ -297,20 +335,9 @@ def generate_comps_table(
             request.trigger_message_id,
             str(exc),
         )
-        return _error_response(
-            status_code=(
-                status.HTTP_503_SERVICE_UNAVAILABLE
-                if dependency_unavailable
-                else status.HTTP_502_BAD_GATEWAY
-            ),
-            code=(
-                ErrorCode.INTERNAL_ERROR
-                if dependency_unavailable
-                else ErrorCode.UPSTREAM_ERROR
-            ),
-            message=str(exc),
-            details=failure_details,
-            run_id=exc.run_id,
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.error.model_dump(mode="json"),
         )
 
 
@@ -452,6 +479,27 @@ def _error_response(
                 run_id=run_id,
             )
         ).model_dump(mode="json"),
+    )
+
+
+def _recovered_failure_response(exc: RecoveredFailedCompsRun) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.result.status_code,
+        content=exc.result.error.model_dump(mode="json"),
+    )
+
+
+def _calculation_in_progress_response(exc: RunCalculationInProgress) -> JSONResponse:
+    return _error_response(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.CONFLICT,
+        message=str(exc),
+        details={
+            "thread_id": str(exc.run.thread_id),
+            "trigger_message_id": str(exc.run.trigger_message_id),
+            "status": exc.run.status.value,
+        },
+        run_id=exc.run.id,
     )
 
 

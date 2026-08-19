@@ -64,7 +64,9 @@ Agent Service startup prepares the ADK-owned session/event tables used to retain
 complete Agent and Tool event history for each User and Thread. Readiness
 includes `agent_session` to verify that store without preparing database objects.
 Comps Service readiness reports `run_data_source: ok` when its real provider and
-FX adapter is installed; configuration readiness independently fails when the
+FX adapter is installed. `COMPS_RUN_LEASE_SECONDS` controls how quickly a
+persisted calculation claim can be reclaimed after its owner stops renewing;
+the default is 6 seconds. Configuration readiness independently fails when the
 Alpha Vantage API key is missing. Agent Service readiness checks the configured
 Comps Service and propagates any failure through `agent_routing`.
 Configuration readiness requires `GOOGLE_API_KEY`, `COMPS_SERVICE_URL`, and

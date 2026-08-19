@@ -128,6 +128,56 @@ class AgentServiceMessageContractTest(unittest.TestCase):
             ],
         )
 
+    def test_agent_service_replays_one_terminal_response_for_same_message(self) -> None:
+        user_id = uuid4()
+        thread_id = uuid4()
+        message_id = uuid4()
+        request = {
+            "user_id": str(user_id),
+            "thread_id": str(thread_id),
+            "user_message_id": str(message_id),
+            "content": "What is enterprise value?",
+        }
+        client = TestClient(app)
+
+        first = client.post("/v1/internal/agent/respond", json=request)
+        replayed = client.post("/v1/internal/agent/respond", json=request)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(replayed.status_code, 200, replayed.text)
+        self.assertEqual(replayed.json(), first.json())
+        session = asyncio.run(
+            self.session_context.get_session(
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+        )
+        assert session is not None
+        self.assertEqual(
+            [event.author for event in session.events],
+            ["user", "fundamental_analysis_agent"],
+        )
+
+    def test_agent_service_rejects_reused_message_identity_for_new_content(self) -> None:
+        message_id = uuid4()
+        request = {
+            "user_id": str(uuid4()),
+            "thread_id": str(uuid4()),
+            "user_message_id": str(message_id),
+            "content": "What is enterprise value?",
+        }
+        client = TestClient(app)
+
+        created = client.post("/v1/internal/agent/respond", json=request)
+        conflict = client.post(
+            "/v1/internal/agent/respond",
+            json={**request, "content": "What is EBITDA?"},
+        )
+
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(conflict.json()["error"]["code"], "CONFLICT")
+
     def test_agent_service_serializes_overlapping_messages_in_one_thread(self) -> None:
         async def exercise_overlapping_messages() -> tuple[list[int], list[str]]:
             with tempfile.TemporaryDirectory() as directory:
@@ -225,6 +275,35 @@ class AgentServiceMessageContractTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
         self.assertEqual(body["error"]["message"], "Agent routing unavailable.")
+
+    def test_invocation_ownership_failure_returns_upstream_error(self) -> None:
+        app.dependency_overrides[get_session_context] = lambda: AdkSessionContext(
+            app_name="talk-to-your-stock",
+            session_service=InMemorySessionService(),
+            invocation_database_url="postgresql://ownership.test/database",
+        )
+
+        with patch(
+            "agent_service.session_context._acquire_invocation_lock",
+            side_effect=RuntimeError("database denied"),
+        ):
+            response = TestClient(app).post(
+                "/v1/internal/agent/respond",
+                json={
+                    "user_id": str(uuid4()),
+                    "thread_id": str(uuid4()),
+                    "user_message_id": str(uuid4()),
+                    "content": "What is enterprise value?",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
+        self.assertEqual(
+            body["error"]["message"],
+            "Agent invocation ownership unavailable.",
+        )
 
     def test_missing_database_configuration_returns_upstream_error(self) -> None:
         app.dependency_overrides.pop(get_session_context)

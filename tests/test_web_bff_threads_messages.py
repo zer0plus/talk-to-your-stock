@@ -5,6 +5,7 @@ import os
 import unittest
 from collections.abc import AsyncGenerator, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from threading import Event
 from uuid import UUID, uuid4
@@ -113,7 +114,9 @@ class ControlledAgent:
         user: User,
         thread: Thread,
         user_message: Message,
+        recovery_run: Run | None = None,
     ) -> ControlledAgentResponse:
+        del recovery_run
         self._repository.events.append("agent.invoked")
         self.invocations.append(
             {
@@ -189,6 +192,11 @@ class MissingRunCompsClient:
         raise CompsArtifactNotFound("Comps artifact not found.")
 
 
+class UnexpectedReadCompsClient:
+    def get_run(self, run_id: UUID) -> Run:
+        raise AssertionError(f"Unexpected Run replay read: {run_id}")
+
+
 class InvalidRunHistoryCompsClient:
     def list_runs(self, **_kwargs: object) -> RunListResponse:
         raise CompsRequestInvalid("Run cursor is invalid.")
@@ -242,10 +250,19 @@ class RecordingRepository:
         content: str,
         status: MessageStatus,
         run_id: UUID | None = None,
-    ) -> Message:
+        message_id: UUID | None = None,
+        return_inserted: bool = False,
+    ) -> Message | tuple[Message, bool]:
         now = _now()
+        persisted_message_id = message_id or uuid4()
+        existing = next(
+            (message for message in self.messages if message.id == persisted_message_id),
+            None,
+        )
+        if existing is not None:
+            return (existing, False) if return_inserted else existing
         message = Message(
-            id=uuid4(),
+            id=persisted_message_id,
             thread_id=thread_id,
             role=role,
             content=content,
@@ -264,7 +281,22 @@ class RecordingRepository:
             }
         )
         self.events.append(f"message.created:{role.value}")
-        return message
+        return (message, True) if return_inserted else message
+
+    @contextmanager
+    def message_invocation(self, *, message_id: UUID):
+        del message_id
+        yield
+
+    def get_message(self, *, message_id: UUID, thread_id: UUID) -> Message | None:
+        return next(
+            (
+                message
+                for message in self.messages
+                if message.id == message_id and message.thread_id == thread_id
+            ),
+            None,
+        )
 
     def list_messages(
         self,
@@ -303,13 +335,17 @@ class DelayedFirstMessageRepository(RecordingRepository):
         content: str,
         status: MessageStatus,
         run_id: UUID | None = None,
-    ) -> Message:
+        message_id: UUID | None = None,
+        return_inserted: bool = False,
+    ) -> Message | tuple[Message, bool]:
         message = super().create_message(
             thread_id=thread_id,
             role=role,
             content=content,
             status=status,
             run_id=run_id,
+            message_id=message_id,
+            return_inserted=return_inserted,
         )
         if role == MessageRole.USER and content == self._first_content:
             self.first_user_message_saved.set()
@@ -348,7 +384,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         response = client.post(
             f"/v1/threads/{thread_id}/messages",
-            json={"content": "Compare AAPL with MSFT and NVDA"},
+            json={
+                "message_id": str(uuid4()),
+                "content": "Compare AAPL with MSFT and NVDA",
+            },
         )
 
         self.assertEqual(response.status_code, 201)
@@ -391,13 +430,13 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
             first_response = executor.submit(
                 first_client.post,
                 f"/v1/threads/{thread_id}/messages",
-                json={"content": first_content},
+                json={"message_id": str(uuid4()), "content": first_content},
             )
             self.assertTrue(repository.first_user_message_saved.wait(timeout=2))
             second_response = executor.submit(
                 second_client.post,
                 f"/v1/threads/{thread_id}/messages",
-                json={"content": second_content},
+                json={"message_id": str(uuid4()), "content": second_content},
             )
             responses = [
                 first_response.result(timeout=5),
@@ -454,7 +493,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
             response = client.post(
                 f"/v1/threads/{thread_id}/messages",
-                json={"content": "What is enterprise value?"},
+                json={
+                    "message_id": str(uuid4()),
+                    "content": "What is enterprise value?",
+                },
             )
 
             self.assertEqual(response.status_code, 201)
@@ -503,7 +545,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         response = client.post(
             f"/v1/threads/{created_thread['id']}/messages",
-            json={"content": "Compare TSLA with F and GM"},
+            json={
+                "message_id": str(uuid4()),
+                "content": "Compare TSLA with F and GM",
+            },
         )
 
         self.assertEqual(response.status_code, 201)
@@ -666,7 +711,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         created_thread_id = UUID(thread["id"])
         created = client.post(
             f"/v1/threads/{thread['id']}/messages",
-            json={"content": "Compare AAPL with MSFT"},
+            json={
+                "message_id": str(uuid4()),
+                "content": "Compare AAPL with MSFT",
+            },
         ).json()
         run = Run.model_validate(created["run"])
         table, trace = _artifacts(run)
@@ -734,7 +782,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         response = client.post(
             f"/v1/threads/{thread_id}/messages",
-            json={"content": "Compare AAPL with MSFT"},
+            json={
+                "message_id": str(uuid4()),
+                "content": "Compare AAPL with MSFT",
+            },
         )
 
         self.assertEqual(response.status_code, 502)
@@ -770,7 +821,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         with self.assertLogs("web_bff.main", level="ERROR"):
             response = client.post(
                 f"/v1/threads/{thread['id']}/messages",
-                json={"content": "Compare AAPL with MSFT"},
+                json={
+                    "message_id": str(uuid4()),
+                    "content": "Compare AAPL with MSFT",
+                },
             )
 
         self.assertEqual(response.status_code, 502)
@@ -786,6 +840,47 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         self.assertEqual(
             repository.threads[UUID(thread["id"])].latest_run_id,
             run_id,
+        )
+
+    def test_in_progress_run_conflict_does_not_create_failed_assistant(self) -> None:
+        repository = RecordingRepository()
+        agent = ControlledAgent(
+            repository=repository,
+            error_factory=lambda thread, message: AgentServiceResponseError(
+                status_code=409,
+                error=ErrorResponse(
+                    error=ErrorDetail(
+                        code=ErrorCode.CONFLICT,
+                        message="Tool invocation calculation is already running.",
+                        run_id=message.id,
+                        details={
+                            "thread_id": str(thread.id),
+                            "trigger_message_id": str(message.id),
+                            "status": "running",
+                        },
+                    )
+                ),
+            ),
+        )
+        client = self._client(repository=repository, agent=agent)
+        thread = client.post("/v1/threads", json={"title": "Comps"}).json()[
+            "thread"
+        ]
+        message_id = uuid4()
+
+        response = client.post(
+            f"/v1/threads/{thread['id']}/messages",
+            json={
+                "message_id": str(message_id),
+                "content": "Compare AAPL with MSFT",
+            },
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["run_id"], str(message_id))
+        self.assertEqual(
+            [(message.role, message.status) for message in repository.messages],
+            [(MessageRole.USER, MessageStatus.COMPLETE)],
         )
 
     def test_failed_run_error_rejects_mismatched_correlation(self) -> None:
@@ -816,7 +911,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         with self.assertLogs("web_bff.main", level="ERROR"):
             response = client.post(
                 f"/v1/threads/{thread_id}/messages",
-                json={"content": "Compare AAPL with MSFT"},
+                json={
+                    "message_id": str(uuid4()),
+                    "content": "Compare AAPL with MSFT",
+                },
             )
 
         self.assertEqual(response.status_code, 502)
@@ -844,7 +942,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         response = client.post(
             f"/v1/threads/{thread_id}/messages",
-            json={"content": "Compare AAPL with MSFT"},
+            json={
+                "message_id": str(uuid4()),
+                "content": "Compare AAPL with MSFT",
+            },
         )
 
         self.assertEqual(response.status_code, 502)
@@ -863,7 +964,10 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
 
         response = client.post(
             f"/v1/threads/{thread_id}/messages",
-            json={"content": "Compare AAPL with MSFT"},
+            json={
+                "message_id": str(uuid4()),
+                "content": "Compare AAPL with MSFT",
+            },
         )
 
         self.assertEqual(response.status_code, 502)
@@ -874,6 +978,7 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         repository = RecordingRepository()
         client = self._client(
             repository=repository,
+            override_comps=False,
             env={
                 key: value
                 for key, value in LOCAL_ENV.items()
@@ -926,6 +1031,7 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         response = client.post(
             f"/v1/threads/{thread_id}/messages",
             json={
+                "message_id": str(uuid4()),
                 "content": "Compare AAPL with MSFT",
                 "client_message_id": "retry-key",
             },
@@ -940,9 +1046,12 @@ class WebBffThreadsMessagesTest(unittest.TestCase):
         repository: RecordingRepository,
         agent: ControlledAgent | None = None,
         override_agent: bool = True,
+        override_comps: bool = True,
         env: dict[str, str] | None = None,
     ) -> TestClient:
         app.dependency_overrides[get_repository] = lambda: repository
+        if override_comps:
+            app.dependency_overrides[get_comps_client] = UnexpectedReadCompsClient
         if override_agent:
             app.dependency_overrides[get_agent_client] = lambda: agent or ControlledAgent(
                 repository=repository

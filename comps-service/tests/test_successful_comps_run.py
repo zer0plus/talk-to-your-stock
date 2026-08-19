@@ -23,9 +23,11 @@ from comps_service.main import (
 )
 from comps_service.provider import AlphaVantageCompanyDataSource
 from comps_service.repository import CompsPersistenceUnavailable, InvalidRunLinkage
-from comps_service.run_service import DuplicateToolInvocation, LoadedCompanyData
+from comps_service.run_service import LoadedCompanyData
 from comps_service.tool_validation import AlphaVantageTickerValidator
 from talk_to_your_stock_shared import (
+    ErrorResponse,
+    GenerateCompsToolResponse,
     PaginationMeta,
     Run,
     RunStatus,
@@ -135,40 +137,77 @@ class InMemoryCompsRunRepository:
         self.traces: dict[UUID, TraceResponse] = {}
         self.source_snapshots: dict[UUID, SourceSnapshot] = {}
         self.invocations: dict[UUID, UUID] = {}
+        self.validation_evidence: dict[UUID, dict[str, dict[str, object]]] = {}
 
-    def save_succeeded_run(
-        self,
-        *,
-        invocation_id: UUID,
-        run: Run,
-        table: RunTableResponse,
-        trace: TraceResponse,
-        source_snapshot: SourceSnapshot,
-    ) -> None:
-        if invocation_id in self.invocations:
-            raise DuplicateToolInvocation(
-                "Tool invocation has already produced a Run."
-            )
+    def get_succeeded_result(
+        self, *, invocation_id: UUID
+    ) -> GenerateCompsToolResponse | None:
+        run_id = self.invocations.get(invocation_id)
+        if run_id is None or run_id not in self.tables:
+            return None
+        run = self.runs[run_id]
+        return GenerateCompsToolResponse(
+            run=run,
+            table=self.tables[run_id],
+            trace=self.traces[run_id],
+            warnings=run.warnings,
+        )
+
+    def get_failed_result(self, *, invocation_id: UUID):
+        del invocation_id
+        return None
+
+    def get_run_by_invocation(self, *, invocation_id: UUID) -> Run | None:
+        run_id = self.invocations.get(invocation_id)
+        return self.runs.get(run_id) if run_id is not None else None
+
+    def get_active_run_by_invocation(self, *, invocation_id: UUID) -> Run | None:
+        run = self.get_run_by_invocation(invocation_id=invocation_id)
+        return run if run is not None and run.status == RunStatus.RUNNING else None
+
+    def get_validation_evidence(self, *, invocation_id: UUID):
+        return self.validation_evidence.get(invocation_id)
+
+    def reserve_run(self, *, invocation_id: UUID, run: Run, validation_evidence) -> Run:
+        run_id = self.invocations.get(invocation_id)
+        if run_id is not None:
+            return self.runs[run_id]
         self.invocations[invocation_id] = run.id
+        self.validation_evidence[invocation_id] = deepcopy(validation_evidence)
+        self.runs[run.id] = run
+        return run
+
+    def claim_run(self, *, run_id, owner_id, lease_seconds):
+        del owner_id, lease_seconds
+        run = self.runs[run_id]
+        if run.status != RunStatus.QUEUED:
+            return None
+        claimed = run.model_copy(
+            update={"status": RunStatus.RUNNING, "started_at": datetime.now(UTC)}
+        )
+        self.runs[run_id] = claimed
+        return claimed
+
+    def renew_run_lease(self, **_kwargs) -> bool:
+        return True
+
+    def complete_succeeded_run(
+        self, *, owner_id, run, table, trace, source_snapshot
+    ) -> bool:
+        del owner_id
         self.runs[run.id] = run
         self.tables[run.id] = table
         self.traces[run.id] = trace
         self.source_snapshots[run.id] = source_snapshot
+        return True
 
-    def save_failed_run(
-        self,
-        *,
-        invocation_id: UUID,
-        run: Run,
-        source_snapshot: SourceSnapshot,
-    ) -> None:
-        if invocation_id in self.invocations:
-            raise DuplicateToolInvocation(
-                "Tool invocation has already produced a Run."
-            )
-        self.invocations[invocation_id] = run.id
+    def complete_failed_run(
+        self, *, owner_id, run, status_code, error: ErrorResponse, source_snapshot
+    ) -> bool:
+        del owner_id, status_code, error
         self.runs[run.id] = run
         self.source_snapshots[run.id] = source_snapshot
+        return True
 
     def get_run(self, run_id: UUID) -> Run | None:
         return self.runs.get(run_id)
@@ -199,16 +238,7 @@ class InMemoryCompsRunRepository:
 
 
 class InvalidLinkageCompsRunRepository(InMemoryCompsRunRepository):
-    def save_succeeded_run(
-        self,
-        *,
-        invocation_id: UUID,
-        run: Run,
-        table: RunTableResponse,
-        trace: TraceResponse,
-        source_snapshot: SourceSnapshot,
-    ) -> None:
-        del invocation_id, run, table, trace, source_snapshot
+    def reserve_run(self, **_kwargs) -> Run:
         raise InvalidRunLinkage("Run must reference its persisted trigger Message.")
 
 
@@ -954,7 +984,7 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             {"raw_marker": "raw-provider-AAPL"},
         )
 
-    def test_repeated_invocation_returns_conflict_without_duplicate_artifacts(
+    def test_repeated_invocation_replays_result_without_duplicate_artifacts(
         self,
     ) -> None:
         invocation_id = uuid4()
@@ -986,9 +1016,8 @@ class SuccessfulCompsRunTest(unittest.TestCase):
             )
 
         self.assertEqual(created.status_code, 200, created.text)
-        self.assertEqual(repeated.status_code, 409, repeated.text)
-        self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
-        self.assertIsNone(repeated.json()["error"]["details"])
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json(), created.json())
         self.assertEqual(len(self.repository.runs), 1)
         self.assertEqual(len(self.repository.tables), 1)
         self.assertEqual(len(self.repository.traces), 1)

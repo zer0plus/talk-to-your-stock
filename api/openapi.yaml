@@ -199,8 +199,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [content]
+              additionalProperties: false
+              required: [message_id, content]
               properties:
+                message_id:
+                  type: string
+                  format: uuid
+                  description: Stable User Message identity used to replay one invocation safely.
                 content:
                   type: string
                   minLength: 1
@@ -230,6 +235,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '502':
           $ref: '#/components/responses/UpstreamError'
         '503':
@@ -480,6 +487,8 @@ paths:
                 $ref: '#/components/schemas/AgentMessageResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '502':
           $ref: '#/components/responses/UpstreamError'
         '503':
@@ -1009,6 +1018,7 @@ components:
 
     AgentMessageRequest:
       type: object
+      additionalProperties: false
       required: [user_id, thread_id, user_message_id, content]
       properties:
         user_id:
@@ -1023,6 +1033,11 @@ components:
         content:
           type: string
           minLength: 1
+        recovery_run:
+          description: Persisted Run supplied only when replaying an existing Message.
+          oneOf:
+            - $ref: '#/components/schemas/Run'
+            - type: 'null'
 
     AgentMessageResponse:
       type: object

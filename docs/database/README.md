@@ -116,6 +116,9 @@ web-bff/
     versions/
       0001_create_web_bff_schema.py
       0002_create_comps_run_schema.py
+      0003_create_comps_audit_artifacts.py
+      0004_add_comps_run_ownership.py
+      0005_create_agent_response_envelopes.py
 alembic.ini
 ```
 
@@ -125,6 +128,8 @@ The implementation includes:
 - Migration files: create service-owned Web BFF and Comps Service tables and
   indexes in one ordered database chain.
 - Web BFF repository: remove `_schema_ready`, `_ensure_schema()`, and calls to it.
+- Agent Service response envelopes: persist one terminal response per Message ID
+  so retries can replay without another model invocation.
 - Docker Compose: run one migration job before both schema-owning services.
 - Migration tests: render the upgrade through Alembic's CLI, with an opt-in real
   PostgreSQL HTTP-boundary test.

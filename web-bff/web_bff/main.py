@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Annotated
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import Depends, FastAPI, Header, Path, Query, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -29,6 +29,7 @@ from talk_to_your_stock_shared import (
     ServiceName,
     ServiceStatus,
     SourceSnapshotResponse,
+    Thread,
     ThreadListResponse,
     ThreadResponse,
     TraceResponse,
@@ -51,7 +52,12 @@ from web_bff.comps_client import (
     CompsServiceUnavailable,
     HttpCompsClient,
 )
-from web_bff.repository import InvalidCursorError, PostgresWebBffRepository
+from web_bff.repository import (
+    InvalidCursorError,
+    MessageConflict,
+    MessageInvocationInProgress,
+    PostgresWebBffRepository,
+)
 from web_bff.readiness import (
     check_agent_service,
     check_comps_service,
@@ -161,6 +167,16 @@ def handle_invalid_cursor(_request, exc: InvalidCursorError) -> JSONResponse:
                 code=ErrorCode.VALIDATION_ERROR,
                 message=str(exc),
             )
+        ).model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(MessageConflict)
+def handle_message_conflict(_request, exc: MessageConflict) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content=ErrorResponse(
+            error=ErrorDetail(code=ErrorCode.CONFLICT, message=str(exc))
         ).model_dump(mode="json"),
     )
 
@@ -386,6 +402,7 @@ def list_runs(
     responses={
         400: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
@@ -396,6 +413,7 @@ def create_message(
     request: CreateMessageRequest,
     repository: Annotated[PostgresWebBffRepository, Depends(get_repository)],
     agent_client: Annotated[HttpAgentClient, Depends(get_agent_client)],
+    comps_client: Annotated[HttpCompsClient, Depends(get_comps_client)],
     turn_coordinator: Annotated[
         ThreadTurnCoordinator,
         Depends(get_thread_turn_coordinator),
@@ -411,85 +429,160 @@ def create_message(
             message="Thread not found.",
         )
 
-    with turn_coordinator.turn(thread_id=thread.id):
-        user_message = repository.create_message(
-            thread_id=thread.id,
-            role=MessageRole.USER,
-            content=request.content,
-            status=MessageStatus.COMPLETE,
-        )
-        try:
-            agent_response = agent_client.respond_to_user_message(
-                user=user,
-                thread=thread,
-                user_message=user_message,
-            )
-        except AgentServiceResponseError as exc:
-            run_id = exc.error.error.run_id
-            logger.error(
-                (
-                    "Agent response failed: code=%s run_id=%s thread_id=%s "
-                    "trigger_message_id=%s message=%s"
-                ),
-                exc.error.error.code.value,
-                run_id,
-                thread.id,
-                user_message.id,
-                exc.error.error.message,
-            )
-            if run_id is not None:
-                details = exc.error.error.details or {}
-                if (
-                    details.get("thread_id") != str(thread.id)
-                    or details.get("trigger_message_id")
-                    != str(user_message.id)
-                ):
-                    raise ApiException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        code=ErrorCode.UPSTREAM_ERROR,
-                        message="Agent Service returned invalid failed Run linkage.",
-                    )
-                repository.create_message(
-                    thread_id=thread.id,
-                    role=MessageRole.ASSISTANT,
-                    content=exc.error.error.message,
-                    status=MessageStatus.FAILED,
-                    run_id=run_id,
+    try:
+        with repository.message_invocation(message_id=request.message_id):
+            with turn_coordinator.turn(thread_id=thread.id):
+                return _create_message_turn(
+                    thread=thread,
+                    request=request,
+                    repository=repository,
+                    agent_client=agent_client,
+                    comps_client=comps_client,
+                    user=user,
                 )
+    except MessageInvocationInProgress:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code=ErrorCode.CONFLICT,
+                    message="Message invocation is still being routed.",
+                    details={
+                        "thread_id": str(thread.id),
+                        "trigger_message_id": str(request.message_id),
+                        "status": "routing",
+                    },
+                )
+            ).model_dump(mode="json"),
+        )
+
+
+def _create_message_turn(
+    *,
+    thread: Thread,
+    request: CreateMessageRequest,
+    repository: PostgresWebBffRepository,
+    agent_client: HttpAgentClient,
+    comps_client: HttpCompsClient,
+    user: User,
+) -> CreateMessageResponse | JSONResponse:
+    user_message, user_message_inserted = repository.create_message(
+        thread_id=thread.id,
+        role=MessageRole.USER,
+        content=request.content,
+        status=MessageStatus.COMPLETE,
+        message_id=request.message_id,
+        return_inserted=True,
+    )
+    assistant_message_id = uuid5(
+        NAMESPACE_URL,
+        f"talk-to-your-stock:assistant:{user_message.id}",
+    )
+    existing_assistant = repository.get_message(
+        message_id=assistant_message_id,
+        thread_id=thread.id,
+    )
+    if (
+        existing_assistant is not None
+        and existing_assistant.status == MessageStatus.COMPLETE
+    ):
+        run = (
+            comps_client.get_run(existing_assistant.run_id)
+            if existing_assistant.run_id is not None
+            else None
+        )
+        return CreateMessageResponse(
+            user_message=user_message,
+            assistant_message=existing_assistant,
+            run=run,
+            events_url=None,
+        )
+    recovery_run = None
+    if not user_message_inserted:
+        try:
+            recovery_run = comps_client.get_run(user_message.id)
+        except CompsArtifactNotFound:
+            pass
+    try:
+        agent_response = agent_client.respond_to_user_message(
+            user=user,
+            thread=thread,
+            user_message=user_message,
+            recovery_run=recovery_run,
+        )
+    except AgentServiceResponseError as exc:
+        run_id = exc.error.error.run_id
+        logger.error(
+            (
+                "Agent response failed: code=%s run_id=%s thread_id=%s "
+                "trigger_message_id=%s message=%s"
+            ),
+            exc.error.error.code.value,
+            run_id,
+            thread.id,
+            user_message.id,
+            exc.error.error.message,
+        )
+        if exc.status_code == status.HTTP_409_CONFLICT:
             return JSONResponse(
                 status_code=exc.status_code,
                 content=exc.error.model_dump(mode="json"),
             )
-        except AgentServiceUnavailable as exc:
-            raise ApiException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                code=ErrorCode.UPSTREAM_ERROR,
-                message=str(exc),
-            ) from exc
-
-        run = agent_response.run
-        if run is not None and (
-            run.thread_id != thread.id or run.trigger_message_id != user_message.id
-        ):
-            raise ApiException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                code=ErrorCode.UPSTREAM_ERROR,
-                message="Agent Service returned invalid Run linkage.",
+        if run_id is not None:
+            details = exc.error.error.details or {}
+            if (
+                details.get("thread_id") != str(thread.id)
+                or details.get("trigger_message_id")
+                != str(user_message.id)
+            ):
+                raise ApiException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    code=ErrorCode.UPSTREAM_ERROR,
+                    message="Agent Service returned invalid failed Run linkage.",
+                )
+            repository.create_message(
+                thread_id=thread.id,
+                role=MessageRole.ASSISTANT,
+                content=exc.error.error.message,
+                status=MessageStatus.FAILED,
+                run_id=run_id,
+                message_id=assistant_message_id,
             )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.error.model_dump(mode="json"),
+        )
+    except AgentServiceUnavailable as exc:
+        raise ApiException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code=ErrorCode.UPSTREAM_ERROR,
+            message=str(exc),
+        ) from exc
 
-        assistant_message = repository.create_message(
-            thread_id=thread.id,
-            role=MessageRole.ASSISTANT,
-            content=agent_response.content,
-            status=MessageStatus.COMPLETE,
-            run_id=run.id if run is not None else None,
+    run = agent_response.run
+    if run is not None and (
+        run.thread_id != thread.id or run.trigger_message_id != user_message.id
+    ):
+        raise ApiException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code=ErrorCode.UPSTREAM_ERROR,
+            message="Agent Service returned invalid Run linkage.",
         )
-        return CreateMessageResponse(
-            user_message=user_message,
-            assistant_message=assistant_message,
-            run=run,
-            events_url=None,
-        )
+
+    assistant_message = repository.create_message(
+        thread_id=thread.id,
+        role=MessageRole.ASSISTANT,
+        content=agent_response.content,
+        status=MessageStatus.COMPLETE,
+        run_id=run.id if run is not None else None,
+        message_id=assistant_message_id,
+    )
+    return CreateMessageResponse(
+        user_message=user_message,
+        assistant_message=assistant_message,
+        run=run,
+        events_url=None,
+    )
 
 
 @app.get(

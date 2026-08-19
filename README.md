@@ -40,11 +40,13 @@ The design goal is simple: keep model reasoning flexible without asking anyone t
 
 The contract-tested workflow is:
 
-1. Persist the User Message before invoking the Agent.
+1. Persist the client-identified User Message before invoking the Agent, so a
+   lost response can be retried as the same invocation.
 2. Let Google ADK decide whether to answer directly or call the Comps Tool.
 3. Validate the Target and Peer Tickers before creating a Run.
 4. Calculate market value, enterprise value, EV multiples, and P/E in deterministic Python.
-5. Persist the Comps Table, formula Trace, and Source Snapshot together.
+5. Claim calculation ownership with a persisted renewable lease, then persist
+   the terminal Run, Comps Table, formula Trace, and Source Snapshot together.
 6. Link the assistant Message back to the completed Run.
 
 The Agent never invents a Comps Table. A deterministic table exists only after the Tool succeeds.

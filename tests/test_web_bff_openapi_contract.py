@@ -9,6 +9,36 @@ from web_bff.main import app
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_create_message_requires_stable_message_identity_and_conflict_response() -> None:
+    source_contract = yaml.safe_load(
+        (REPO_ROOT / "api" / "openapi.yaml").read_text()
+    )
+    source_operation = source_contract["paths"][
+        "/v1/threads/{thread_id}/messages"
+    ]["post"]
+    source_schema = source_operation["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    assert source_schema["required"] == ["message_id", "content"]
+    assert source_schema["additionalProperties"] is False
+    assert source_operation["responses"]["409"] == {
+        "$ref": "#/components/responses/Conflict"
+    }
+
+    generated_contract = TestClient(app).get("/openapi.json").json()
+    generated_operation = generated_contract["paths"][
+        "/v1/threads/{thread_id}/messages"
+    ]["post"]
+    generated_schema = generated_contract["components"]["schemas"][
+        "CreateMessageRequest"
+    ]
+    assert generated_schema["required"] == ["message_id", "content"]
+    assert generated_schema["additionalProperties"] is False
+    assert generated_operation["responses"]["409"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/ErrorResponse"}
+
+
 def test_message_list_documents_invalid_cursor_response() -> None:
     contract = yaml.safe_load((REPO_ROOT / "api" / "openapi.yaml").read_text())
 

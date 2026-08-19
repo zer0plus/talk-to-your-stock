@@ -188,6 +188,11 @@ class CompsMigrationsTest(unittest.TestCase):
             "references comps_runs (id) on delete cascade",
             sql,
         )
+        self.assertIn("add column calculation_owner_id uuid", sql)
+        self.assertIn("add column calculation_lease_expires_at", sql)
+        self.assertIn("add column validation_evidence jsonb", sql)
+        self.assertIn("constraint comps_runs_calculation_ownership check", sql)
+        self.assertIn("constraint comps_runs_failure_envelope check", sql)
 
     @unittest.skipUnless(
         os.environ.get(MIGRATION_DATABASE_URL_VAR),
@@ -237,8 +242,8 @@ class CompsMigrationsTest(unittest.TestCase):
                     json=generate_request,
                     headers={"Authorization": f"Bearer {INTERNAL_TOOL_TOKEN}"},
                 )
-                self.assertEqual(repeated.status_code, 409, repeated.text)
-                self.assertEqual(repeated.json()["error"]["code"], "CONFLICT")
+                self.assertEqual(repeated.status_code, 200, repeated.text)
+                self.assertEqual(repeated.json(), created.json())
 
                 for trigger_message_id_value in (
                     uuid4(),

@@ -92,6 +92,11 @@ class CompsReadinessTest(unittest.TestCase):
                 ),
             ),
             (
+                "COMPS_RUN_LEASE_SECONDS",
+                "0",
+                "COMPS_RUN_LEASE_SECONDS must be greater than zero.",
+            ),
+            (
                 "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS",
                 "-1",
                 (
@@ -118,6 +123,7 @@ class CompsReadinessTest(unittest.TestCase):
         for name in (
             "ALPHA_VANTAGE_TIMEOUT_SECONDS",
             "ALPHA_VANTAGE_MIN_REQUEST_INTERVAL_SECONDS",
+            "COMPS_RUN_LEASE_SECONDS",
         ):
             for value in ("nan", "inf"):
                 with self.subTest(name=name, value=value):
